@@ -234,6 +234,8 @@
 </template>
 
 <script>
+const DEFAULT_BOOK_PROVIDER = 'audible.co.uk'
+
 export default {
   props: {
     processing: Boolean,
@@ -389,9 +391,13 @@ export default {
       }
     },
     getDefaultBookProvider() {
+      if (this.$store.getters['scanners/checkBookProviderExists'](DEFAULT_BOOK_PROVIDER)) {
+        return DEFAULT_BOOK_PROVIDER
+      }
+
+      // Fallback to the previous behavior only if the preferred provider is not available
       let provider = localStorage.getItem('book-provider')
       if (!provider) return 'google'
-      // Validate book provider
       if (!this.$store.getters['scanners/checkBookProviderExists'](provider)) {
         console.error('Stored book provider does not exist', provider)
         localStorage.removeItem('book-provider')
