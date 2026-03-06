@@ -497,8 +497,8 @@ export default {
         this.provider = this.getDefaultBookProvider()
       }
 
-      // Prefer using ASIN if set and using audible provider
-      if (this.provider.startsWith('audible') && this.libraryItem.media.metadata.asin) {
+      // Keep title-first matching for Audible; only fall back to ASIN when title is missing
+      if (this.provider.startsWith('audible') && !this.searchTitle && this.libraryItem.media.metadata.asin) {
         this.searchTitle = this.libraryItem.media.metadata.asin
         this.searchAuthor = ''
       }
