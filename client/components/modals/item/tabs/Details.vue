@@ -97,7 +97,8 @@ export default {
       var matchOptions = {
         provider: this.libraryProvider,
         title: title || null,
-        author: author || null
+        author: author || null,
+        overrideDetails: true
       }
       this.$axios
         .$post(`/api/items/${this.libraryItemId}/match`, matchOptions)
