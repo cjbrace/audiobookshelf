@@ -13,6 +13,14 @@ const LibraryScanner = require('./LibraryScanner')
 const CoverManager = require('../managers/CoverManager')
 const TaskManager = require('../managers/TaskManager')
 
+function normalizeSeriesNameForMatch(seriesName) {
+  return String(seriesName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^(the|a|an)\s+/i, '')
+    .replace(/\s+/g, ' ')
+}
+
 /**
  * @typedef QuickMatchOptions
  * @property {string} [provider]
@@ -311,7 +319,7 @@ class Scanner {
       const seriesIdsRemoved = []
       const seriesMatchByName = new Map()
       for (const item of seriesMatchItems) {
-        const key = item.series.toLowerCase()
+        const key = normalizeSeriesNameForMatch(item.series)
         if (!seriesMatchByName.has(key)) {
           seriesMatchByName.set(key, item)
         }
@@ -321,7 +329,7 @@ class Scanner {
       if (options.overrideDetails) {
         const existingSeriesSnapshot = [...libraryItem.media.series]
         for (const existingSeries of existingSeriesSnapshot) {
-          const existingKey = existingSeries.name.toLowerCase()
+          const existingKey = normalizeSeriesNameForMatch(existingSeries.name)
           if (!seriesMatchByName.has(existingKey)) {
             await existingSeries.bookSeries.destroy()
             libraryItem.media.series = libraryItem.media.series.filter((s) => s.id !== existingSeries.id)
@@ -333,8 +341,20 @@ class Scanner {
       }
 
       for (const seriesMatchItem of seriesMatchByName.values()) {
-        const matchKey = seriesMatchItem.series.toLowerCase()
-        const existingSeries = libraryItem.media.series.find((s) => s.name.toLowerCase() === matchKey)
+        const matchKey = normalizeSeriesNameForMatch(seriesMatchItem.series)
+        const exactSeries = libraryItem.media.series.find((s) => s.name.toLowerCase() === seriesMatchItem.series.toLowerCase())
+        let existingSeries = exactSeries || libraryItem.media.series.find((s) => normalizeSeriesNameForMatch(s.name) === matchKey)
+
+        // In override mode, replace article/punctuation variants with the matched series name.
+        if (!exactSeries && existingSeries && options.overrideDetails) {
+          await existingSeries.bookSeries.destroy()
+          libraryItem.media.series = libraryItem.media.series.filter((s) => s.id !== existingSeries.id)
+          seriesIdsRemoved.push(existingSeries.id)
+          Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Replaced series "${existingSeries.name}" with "${seriesMatchItem.series}" in "${libraryItem.media.title}"`)
+          hasSeriesUpdates = true
+          existingSeries = null
+        }
+
         if (existingSeries) {
           if (seriesMatchItem.sequence !== undefined && seriesMatchItem.sequence !== null && seriesMatchItem.sequence !== '' && existingSeries.bookSeries.sequence !== seriesMatchItem.sequence) {
             existingSeries.bookSeries.sequence = seriesMatchItem.sequence
