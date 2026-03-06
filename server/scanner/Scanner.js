@@ -297,10 +297,44 @@ class Scanner {
     // Add or set series if not set
     let hasSeriesUpdates = false
     if (matchData.series) {
-      if (!Array.isArray(matchData.series)) matchData.series = [{ series: matchData.series, sequence: matchData.sequence }]
+      let seriesMatchItems = Array.isArray(matchData.series) ? [...matchData.series] : [{ series: matchData.series, sequence: matchData.sequence }]
+      seriesMatchItems = seriesMatchItems
+        .map((item) => {
+          if (!item || !item.series) return null
+          return {
+            series: String(item.series).trim(),
+            sequence: item.sequence
+          }
+        })
+        .filter((item) => item && item.series)
+
       const seriesIdsRemoved = []
-      for (const seriesMatchItem of matchData.series) {
-        const existingSeries = libraryItem.media.series.find((s) => s.name.toLowerCase() === seriesMatchItem.series.toLowerCase())
+      const seriesMatchByName = new Map()
+      for (const item of seriesMatchItems) {
+        const key = item.series.toLowerCase()
+        if (!seriesMatchByName.has(key)) {
+          seriesMatchByName.set(key, item)
+        }
+      }
+
+      // Override mode should replace current series set with matched series set.
+      if (options.overrideDetails) {
+        const existingSeriesSnapshot = [...libraryItem.media.series]
+        for (const existingSeries of existingSeriesSnapshot) {
+          const existingKey = existingSeries.name.toLowerCase()
+          if (!seriesMatchByName.has(existingKey)) {
+            await existingSeries.bookSeries.destroy()
+            libraryItem.media.series = libraryItem.media.series.filter((s) => s.id !== existingSeries.id)
+            seriesIdsRemoved.push(existingSeries.id)
+            Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Removed series "${existingSeries.name}" from "${libraryItem.media.title}"`)
+            hasSeriesUpdates = true
+          }
+        }
+      }
+
+      for (const seriesMatchItem of seriesMatchByName.values()) {
+        const matchKey = seriesMatchItem.series.toLowerCase()
+        const existingSeries = libraryItem.media.series.find((s) => s.name.toLowerCase() === matchKey)
         if (existingSeries) {
           if (seriesMatchItem.sequence !== undefined && seriesMatchItem.sequence !== null && seriesMatchItem.sequence !== '' && existingSeries.bookSeries.sequence !== seriesMatchItem.sequence) {
             existingSeries.bookSeries.sequence = seriesMatchItem.sequence
@@ -308,40 +342,29 @@ class Scanner {
             Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Updated series sequence for "${existingSeries.name}" to ${seriesMatchItem.sequence} in "${libraryItem.media.title}"`)
             hasSeriesUpdates = true
           }
-        } else {
-          let seriesItem = await Database.seriesModel.getByNameAndLibrary(seriesMatchItem.series, libraryItem.libraryId)
-          if (!seriesItem) {
-            seriesItem = await Database.seriesModel.create({
-              name: seriesMatchItem.series,
-              nameIgnorePrefix: getTitleIgnorePrefix(seriesMatchItem.series),
-              libraryId: libraryItem.libraryId
-            })
-            // Update filter data
-            Database.addSeriesToFilterData(libraryItem.libraryId, seriesItem.name, seriesItem.id)
-            SocketAuthority.emitter('series_added', seriesItem.toOldJSON())
-          }
-          const bookSeries = await Database.bookSeriesModel.create({
-            seriesId: seriesItem.id,
-            bookId: libraryItem.media.id,
-            sequence: seriesMatchItem.sequence
+          continue
+        }
+
+        let seriesItem = await Database.seriesModel.getByNameAndLibrary(seriesMatchItem.series, libraryItem.libraryId)
+        if (!seriesItem) {
+          seriesItem = await Database.seriesModel.create({
+            name: seriesMatchItem.series,
+            nameIgnorePrefix: getTitleIgnorePrefix(seriesMatchItem.series),
+            libraryId: libraryItem.libraryId
           })
-          seriesItem.bookSeries = bookSeries
-          libraryItem.media.series.push(seriesItem)
-          Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Added series "${seriesItem.name}" to "${libraryItem.media.title}"`)
-          hasSeriesUpdates = true
+          // Update filter data
+          Database.addSeriesToFilterData(libraryItem.libraryId, seriesItem.name, seriesItem.id)
+          SocketAuthority.emitter('series_added', seriesItem.toOldJSON())
         }
-        if (options.overrideDetails) {
-          const seriesRemoved = libraryItem.media.series.filter((s) => !matchData.series.find((ms) => ms.series.toLowerCase() === s.name.toLowerCase()))
-          if (seriesRemoved.length) {
-            for (const series of seriesRemoved) {
-              await series.bookSeries.destroy()
-              libraryItem.media.series = libraryItem.media.series.filter((s) => s.id !== series.id)
-              seriesIdsRemoved.push(series.id)
-              Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Removed series "${series.name}" from "${libraryItem.media.title}"`)
-            }
-            hasSeriesUpdates = true
-          }
-        }
+        const bookSeries = await Database.bookSeriesModel.create({
+          seriesId: seriesItem.id,
+          bookId: libraryItem.media.id,
+          sequence: seriesMatchItem.sequence
+        })
+        seriesItem.bookSeries = bookSeries
+        libraryItem.media.series.push(seriesItem)
+        Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Added series "${seriesItem.name}" to "${libraryItem.media.title}"`)
+        hasSeriesUpdates = true
       }
 
       // For all series removed from book, check if it is empty now and should be removed
