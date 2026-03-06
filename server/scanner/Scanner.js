@@ -230,6 +230,11 @@ class Scanner {
                 .filter((v) => !!v)
             updatePayload[key] = tagsArray
           }
+        } else if (key === 'title') {
+          // Quick match should always apply the matched title when it differs.
+          if (libraryItem.media[key] !== matchData[key]) {
+            updatePayload[key] = matchData[key]
+          }
         } else if (!libraryItem.media[key] || options.overrideDetails) {
           updatePayload[key] = matchData[key]
         }
@@ -291,13 +296,13 @@ class Scanner {
 
     // Add or set series if not set
     let hasSeriesUpdates = false
-    if (matchData.series && (!libraryItem.media.seriesName || options.overrideDetails)) {
+    if (matchData.series) {
       if (!Array.isArray(matchData.series)) matchData.series = [{ series: matchData.series, sequence: matchData.sequence }]
       const seriesIdsRemoved = []
       for (const seriesMatchItem of matchData.series) {
         const existingSeries = libraryItem.media.series.find((s) => s.name.toLowerCase() === seriesMatchItem.series.toLowerCase())
         if (existingSeries) {
-          if (existingSeries.bookSeries.sequence !== seriesMatchItem.sequence) {
+          if (seriesMatchItem.sequence !== undefined && seriesMatchItem.sequence !== null && seriesMatchItem.sequence !== '' && existingSeries.bookSeries.sequence !== seriesMatchItem.sequence) {
             existingSeries.bookSeries.sequence = seriesMatchItem.sequence
             await existingSeries.bookSeries.save()
             Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Updated series sequence for "${existingSeries.name}" to ${seriesMatchItem.sequence} in "${libraryItem.media.title}"`)
@@ -325,15 +330,17 @@ class Scanner {
           Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Added series "${seriesItem.name}" to "${libraryItem.media.title}"`)
           hasSeriesUpdates = true
         }
-        const seriesRemoved = libraryItem.media.series.filter((s) => !matchData.series.find((ms) => ms.series.toLowerCase() === s.name.toLowerCase()))
-        if (seriesRemoved.length) {
-          for (const series of seriesRemoved) {
-            await series.bookSeries.destroy()
-            libraryItem.media.series = libraryItem.media.series.filter((s) => s.id !== series.id)
-            seriesIdsRemoved.push(series.id)
-            Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Removed series "${series.name}" from "${libraryItem.media.title}"`)
+        if (options.overrideDetails) {
+          const seriesRemoved = libraryItem.media.series.filter((s) => !matchData.series.find((ms) => ms.series.toLowerCase() === s.name.toLowerCase()))
+          if (seriesRemoved.length) {
+            for (const series of seriesRemoved) {
+              await series.bookSeries.destroy()
+              libraryItem.media.series = libraryItem.media.series.filter((s) => s.id !== series.id)
+              seriesIdsRemoved.push(series.id)
+              Logger.info(`[Scanner] quickMatchBookBuildUpdatePayload: Removed series "${series.name}" from "${libraryItem.media.title}"`)
+            }
+            hasSeriesUpdates = true
           }
-          hasSeriesUpdates = true
         }
       }
 
