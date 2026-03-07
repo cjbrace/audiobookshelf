@@ -188,8 +188,21 @@ module.exports = {
       mediaWhere['abridged'] = true
     } else if (group === 'explicit') {
       mediaWhere['explicit'] = true
-    } else if (['genres', 'tags', 'narrators', 'categories', 'specCategories'].includes(group)) {
-      const jsonField = ['categories', 'specCategories'].includes(group) ? 'tags' : group
+    } else if (group === 'specCategories') {
+      const normalizedValue = String(value || '').trim().toLowerCase()
+      mediaWhere[Sequelize.Op.or] = [
+        {
+          tags: Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM json_each(tags) WHERE json_valid(tags) AND json_each.value = :filterValue)`), {
+            [Sequelize.Op.gte]: 1
+          })
+        },
+        Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('libraryItem.path')), {
+          [Sequelize.Op.like]: `%${normalizedValue}%`
+        })
+      ]
+      replacements.filterValue = value
+    } else if (['genres', 'tags', 'narrators', 'categories'].includes(group)) {
+      const jsonField = group === 'categories' ? 'tags' : group
       mediaWhere[jsonField] = Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM json_each(${jsonField}) WHERE json_valid(${jsonField}) AND json_each.value = :filterValue)`), {
         [Sequelize.Op.gte]: 1
       })
