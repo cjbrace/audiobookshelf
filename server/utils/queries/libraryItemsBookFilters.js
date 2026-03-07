@@ -188,8 +188,9 @@ module.exports = {
       mediaWhere['abridged'] = true
     } else if (group === 'explicit') {
       mediaWhere['explicit'] = true
-    } else if (['genres', 'tags', 'narrators'].includes(group)) {
-      mediaWhere[group] = Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM json_each(${group}) WHERE json_valid(${group}) AND json_each.value = :filterValue)`), {
+    } else if (['genres', 'tags', 'narrators', 'categories'].includes(group)) {
+      const jsonField = group === 'categories' ? 'tags' : group
+      mediaWhere[jsonField] = Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM json_each(${jsonField}) WHERE json_valid(${jsonField}) AND json_each.value = :filterValue)`), {
         [Sequelize.Op.gte]: 1
       })
       replacements.filterValue = value

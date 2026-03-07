@@ -27,7 +27,7 @@ module.exports = {
     let filterValue = null
     let filterGroup = null
     if (filterBy) {
-      const searchGroups = ['genres', 'tags', 'series', 'authors', 'progress', 'narrators', 'publishers', 'publishedDecades', 'missing', 'languages', 'tracks', 'ebooks']
+      const searchGroups = ['genres', 'tags', 'categories', 'series', 'authors', 'progress', 'narrators', 'publishers', 'publishedDecades', 'missing', 'languages', 'tracks', 'ebooks']
       const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
       filterGroup = group || filterBy
       filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
@@ -457,6 +457,7 @@ module.exports = {
       authors: [],
       genres: new Set(),
       tags: new Set(),
+      categories: new Set(),
       series: [],
       narrators: new Set(),
       languages: new Set(),
@@ -535,7 +536,10 @@ module.exports = {
       })
       for (const podcast of podcasts) {
         if (podcast.tags?.length) {
-          podcast.tags.forEach((tag) => data.tags.add(tag))
+          podcast.tags.forEach((tag) => {
+            data.tags.add(tag)
+            data.categories.add(tag)
+          })
         }
         if (podcast.genres?.length) {
           podcast.genres.forEach((genre) => data.genres.add(genre))
@@ -644,7 +648,10 @@ module.exports = {
       for (const book of books) {
         if (book.libraryItem.isMissing || book.libraryItem.isInvalid) data.numIssues++
         if (book.tags?.length) {
-          book.tags.forEach((tag) => data.tags.add(tag))
+          book.tags.forEach((tag) => {
+            data.tags.add(tag)
+            data.categories.add(tag)
+          })
         }
         if (book.genres?.length) {
           book.genres.forEach((genre) => data.genres.add(genre))
@@ -681,6 +688,7 @@ module.exports = {
     data.authors = naturalSort(data.authors).asc((au) => au.name)
     data.genres = naturalSort([...data.genres]).asc()
     data.tags = naturalSort([...data.tags]).asc()
+    data.categories = naturalSort([...data.categories]).asc()
     data.series = naturalSort(data.series).asc((se) => se.name)
     data.narrators = naturalSort([...data.narrators]).asc()
     data.publishers = naturalSort([...data.publishers]).asc()

@@ -171,6 +171,12 @@ export default {
           sublist: true
         },
         {
+          text: 'Category',
+          textPlural: 'Categories',
+          value: 'categories',
+          sublist: true
+        },
+        {
           text: this.$strings.LabelSeries,
           textPlural: this.$strings.LabelSeries,
           value: 'series',
@@ -357,6 +363,9 @@ export default {
     },
     tags() {
       return this.filterData.tags || []
+    },
+    categories() {
+      return this.filterData.categories || []
     },
     series() {
       return this.filterData.series || []
