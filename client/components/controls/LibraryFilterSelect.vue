@@ -374,7 +374,7 @@ export default {
       return this.filterData.tags || []
     },
     specCategories() {
-      return this.filterData.specCategories || this.filterData.categories || []
+      return this.$store.getters['user/getUserSetting']('specCategories') || []
     },
     dbIssues() {
       const baseIssues = [
