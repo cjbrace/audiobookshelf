@@ -9,15 +9,12 @@ const naturalSort = createNewSortInstance({
   comparer: new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
 })
 
-function addSpecCategoriesFromPath(data, pathValue) {
-  if (!pathValue || typeof pathValue !== 'string') return
-  const normalized = pathValue.toLowerCase()
-  if (normalized.includes('star wars') || normalized.includes('star_wars')) {
-    data.specCategories.add('Star Wars')
-  }
-  if (normalized.includes('graphic audio') || normalized.includes('graphic_audio')) {
-    data.specCategories.add('Graphic Audio')
-  }
+function isSpecCategoryTag(tag) {
+  if (typeof tag !== 'string') return false
+  const normalized = tag.trim().toLowerCase()
+  if (!normalized) return false
+  if (normalized === 'none') return true
+  return /^(?:[a-z0-9]+(?:_[a-z0-9]+)*)_(?:catalog|variant|policy)$/.test(normalized)
 }
 
 module.exports = {
@@ -540,7 +537,7 @@ module.exports = {
       const podcasts = await findAll({
         include: {
           model: Database.libraryItemModel,
-          attributes: ['path'],
+          attributes: [],
           where: {
             libraryId: libraryId
           }
@@ -552,12 +549,14 @@ module.exports = {
           podcast.tags.forEach((tag) => {
             data.tags.add(tag)
             data.categories.add(tag)
+            if (isSpecCategoryTag(tag)) {
+              data.specCategories.add(tag)
+            }
             if (typeof tag === 'string' && tag.toLowerCase().startsWith('issue:')) {
               data.dbIssues.add(tag.slice(6).trim() || tag)
             }
           })
         }
-        addSpecCategoriesFromPath(data, podcast.libraryItem?.path)
         if (podcast.genres?.length) {
           podcast.genres.forEach((genre) => data.genres.add(genre))
         }
@@ -655,7 +654,7 @@ module.exports = {
       const books = await Database.bookModel.findAll({
         include: {
           model: Database.libraryItemModel,
-          attributes: ['isMissing', 'isInvalid', 'path'],
+          attributes: ['isMissing', 'isInvalid'],
           where: {
             libraryId: libraryId
           }
@@ -668,12 +667,14 @@ module.exports = {
           book.tags.forEach((tag) => {
             data.tags.add(tag)
             data.categories.add(tag)
+            if (isSpecCategoryTag(tag)) {
+              data.specCategories.add(tag)
+            }
             if (typeof tag === 'string' && tag.toLowerCase().startsWith('issue:')) {
               data.dbIssues.add(tag.slice(6).trim() || tag)
             }
           })
         }
-        addSpecCategoriesFromPath(data, book.libraryItem?.path)
         if (book.genres?.length) {
           book.genres.forEach((genre) => data.genres.add(genre))
         }
