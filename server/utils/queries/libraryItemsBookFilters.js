@@ -188,8 +188,8 @@ module.exports = {
       mediaWhere['abridged'] = true
     } else if (group === 'explicit') {
       mediaWhere['explicit'] = true
-    } else if (['genres', 'tags', 'narrators', 'categories'].includes(group)) {
-      const jsonField = group === 'categories' ? 'tags' : group
+    } else if (['genres', 'tags', 'narrators', 'categories', 'specCategories'].includes(group)) {
+      const jsonField = ['categories', 'specCategories'].includes(group) ? 'tags' : group
       mediaWhere[jsonField] = Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM json_each(${jsonField}) WHERE json_valid(${jsonField}) AND json_each.value = :filterValue)`), {
         [Sequelize.Op.gte]: 1
       })
@@ -439,6 +439,7 @@ module.exports = {
 
     const libraryItemIncludes = []
     const bookIncludes = []
+    let dbIssueTagFilterValue = null
 
     if (filterGroup === 'feed-open' || includeRSSFeed) {
       const rssFeedRequired = filterGroup === 'feed-open'
@@ -514,6 +515,14 @@ module.exports = {
           isInvalid: true
         }
       ]
+    } else if (filterGroup === 'dbIssues') {
+      if (filterValue === 'missing') {
+        libraryItemWhere.isMissing = true
+      } else if (filterValue === 'invalid') {
+        libraryItemWhere.isInvalid = true
+      } else if (filterValue) {
+        dbIssueTagFilterValue = filterValue.toLowerCase().startsWith('issue:') ? filterValue : `issue:${filterValue}`
+      }
     } else if (filterGroup === 'progress' && user) {
       const mediaProgressWhere = {
         userId: user.id
@@ -548,6 +557,14 @@ module.exports = {
 
     let { mediaWhere, replacements } = this.getMediaGroupQuery(filterGroup, filterValue)
     let bookWhere = Array.isArray(mediaWhere) ? mediaWhere : [mediaWhere]
+    if (dbIssueTagFilterValue) {
+      bookWhere.push(
+        Sequelize.where(Sequelize.literal('(SELECT count(*) FROM json_each(tags) WHERE json_valid(tags) AND json_each.value = :dbIssueTagFilterValue)'), {
+          [Sequelize.Op.gte]: 1
+        })
+      )
+      replacements.dbIssueTagFilterValue = dbIssueTagFilterValue
+    }
 
     // User permissions
     const userPermissionBookWhere = this.getUserPermissionBookWhereQuery(user)

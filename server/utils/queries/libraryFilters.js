@@ -27,7 +27,7 @@ module.exports = {
     let filterValue = null
     let filterGroup = null
     if (filterBy) {
-      const searchGroups = ['genres', 'tags', 'categories', 'series', 'authors', 'progress', 'narrators', 'publishers', 'publishedDecades', 'missing', 'languages', 'tracks', 'ebooks']
+      const searchGroups = ['genres', 'tags', 'categories', 'specCategories', 'dbIssues', 'series', 'authors', 'progress', 'narrators', 'publishers', 'publishedDecades', 'missing', 'languages', 'tracks', 'ebooks']
       const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
       filterGroup = group || filterBy
       filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
@@ -458,11 +458,13 @@ module.exports = {
       genres: new Set(),
       tags: new Set(),
       categories: new Set(),
+      specCategories: new Set(),
       series: [],
       narrators: new Set(),
       languages: new Set(),
       publishers: new Set(),
       publishedDecades: new Set(),
+      dbIssues: new Set(),
       bookCount: 0, // How many books returned from database query
       authorCount: 0, // How many authors returned from database query
       seriesCount: 0, // How many series returned from database query
@@ -539,6 +541,10 @@ module.exports = {
           podcast.tags.forEach((tag) => {
             data.tags.add(tag)
             data.categories.add(tag)
+            data.specCategories.add(tag)
+            if (typeof tag === 'string' && tag.toLowerCase().startsWith('issue:')) {
+              data.dbIssues.add(tag.slice(6).trim() || tag)
+            }
           })
         }
         if (podcast.genres?.length) {
@@ -651,6 +657,10 @@ module.exports = {
           book.tags.forEach((tag) => {
             data.tags.add(tag)
             data.categories.add(tag)
+            data.specCategories.add(tag)
+            if (typeof tag === 'string' && tag.toLowerCase().startsWith('issue:')) {
+              data.dbIssues.add(tag.slice(6).trim() || tag)
+            }
           })
         }
         if (book.genres?.length) {
@@ -689,6 +699,17 @@ module.exports = {
     data.genres = naturalSort([...data.genres]).asc()
     data.tags = naturalSort([...data.tags]).asc()
     data.categories = naturalSort([...data.categories]).asc()
+    data.specCategories = naturalSort([...data.specCategories]).asc()
+    data.dbIssues = [
+      { id: 'missing', name: 'Missing Files' },
+      { id: 'invalid', name: 'Invalid Items' },
+      ...naturalSort([...data.dbIssues])
+        .asc()
+        .map((issue) => ({
+          id: issue,
+          name: issue
+        }))
+    ]
     data.series = naturalSort(data.series).asc((se) => se.name)
     data.narrators = naturalSort([...data.narrators]).asc()
     data.publishers = naturalSort([...data.publishers]).asc()

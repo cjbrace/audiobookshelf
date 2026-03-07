@@ -171,9 +171,9 @@ export default {
           sublist: true
         },
         {
-          text: 'Category',
-          textPlural: 'Categories',
-          value: 'categories',
+          text: 'Spec Catagories',
+          textPlural: 'Spec Catagories',
+          value: 'specCategories',
           sublist: true
         },
         {
@@ -230,6 +230,12 @@ export default {
         {
           text: this.$strings.LabelEbooks,
           value: 'ebooks',
+          sublist: true
+        },
+        {
+          text: 'DB Issues',
+          textPlural: 'DB Issues',
+          value: 'dbIssues',
           sublist: true
         },
         {
@@ -364,8 +370,16 @@ export default {
     tags() {
       return this.filterData.tags || []
     },
-    categories() {
-      return this.filterData.categories || []
+    specCategories() {
+      return this.filterData.specCategories || this.filterData.categories || []
+    },
+    dbIssues() {
+      const issues = this.filterData.dbIssues || []
+      if (issues.length) return issues
+      return [
+        { id: 'missing', name: 'Missing Files' },
+        { id: 'invalid', name: 'Invalid Items' }
+      ]
     },
     series() {
       return this.filterData.series || []
