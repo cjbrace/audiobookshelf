@@ -1250,7 +1250,7 @@ class LibraryController {
     }
     Scanner.matchLibraryItems(this, req.library, {
       quickMatchUserId: req.user.id,
-      quickMatchSessionId: await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
+      quickMatchSessionId: await QuickMatchSessionManager.ensureActiveSessionIdForUser(req.user.id)
     })
     res.sendStatus(200)
   }

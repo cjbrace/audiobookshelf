@@ -4,8 +4,14 @@ const Logger = require('../Logger')
 const Database = require('../Database')
 const SocketAuthority = require('../SocketAuthority')
 
+const QUICK_MATCH_RETENTION_DAYS = 45
+const QUICK_MATCH_AUTO_SESSION_MAX_AGE_HOURS = 24
+const QUICK_MATCH_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
 class QuickMatchSessionManager {
-  constructor() {}
+  constructor() {
+    this.lastPruneAt = 0
+  }
 
   async getActiveSessionForUser(userId) {
     if (!userId) return null
@@ -18,6 +24,39 @@ class QuickMatchSessionManager {
   async getActiveSessionIdForUser(userId) {
     const session = await this.getActiveSessionForUser(userId)
     return session?.id || null
+  }
+
+  async ensureActiveSessionIdForUser(userId) {
+    const session = await this.ensureAutoSessionForUser(userId)
+    return session?.id || null
+  }
+
+  async ensureAutoSessionForUser(userId) {
+    if (!userId) return null
+
+    await this.pruneOldDataIfDue()
+
+    const now = new Date()
+    const runningSession = await this.getActiveSessionForUser(userId)
+    if (runningSession) {
+      const startedAt = new Date(runningSession.startedAt).getTime()
+      const maxAgeMs = QUICK_MATCH_AUTO_SESSION_MAX_AGE_HOURS * 60 * 60 * 1000
+      if (Date.now() - startedAt <= maxAgeMs) {
+        return runningSession
+      }
+
+      // Auto-rotate long running sessions to keep session size manageable.
+      runningSession.status = 'completed'
+      runningSession.endedAt = now
+      await runningSession.save()
+    }
+
+    return Database.quickMatchSessionModel.create({
+      startedByUserId: userId,
+      status: 'running',
+      notes: '[auto] Always-on quick match capture',
+      startedAt: now
+    })
   }
 
   async startSession(user, notes = '') {
@@ -38,6 +77,36 @@ class QuickMatchSessionManager {
     session.endedAt = new Date()
     await session.save()
     return session
+  }
+
+  async pruneOldDataIfDue() {
+    const now = Date.now()
+    if (this.lastPruneAt && now - this.lastPruneAt < QUICK_MATCH_PRUNE_INTERVAL_MS) return
+    this.lastPruneAt = now
+    try {
+      await this.pruneOldData(QUICK_MATCH_RETENTION_DAYS)
+    } catch (error) {
+      Logger.error('[QuickMatchSessionManager] Failed to prune old quick match audit data', error)
+    }
+  }
+
+  async pruneOldData(retentionDays = QUICK_MATCH_RETENTION_DAYS) {
+    const cutoff = new Date(Date.now() - Math.max(1, Number(retentionDays) || QUICK_MATCH_RETENTION_DAYS) * 24 * 60 * 60 * 1000)
+    const completedSessionIds = await Database.quickMatchSessionModel.findAll({
+      where: {
+        status: { [Op.ne]: 'running' },
+        startedAt: { [Op.lt]: cutoff }
+      },
+      attributes: ['id'],
+      raw: true
+    })
+    if (!completedSessionIds.length) return
+
+    const ids = completedSessionIds.map((row) => row.id)
+    await Database.quickMatchSessionModel.destroy({
+      where: { id: { [Op.in]: ids } }
+    })
+    Logger.info(`[QuickMatchSessionManager] Pruned ${ids.length} quick match sessions older than ${retentionDays} days`)
   }
 
   async listSessions(limit = 20) {

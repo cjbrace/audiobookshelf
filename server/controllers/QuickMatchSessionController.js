@@ -21,7 +21,7 @@ class QuickMatchSessionController {
   async getAll(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     const sessions = await QuickMatchSessionManager.listSessions(Number(req.query.limit || 20))
-    const activeSessionId = await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
+    const activeSessionId = await QuickMatchSessionManager.ensureActiveSessionIdForUser(req.user.id)
     res.json({ sessions, activeSessionId })
   }
 

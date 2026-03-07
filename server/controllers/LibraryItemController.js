@@ -513,7 +513,7 @@ class LibraryItemController {
       options.overrideDetails = !!reqBody.overrideDetails
     }
     options.quickMatchUserId = req.user.id
-    options.quickMatchSessionId = await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
+    options.quickMatchSessionId = await QuickMatchSessionManager.ensureActiveSessionIdForUser(req.user.id)
 
     const matchResult = await Scanner.quickMatchLibraryItem(this, req.libraryItem, options)
     res.json(matchResult)
@@ -743,7 +743,7 @@ class LibraryItemController {
       options.overrideDetails = !!reqBodyOptions.overrideDetails
     }
     options.quickMatchUserId = req.user.id
-    options.quickMatchSessionId = await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
+    options.quickMatchSessionId = await QuickMatchSessionManager.ensureActiveSessionIdForUser(req.user.id)
 
     for (const libraryItem of libraryItems) {
       const matchResult = await Scanner.quickMatchLibraryItem(this, libraryItem, options)
