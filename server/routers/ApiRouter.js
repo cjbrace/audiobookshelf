@@ -35,6 +35,7 @@ const MiscController = require('../controllers/MiscController')
 const ShareController = require('../controllers/ShareController')
 const StatsController = require('../controllers/StatsController')
 const ApiKeyController = require('../controllers/ApiKeyController')
+const QuickMatchSessionController = require('../controllers/QuickMatchSessionController')
 
 class ApiRouter {
   constructor(Server) {
@@ -354,6 +355,17 @@ class ApiRouter {
     this.router.patch('/auth-settings', MiscController.updateAuthSettings.bind(this))
     this.router.post('/watcher/update', MiscController.updateWatchedPath.bind(this))
     this.router.get('/logger-data', MiscController.getLoggerData.bind(this))
+
+    //
+    // Quick Match Session Routes (Admin and up)
+    //
+    this.router.get('/quick-match-sessions', QuickMatchSessionController.getAll.bind(this))
+    this.router.post('/quick-match-sessions/start', QuickMatchSessionController.start.bind(this))
+    this.router.post('/quick-match-sessions/stop', QuickMatchSessionController.stop.bind(this))
+    this.router.get('/quick-match-sessions/:id', QuickMatchSessionController.getOne.bind(this))
+    this.router.post('/quick-match-sessions/:id/revert', QuickMatchSessionController.revert.bind(this))
+    this.router.post('/quick-match-sessions/:id/queue-full-match', QuickMatchSessionController.queueFullMatch.bind(this))
+    this.router.post('/quick-match-sessions/:id/full-match-queue/complete', QuickMatchSessionController.completeFullMatchQueue.bind(this))
   }
 
   //

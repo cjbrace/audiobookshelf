@@ -18,6 +18,7 @@ const RssFeedManager = require('../managers/RssFeedManager')
 const CacheManager = require('../managers/CacheManager')
 const CoverManager = require('../managers/CoverManager')
 const ShareManager = require('../managers/ShareManager')
+const QuickMatchSessionManager = require('../managers/QuickMatchSessionManager')
 
 /**
  * @typedef RequestUserObject
@@ -511,6 +512,8 @@ class LibraryItemController {
     if (reqBody.overrideDetails !== undefined) {
       options.overrideDetails = !!reqBody.overrideDetails
     }
+    options.quickMatchUserId = req.user.id
+    options.quickMatchSessionId = await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
 
     const matchResult = await Scanner.quickMatchLibraryItem(this, req.libraryItem, options)
     res.json(matchResult)
@@ -739,6 +742,8 @@ class LibraryItemController {
     if (reqBodyOptions.overrideDetails !== undefined) {
       options.overrideDetails = !!reqBodyOptions.overrideDetails
     }
+    options.quickMatchUserId = req.user.id
+    options.quickMatchSessionId = await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
 
     for (const libraryItem of libraryItems) {
       const matchResult = await Scanner.quickMatchLibraryItem(this, libraryItem, options)

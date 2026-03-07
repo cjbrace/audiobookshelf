@@ -16,6 +16,7 @@ const naturalSort = createNewSortInstance({
 
 const LibraryScanner = require('../scanner/LibraryScanner')
 const Scanner = require('../scanner/Scanner')
+const QuickMatchSessionManager = require('../managers/QuickMatchSessionManager')
 const Database = require('../Database')
 const Watcher = require('../Watcher')
 const RssFeedManager = require('../managers/RssFeedManager')
@@ -1247,7 +1248,10 @@ class LibraryController {
       Logger.error(`[LibraryController] Non-root user "${req.user.username}" attempted to match library items`)
       return res.sendStatus(403)
     }
-    Scanner.matchLibraryItems(this, req.library)
+    Scanner.matchLibraryItems(this, req.library, {
+      quickMatchUserId: req.user.id,
+      quickMatchSessionId: await QuickMatchSessionManager.getActiveSessionIdForUser(req.user.id)
+    })
     res.sendStatus(200)
   }
 

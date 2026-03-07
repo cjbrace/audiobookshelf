@@ -162,6 +162,21 @@ class Database {
     return this.models.device
   }
 
+  /** @type {typeof import('./models/QuickMatchSession')} */
+  get quickMatchSessionModel() {
+    return this.models.quickMatchSession
+  }
+
+  /** @type {typeof import('./models/QuickMatchChange')} */
+  get quickMatchChangeModel() {
+    return this.models.quickMatchChange
+  }
+
+  /** @type {typeof import('./models/QuickMatchFullMatchQueue')} */
+  get quickMatchFullMatchQueueModel() {
+    return this.models.quickMatchFullMatchQueue
+  }
+
   /**
    * Check if db file exists
    * @returns {boolean}
@@ -345,6 +360,9 @@ class Database {
     require('./models/Setting').init(this.sequelize)
     require('./models/CustomMetadataProvider').init(this.sequelize)
     require('./models/MediaItemShare').init(this.sequelize)
+    require('./models/QuickMatchSession').init(this.sequelize)
+    require('./models/QuickMatchChange').init(this.sequelize)
+    require('./models/QuickMatchFullMatchQueue').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
   }

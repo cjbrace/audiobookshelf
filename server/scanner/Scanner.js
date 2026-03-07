@@ -12,6 +12,7 @@ const LibraryScan = require('./LibraryScan')
 const LibraryScanner = require('./LibraryScanner')
 const CoverManager = require('../managers/CoverManager')
 const TaskManager = require('../managers/TaskManager')
+const QuickMatchSessionManager = require('../managers/QuickMatchSessionManager')
 
 function normalizeSeriesNameForMatch(seriesName) {
   return String(seriesName || '')
@@ -30,6 +31,8 @@ function normalizeSeriesNameForMatch(seriesName) {
  * @property {string} [asin] - This override is currently unused in Abs clients
  * @property {boolean} [overrideCover]
  * @property {boolean} [overrideDetails]
+ * @property {string} [quickMatchSessionId]
+ * @property {string} [quickMatchUserId]
  */
 
 class Scanner {
@@ -43,6 +46,10 @@ class Scanner {
    * @returns {Promise<{updated: boolean, libraryItem: Object}>}
    */
   async quickMatchLibraryItem(apiRouterCtx, libraryItem, options = {}) {
+    const auditSessionId = options.quickMatchSessionId || null
+    const auditUserId = options.quickMatchUserId || null
+    const shouldAudit = !!(auditSessionId && auditUserId && libraryItem?.isBook)
+    const beforeSnapshot = shouldAudit ? QuickMatchSessionManager.buildBookSnapshot(libraryItem) : null
     const provider = options.provider || 'google'
     const searchTitle = options.title || libraryItem.media.title
     const searchAuthor = options.author || libraryItem.media.authorName
@@ -62,6 +69,19 @@ class Scanner {
 
       const results = await BookFinder.search(libraryItem, provider, searchTitle, searchAuthor, searchISBN, searchASIN, { maxFuzzySearches: 2 })
       if (!results.length) {
+        if (shouldAudit) {
+          await QuickMatchSessionManager.recordChange({
+            sessionId: auditSessionId,
+            userId: auditUserId,
+            libraryItemId: libraryItem.id,
+            libraryItemTitle: libraryItem.media.title,
+            provider,
+            status: 'unmatched',
+            warningText: `No ${provider} match found`,
+            beforeData: beforeSnapshot,
+            afterData: null
+          })
+        }
         return {
           warning: `No ${provider} match found`
         }
@@ -90,6 +110,19 @@ class Scanner {
       // Podcast quick match
       const results = await PodcastFinder.search(searchTitle)
       if (!results.length) {
+        if (shouldAudit) {
+          await QuickMatchSessionManager.recordChange({
+            sessionId: auditSessionId,
+            userId: auditUserId,
+            libraryItemId: libraryItem.id,
+            libraryItemTitle: libraryItem.media.title,
+            provider,
+            status: 'unmatched',
+            warningText: `No ${provider} match found`,
+            beforeData: beforeSnapshot,
+            afterData: null
+          })
+        }
         return {
           warning: `No ${provider} match found`
         }
@@ -135,6 +168,19 @@ class Scanner {
       await libraryItem.saveMetadataFile()
 
       SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
+    }
+
+    if (shouldAudit) {
+      await QuickMatchSessionManager.recordChange({
+        sessionId: auditSessionId,
+        userId: auditUserId,
+        libraryItemId: libraryItem.id,
+        libraryItemTitle: libraryItem.media.title,
+        provider,
+        status: hasUpdated ? 'updated' : 'nochange',
+        beforeData: beforeSnapshot,
+        afterData: QuickMatchSessionManager.buildBookSnapshot(libraryItem)
+      })
     }
 
     return {
@@ -482,7 +528,7 @@ class Scanner {
    * @param {LibraryScan} libraryScan
    * @returns {Promise<boolean>} false if scan canceled
    */
-  async matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan) {
+  async matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan, options = {}) {
     for (let i = 0; i < libraryItems.length; i++) {
       const libraryItem = libraryItems[i]
 
@@ -497,7 +543,7 @@ class Scanner {
       }
 
       Logger.debug(`[Scanner] matchLibraryItems: Quick matching "${libraryItem.media.title}" (${i + 1} of ${libraryItems.length})`)
-      const result = await this.quickMatchLibraryItem(apiRouterCtx, libraryItem, { provider: library.provider })
+      const result = await this.quickMatchLibraryItem(apiRouterCtx, libraryItem, { ...options, provider: library.provider })
       if (result.warning) {
         Logger.warn(`[Scanner] matchLibraryItems: Match warning ${result.warning} for library item "${libraryItem.media.title}"`)
       } else if (result.updated) {
@@ -519,7 +565,7 @@ class Scanner {
    * @param {import('../routers/ApiRouter')} apiRouterCtx
    * @param {import('../models/Library')} library
    */
-  async matchLibraryItems(apiRouterCtx, library) {
+  async matchLibraryItems(apiRouterCtx, library, options = {}) {
     if (library.mediaType === 'podcast') {
       Logger.error(`[Scanner] matchLibraryItems: Match all not supported for podcasts yet`)
       return
@@ -558,7 +604,7 @@ class Scanner {
       offset += limit
       hasMoreChunks = libraryItems.length === limit
 
-      const shouldContinue = await this.matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan)
+      const shouldContinue = await this.matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan, options)
       if (!shouldContinue) {
         isCanceled = true
         break
