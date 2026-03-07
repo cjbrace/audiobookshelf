@@ -374,9 +374,16 @@ export default {
       return this.filterData.tags || []
     },
     specCategories() {
+      const defaults = ['dramatised_variant', 'exception_policy', 'graphic_audio_catalog', 'none', 'star_wars_catalog']
       const configured = this.$store.getters['user/getUserSetting']('specCategories')
-      if (Array.isArray(configured) && configured.length) return configured
-      return this.filterData.specCategories || []
+      const configuredList = Array.isArray(configured)
+        ? configured.map((c) => String(c || '').trim()).filter((c) => !!c)
+        : []
+      if (configuredList.length) return configuredList
+      const filterList = Array.isArray(this.filterData.specCategories)
+        ? this.filterData.specCategories.map((c) => String(c || '').trim()).filter((c) => !!c)
+        : []
+      return filterList.length ? filterList : defaults
     },
     dbIssues() {
       const baseIssues = [
