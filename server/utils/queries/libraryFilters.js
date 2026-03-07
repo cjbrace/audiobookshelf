@@ -9,6 +9,17 @@ const naturalSort = createNewSortInstance({
   comparer: new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
 })
 
+function addSpecCategoriesFromPath(data, pathValue) {
+  if (!pathValue || typeof pathValue !== 'string') return
+  const normalized = pathValue.toLowerCase()
+  if (normalized.includes('star wars') || normalized.includes('star_wars')) {
+    data.specCategories.add('Star Wars')
+  }
+  if (normalized.includes('graphic audio') || normalized.includes('graphic_audio')) {
+    data.specCategories.add('Graphic Audio')
+  }
+}
+
 module.exports = {
   decode(text) {
     return Buffer.from(decodeURIComponent(text), 'base64').toString()
@@ -529,7 +540,7 @@ module.exports = {
       const podcasts = await findAll({
         include: {
           model: Database.libraryItemModel,
-          attributes: [],
+          attributes: ['path'],
           where: {
             libraryId: libraryId
           }
@@ -541,12 +552,12 @@ module.exports = {
           podcast.tags.forEach((tag) => {
             data.tags.add(tag)
             data.categories.add(tag)
-            data.specCategories.add(tag)
             if (typeof tag === 'string' && tag.toLowerCase().startsWith('issue:')) {
               data.dbIssues.add(tag.slice(6).trim() || tag)
             }
           })
         }
+        addSpecCategoriesFromPath(data, podcast.libraryItem?.path)
         if (podcast.genres?.length) {
           podcast.genres.forEach((genre) => data.genres.add(genre))
         }
@@ -644,7 +655,7 @@ module.exports = {
       const books = await Database.bookModel.findAll({
         include: {
           model: Database.libraryItemModel,
-          attributes: ['isMissing', 'isInvalid'],
+          attributes: ['isMissing', 'isInvalid', 'path'],
           where: {
             libraryId: libraryId
           }
@@ -657,12 +668,12 @@ module.exports = {
           book.tags.forEach((tag) => {
             data.tags.add(tag)
             data.categories.add(tag)
-            data.specCategories.add(tag)
             if (typeof tag === 'string' && tag.toLowerCase().startsWith('issue:')) {
               data.dbIssues.add(tag.slice(6).trim() || tag)
             }
           })
         }
+        addSpecCategoriesFromPath(data, book.libraryItem?.path)
         if (book.genres?.length) {
           book.genres.forEach((genre) => data.genres.add(genre))
         }
