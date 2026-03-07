@@ -379,11 +379,11 @@ export default {
       const configuredList = Array.isArray(configured)
         ? configured.map((c) => String(c || '').trim()).filter((c) => !!c)
         : []
-      if (configuredList.length) return configuredList
       const filterList = Array.isArray(this.filterData.specCategories)
         ? this.filterData.specCategories.map((c) => String(c || '').trim()).filter((c) => !!c)
         : []
-      return filterList.length ? filterList : defaults
+      const merged = [...configuredList, ...filterList, ...defaults]
+      return [...new Set(merged)]
     },
     dbIssues() {
       const baseIssues = [

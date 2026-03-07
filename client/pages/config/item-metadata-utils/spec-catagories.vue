@@ -37,6 +37,8 @@
 </template>
 
 <script>
+const DEFAULT_SPEC_CATEGORIES = ['dramatised_variant', 'exception_policy', 'graphic_audio_catalog', 'none', 'star_wars_catalog']
+
 export default {
   asyncData({ store, redirect }) {
     if (!store.getters['user/getIsAdminOrUp']) {
@@ -52,7 +54,10 @@ export default {
   },
   computed: {
     specCategories() {
-      return this.$store.getters['user/getUserSetting']('specCategories') || []
+      const configured = this.$store.getters['user/getUserSetting']('specCategories')
+      const configuredList = Array.isArray(configured) ? configured : []
+      const merged = [...configuredList, ...DEFAULT_SPEC_CATEGORIES]
+      return [...new Set(merged.map((c) => this.normalizeCategory(c)).filter((c) => !!c))]
     }
   },
   methods: {
@@ -60,7 +65,7 @@ export default {
       return String(value || '').trim()
     },
     updateCategories(categories) {
-      const normalized = [...new Set(categories.map((c) => this.normalizeCategory(c)).filter((c) => !!c))]
+      const normalized = [...new Set([...DEFAULT_SPEC_CATEGORIES, ...categories].map((c) => this.normalizeCategory(c)).filter((c) => !!c))]
       this.$store.dispatch('user/updateUserSettings', { specCategories: normalized })
     },
     addCategory() {

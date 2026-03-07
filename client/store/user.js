@@ -1,3 +1,5 @@
+const DEFAULT_SPEC_CATEGORIES = ['dramatised_variant', 'exception_policy', 'graphic_audio_catalog', 'none', 'star_wars_catalog']
+
 export const state = () => ({
   user: null,
   accessToken: null,
@@ -15,7 +17,7 @@ export const state = () => ({
     seriesSortBy: 'name',
     seriesSortDesc: false,
     seriesFilterBy: 'all',
-    specCategories: [],
+    specCategories: [...DEFAULT_SPEC_CATEGORIES],
     issueCategories: [],
     authorSortBy: 'name',
     authorSortDesc: false,
@@ -23,6 +25,11 @@ export const state = () => ({
     jumpBackwardAmount: 10
   }
 })
+
+function normalizeSpecCategories(value) {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((v) => String(v || '').trim()).filter((v) => !!v))]
+}
 
 export const getters = {
   getIsRoot: (state) => state.user && state.user.type === 'root',
@@ -136,12 +143,18 @@ export const actions = {
       let userSettingsFromLocal = localStorage.getItem('userSettings')
       if (userSettingsFromLocal) {
         userSettingsFromLocal = JSON.parse(userSettingsFromLocal)
+        // Backward compatibility for older typo'd key in local storage.
+        if (userSettingsFromLocal.specCategories === undefined && userSettingsFromLocal.specCatagories !== undefined) {
+          userSettingsFromLocal.specCategories = userSettingsFromLocal.specCatagories
+        }
         const userSettings = { ...state.settings }
         for (const key in userSettings) {
           if (userSettingsFromLocal[key] !== undefined) {
             userSettings[key] = userSettingsFromLocal[key]
           }
         }
+        const normalizedSpecCategories = normalizeSpecCategories(userSettings.specCategories)
+        userSettings.specCategories = normalizedSpecCategories.length ? normalizedSpecCategories : [...DEFAULT_SPEC_CATEGORIES]
         commit('setSettings', userSettings)
         this.$eventBus.$emit('user-settings', state.settings)
       }
