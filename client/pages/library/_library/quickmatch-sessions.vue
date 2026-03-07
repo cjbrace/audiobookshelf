@@ -157,11 +157,11 @@ export default {
       return
     }
     const libraryId = params.library
-    const library = await store.dispatch('libraries/fetch', libraryId)
-    if (!library) {
+    const fetchData = await store.dispatch('libraries/fetch', libraryId)
+    if (!fetchData || !fetchData.library) {
       return redirect(`/oops?message=Library "${libraryId}" not found`)
     }
-    if (library.mediaType !== 'book') {
+    if (fetchData.library.mediaType !== 'book') {
       return redirect(`/library/${libraryId}`)
     }
     return {}
