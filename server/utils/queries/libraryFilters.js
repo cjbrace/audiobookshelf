@@ -17,6 +17,8 @@ function isSpecCategoryTag(tag) {
   return /^(?:[a-z0-9]+(?:_[a-z0-9]+)*)_(?:catalog|variant|policy)$/.test(normalized)
 }
 
+const defaultSpecCategories = ['dramatised_variant', 'exception_policy', 'graphic_audio_catalog', 'none', 'star_wars_catalog']
+
 module.exports = {
   decode(text) {
     return Buffer.from(decodeURIComponent(text), 'base64').toString()
@@ -711,6 +713,7 @@ module.exports = {
     data.genres = naturalSort([...data.genres]).asc()
     data.tags = naturalSort([...data.tags]).asc()
     data.categories = naturalSort([...data.categories]).asc()
+    defaultSpecCategories.forEach((category) => data.specCategories.add(category))
     data.specCategories = naturalSort([...data.specCategories]).asc()
     data.dbIssues = [
       { id: 'missing', name: 'Missing Files' },
