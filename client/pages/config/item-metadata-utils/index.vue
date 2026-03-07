@@ -7,12 +7,6 @@
           <span class="material-symbols">arrow_forward</span>
         </div>
       </nuxt-link>
-      <nuxt-link to="/config/item-metadata-utils/spec-catagories" class="block w-full rounded-sm bg-primary/40 hover:bg-primary/60 text-gray-300 hover:text-white p-4 my-2">
-        <div class="flex justify-between">
-          <p>Manage Spec Catagories</p>
-          <span class="material-symbols">arrow_forward</span>
-        </div>
-      </nuxt-link>
       <nuxt-link to="/config/item-metadata-utils/issue-categories" class="block w-full rounded-sm bg-primary/40 hover:bg-primary/60 text-gray-300 hover:text-white p-4 my-2">
         <div class="flex justify-between">
           <p>Manage Issue Categories</p>

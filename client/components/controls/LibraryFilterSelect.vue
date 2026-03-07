@@ -353,6 +353,8 @@ export default {
         } else if (parts[0] === 'dbIssues') {
           const issue = this.dbIssues.find((i) => i.id == decoded)
           filterValue = issue?.name || decoded
+        } else if (parts[0] === 'specCategories') {
+          filterValue = this.formatSpecCategoryLabel(decoded)
         } else {
           filterValue = decoded
         }
@@ -375,14 +377,10 @@ export default {
     },
     specCategories() {
       const defaults = ['dramatised_variant', 'exception_policy', 'graphic_audio_catalog', 'none', 'star_wars_catalog']
-      const configured = this.$store.getters['user/getUserSetting']('specCategories')
-      const configuredList = Array.isArray(configured)
-        ? configured.map((c) => String(c || '').trim()).filter((c) => !!c)
-        : []
       const filterList = Array.isArray(this.filterData.specCategories)
         ? this.filterData.specCategories.map((c) => String(c || '').trim()).filter((c) => !!c)
         : []
-      const merged = [...configuredList, ...filterList, ...defaults]
+      const merged = [...filterList, ...defaults]
       return [...new Set(merged)]
     },
     dbIssues() {
@@ -540,7 +538,7 @@ export default {
       const sublistItems = (this[this.sublist] || []).map((item) => {
         if (typeof item === 'string') {
           return {
-            text: item,
+            text: this.sublist === 'specCategories' ? this.formatSpecCategoryLabel(item) : item,
             value: this.$encode(item)
           }
         } else {
@@ -589,6 +587,20 @@ export default {
       this.selected = val
       this.showMenu = false
       this.$nextTick(() => this.$emit('change', val))
+    },
+    formatSpecCategoryLabel(value) {
+      const normalized = String(value || '').trim().toLowerCase()
+      const map = {
+        dramatised_variant: 'Dramatised Variant',
+        exception_policy: 'Exception Policy',
+        graphic_audio_catalog: 'Graphic Audio',
+        none: 'None',
+        star_wars_catalog: 'Star Wars'
+      }
+      if (map[normalized]) return map[normalized]
+      return normalized
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (m) => m.toUpperCase())
     }
   }
 }
