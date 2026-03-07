@@ -350,6 +350,9 @@ export default {
             const series = this.series.find((se) => se.id == decoded)
             if (series) filterValue = series.name
           }
+        } else if (parts[0] === 'dbIssues') {
+          const issue = this.dbIssues.find((i) => i.id == decoded)
+          filterValue = issue?.name || decoded
         } else {
           filterValue = decoded
         }
@@ -374,12 +377,21 @@ export default {
       return this.filterData.specCategories || this.filterData.categories || []
     },
     dbIssues() {
-      const issues = this.filterData.dbIssues || []
-      if (issues.length) return issues
-      return [
+      const baseIssues = [
         { id: 'missing', name: 'Missing Files' },
         { id: 'invalid', name: 'Invalid Items' }
       ]
+      const dbIssues = Array.isArray(this.filterData.dbIssues) ? this.filterData.dbIssues : []
+      const existingIds = new Set(baseIssues.map((i) => i.id))
+      const normalizedFromApi = dbIssues
+        .map((i) => (typeof i === 'string' ? { id: i, name: i } : i))
+        .filter((i) => i?.id && !existingIds.has(i.id))
+      const customIssueCategories = (this.$store.getters['user/getUserSetting']('issueCategories') || [])
+        .map((c) => String(c || '').trim())
+        .filter((c) => !!c)
+        .map((c) => ({ id: c, name: c }))
+        .filter((i) => !existingIds.has(i.id) && !normalizedFromApi.some((apiIssue) => apiIssue.id === i.id))
+      return [...baseIssues, ...normalizedFromApi, ...customIssueCategories]
     },
     series() {
       return this.filterData.series || []
