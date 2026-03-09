@@ -251,6 +251,32 @@ export default {
       if (kind === 'partial') return 'bg-yellow-900/60 text-yellow-200'
       return 'bg-red-900/60 text-red-200'
     },
+    isPlainObject(value) {
+      return value && typeof value === 'object' && !Array.isArray(value)
+    },
+    normalizeSnapshotValue(value) {
+      if (Array.isArray(value)) {
+        return value.map((entry) => this.normalizeSnapshotValue(entry))
+      }
+      if (this.isPlainObject(value)) {
+        const normalized = {}
+        Object.keys(value)
+          .sort()
+          .forEach((key) => {
+            const normalizedValue = this.normalizeSnapshotValue(value[key])
+            if (normalizedValue !== undefined) normalized[key] = normalizedValue
+          })
+        return normalized
+      }
+      if (value === undefined) return null
+      return value
+    },
+    hasMeaningfulSnapshotDiff(beforeSnapshot, afterSnapshot) {
+      if (!beforeSnapshot || !afterSnapshot) return false
+      const normalizedBefore = this.normalizeSnapshotValue(beforeSnapshot)
+      const normalizedAfter = this.normalizeSnapshotValue(afterSnapshot)
+      return JSON.stringify(normalizedBefore) !== JSON.stringify(normalizedAfter)
+    },
     mapChangeRow(change) {
       const originalTitle = this.extractTitleText(change?.beforeData)
       const originalAuthor = this.extractAuthorText(change?.beforeData)
@@ -258,7 +284,7 @@ export default {
       const newTitle = this.extractTitleText(change?.afterData)
       const newAuthor = this.extractAuthorText(change?.afterData)
       const newSeries = this.extractSeriesText(change?.afterData)
-      const hasChange = originalTitle !== newTitle || originalAuthor !== newAuthor || originalSeries !== newSeries
+      const hasChange = this.hasMeaningfulSnapshotDiff(change?.beforeData, change?.afterData)
       return {
         id: change?.id,
         libraryItemId: change?.libraryItemId,
