@@ -5,7 +5,6 @@ const Database = require('../Database')
 const SocketAuthority = require('../SocketAuthority')
 
 const QUICK_MATCH_RETENTION_DAYS = 45
-const QUICK_MATCH_AUTO_SESSION_MAX_AGE_HOURS = 24
 const QUICK_MATCH_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 class QuickMatchSessionManager {
@@ -36,26 +35,28 @@ class QuickMatchSessionManager {
 
     await this.pruneOldDataIfDue()
 
-    const now = new Date()
     const runningSession = await this.getActiveSessionForUser(userId)
-    if (runningSession) {
-      const startedAt = new Date(runningSession.startedAt).getTime()
-      const maxAgeMs = QUICK_MATCH_AUTO_SESSION_MAX_AGE_HOURS * 60 * 60 * 1000
-      if (Date.now() - startedAt <= maxAgeMs) {
-        return runningSession
-      }
+    if (runningSession) return runningSession
 
-      // Auto-rotate long running sessions to keep session size manageable.
-      runningSession.status = 'completed'
-      runningSession.endedAt = now
-      await runningSession.save()
+    // Always reuse the latest session to maintain a single live audit stream.
+    const latestSession = await Database.quickMatchSessionModel.findOne({
+      where: { startedByUserId: userId },
+      order: [['startedAt', 'DESC']]
+    })
+    if (latestSession) {
+      if (latestSession.status !== 'running') {
+        latestSession.status = 'running'
+        latestSession.endedAt = null
+        await latestSession.save()
+      }
+      return latestSession
     }
 
     return Database.quickMatchSessionModel.create({
       startedByUserId: userId,
       status: 'running',
       notes: '[auto] Always-on quick match capture',
-      startedAt: now
+      startedAt: new Date()
     })
   }
 

@@ -221,8 +221,12 @@ export default {
       })
       if (!payload) return
       this.sessions = payload.sessions || []
+      const activeSessionId = payload.activeSessionId || null
       if ((!this.selectedSessionId || !this.sessions.some((s) => s.id === this.selectedSessionId)) && this.sessions.length) {
         this.selectedSessionId = this.sessions[0].id
+      }
+      if (!this.selectedSessionId && activeSessionId) {
+        this.selectedSessionId = activeSessionId
       }
       if (this.selectedSessionId) {
         await this.selectSession(this.selectedSessionId)
