@@ -2,15 +2,15 @@
   <div class="page relative" :class="streamLibraryItem ? 'streaming' : ''">
     <app-book-shelf-toolbar is-home />
     <div id="bookshelf" class="w-full h-full px-2 py-4 md:p-8 relative overflow-y-auto">
-      <div class="w-full max-w-7xl mx-auto">
+      <div class="w-full">
         <div class="flex items-center gap-2 mb-3">
-          <h1 class="text-2xl font-semibold">Quick Match Sessions</h1>
+          <h1 class="text-2xl font-semibold">Quick Match</h1>
           <div class="grow" />
           <ui-btn color="bg-bg border border-white/20" small @click="loadSessions">Refresh</ui-btn>
         </div>
 
         <p class="text-sm text-gray-300 mb-6">
-          Run Quick Match normally. Any changes while a session is running are captured here and can be reverted.
+          Always-live quick match change log. Review captured changes and revert selected items when needed.
         </p>
 
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40">
