@@ -21,6 +21,7 @@
               <ui-btn color="bg-success" small :disabled="!canQueueForFullMatch || queueingFullMatch" :loading="queueingFullMatch" @click="queueFullMatch">
                 Queue Full Match (Reverted)
               </ui-btn>
+              <ui-btn color="bg-error" small :disabled="!selectedIds.length || reverting" :loading="reverting" @click="revertSelected">Revert Selected</ui-btn>
               <ui-btn color="bg-error/70" small :disabled="!canRevertAny || revertingAll" :loading="revertingAll" @click="revertAll">Revert All</ui-btn>
             </div>
 
@@ -28,16 +29,27 @@
               <table class="w-full text-sm table-fixed">
                 <thead class="bg-black/30 sticky top-0">
                   <tr>
+                    <th class="text-left px-2 py-2 w-8"></th>
                     <th class="text-left px-2 py-2">Original Title</th>
                     <th class="text-left px-2 py-2">Original Author</th>
                     <th class="text-left px-2 py-2">Original Series</th>
                     <th class="text-left px-2 py-2">New Title</th>
                     <th class="text-left px-2 py-2">New Author</th>
                     <th class="text-left px-2 py-2">New Series</th>
+                    <th class="text-left px-2 py-2">When</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="row in changedSessionRows" :key="row.id" class="border-t border-white/10">
+                    <td class="px-2 py-2">
+                      <input
+                        v-if="!row.isReverted"
+                        :checked="selectedIds.includes(row.libraryItemId)"
+                        :value="row.libraryItemId"
+                        type="checkbox"
+                        @change="toggleSelected(row.libraryItemId, $event.target.checked)"
+                      />
+                    </td>
                     <td class="px-2 py-2">
                       <div class="truncate" :title="row.originalTitle || '-'">{{ row.originalTitle || '-' }}</div>
                     </td>
@@ -48,17 +60,33 @@
                       <div class="truncate" :title="row.originalSeries || '-'">{{ row.originalSeries || '-' }}</div>
                     </td>
                     <td class="px-2 py-2">
-                      <div class="truncate" :title="row.newTitle || '-'">{{ row.newTitle || '-' }}</div>
+                      <div
+                        :class="['truncate rounded px-1 py-0.5', getMatchToneClass(row.originalTitle, row.newTitle)]"
+                        :title="row.newTitle || '-'"
+                      >
+                        {{ row.newTitle || '-' }}
+                      </div>
                     </td>
                     <td class="px-2 py-2">
-                      <div class="truncate" :title="row.newAuthor || '-'">{{ row.newAuthor || '-' }}</div>
+                      <div
+                        :class="['truncate rounded px-1 py-0.5', getMatchToneClass(row.originalAuthor, row.newAuthor)]"
+                        :title="row.newAuthor || '-'"
+                      >
+                        {{ row.newAuthor || '-' }}
+                      </div>
                     </td>
                     <td class="px-2 py-2">
-                      <div class="truncate" :title="row.newSeries || '-'">{{ row.newSeries || '-' }}</div>
+                      <div
+                        :class="['truncate rounded px-1 py-0.5', getMatchToneClass(row.originalSeries, row.newSeries)]"
+                        :title="row.newSeries || '-'"
+                      >
+                        {{ row.newSeries || '-' }}
+                      </div>
                     </td>
+                    <td class="px-2 py-2 text-xs text-gray-300">{{ formatTime(row.createdAt) }}</td>
                   </tr>
                   <tr v-if="!changedSessionRows.length" class="border-t border-white/10">
-                    <td colspan="6" class="px-2 py-3 text-xs text-gray-300">No changed rows found in the current session.</td>
+                    <td colspan="8" class="px-2 py-3 text-xs text-gray-300">No changed rows found in the current session.</td>
                   </tr>
                 </tbody>
               </table>
@@ -134,8 +162,10 @@ export default {
   data() {
     return {
       sessions: [],
+      selectedIds: [],
       selectedSessionId: null,
       selectedSession: null,
+      reverting: false,
       revertingAll: false,
       queueingFullMatch: false,
       completingQueueIds: []
@@ -193,6 +223,34 @@ export default {
         .filter((value) => !!value)
         .join(', ')
     },
+    tokenize(value) {
+      const matches = this.normalizeText(value)
+        .toLowerCase()
+        .match(/[a-z0-9]+/g)
+      return matches || []
+    },
+    getMatchKind(originalValue, newValue) {
+      const original = this.normalizeText(originalValue).toLowerCase()
+      const updated = this.normalizeText(newValue).toLowerCase()
+      if (!original && !updated) return 'exact'
+      if (original === updated) return 'exact'
+      if (!original || !updated) return 'none'
+
+      if (original.includes(updated) || updated.includes(original)) return 'partial'
+
+      const originalTokens = new Set(this.tokenize(original))
+      const updatedTokens = this.tokenize(updated)
+      const sharedTokenCount = updatedTokens.filter((t) => originalTokens.has(t)).length
+      if (sharedTokenCount > 0) return 'partial'
+
+      return 'none'
+    },
+    getMatchToneClass(originalValue, newValue) {
+      const kind = this.getMatchKind(originalValue, newValue)
+      if (kind === 'exact') return 'bg-green-900/60 text-green-200'
+      if (kind === 'partial') return 'bg-yellow-900/60 text-yellow-200'
+      return 'bg-red-900/60 text-red-200'
+    },
     mapChangeRow(change) {
       const originalTitle = this.extractTitleText(change?.beforeData)
       const originalAuthor = this.extractAuthorText(change?.beforeData)
@@ -203,6 +261,8 @@ export default {
       const hasChange = originalTitle !== newTitle || originalAuthor !== newAuthor || originalSeries !== newSeries
       return {
         id: change?.id,
+        libraryItemId: change?.libraryItemId,
+        createdAt: change?.createdAt,
         isReverted: change?.revertStatus === 'reverted',
         originalTitle,
         originalAuthor,
@@ -231,11 +291,13 @@ export default {
       if (this.selectedSessionId) {
         await this.selectSession(this.selectedSessionId)
       } else {
+        this.selectedIds = []
         this.selectedSession = null
       }
     },
     async selectSession(sessionId) {
       this.selectedSessionId = sessionId
+      this.selectedIds = []
       const payload = await this.$axios.$get(`/api/quick-match-sessions/${sessionId}`).catch((error) => {
         const message = error?.response?.data || 'Failed to load session detail'
         this.$toast.error(message)
@@ -243,6 +305,30 @@ export default {
       })
       if (!payload) return
       this.selectedSession = payload.session
+    },
+    toggleSelected(libraryItemId, checked) {
+      if (checked) {
+        if (!this.selectedIds.includes(libraryItemId)) this.selectedIds.push(libraryItemId)
+      } else {
+        this.selectedIds = this.selectedIds.filter((id) => id !== libraryItemId)
+      }
+    },
+    async revertSelected() {
+      if (!this.selectedSessionId || !this.selectedIds.length) return
+      this.reverting = true
+      const res = await this.$axios
+        .$post(`/api/quick-match-sessions/${this.selectedSessionId}/revert`, { libraryItemIds: this.selectedIds })
+        .catch((error) => {
+          const message = error?.response?.data || 'Failed to revert selected changes'
+          this.$toast.error(message)
+          return null
+        })
+      this.reverting = false
+      if (res) {
+        this.$toast.success(`Reverted ${res.reverted} changes${res.failed ? `, failed ${res.failed}` : ''}`)
+        await this.selectSession(this.selectedSessionId)
+        await this.loadSessions()
+      }
     },
     async revertAll() {
       if (!this.selectedSessionId) return
@@ -262,7 +348,9 @@ export default {
     async queueFullMatch() {
       if (!this.selectedSessionId) return
       this.queueingFullMatch = true
-      const res = await this.$axios.$post(`/api/quick-match-sessions/${this.selectedSessionId}/queue-full-match`, {}).catch((error) => {
+      const payload = {}
+      if (this.selectedIds.length) payload.libraryItemIds = [...this.selectedIds]
+      const res = await this.$axios.$post(`/api/quick-match-sessions/${this.selectedSessionId}/queue-full-match`, payload).catch((error) => {
         const message = error?.response?.data || 'Failed to queue full match'
         this.$toast.error(message)
         return null
