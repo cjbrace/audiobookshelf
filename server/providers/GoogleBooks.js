@@ -6,6 +6,44 @@ class GoogleBooks {
 
   constructor() {}
 
+  parsePublishedYear(publishedDate) {
+    if (!publishedDate || typeof publishedDate !== 'string') return null
+    const match = publishedDate.match(/^(\d{4})/)
+    return match ? match[1] : null
+  }
+
+  extractSeriesFromSubtitle(subtitle) {
+    if (!subtitle || typeof subtitle !== 'string') return null
+    const normalized = subtitle.trim()
+    if (!normalized) return null
+
+    const patterns = [
+      /^\((.+?)\s+(?:novel|book)\s+(\d+(?:\.\d+)?)\)$/i,
+      /^(.+?)\s+#\s*(\d+(?:\.\d+)?)$/i,
+      /^(.+?),?\s+book\s+(\d+(?:\.\d+)?)$/i,
+      /^book\s+(\d+(?:\.\d+)?)\s+of\s+(.+)$/i
+    ]
+
+    for (const pattern of patterns) {
+      const match = normalized.match(pattern)
+      if (!match) continue
+
+      const seriesName = pattern === patterns[3] ? match[2] : match[1]
+      const sequence = pattern === patterns[3] ? match[1] : match[2]
+      const cleanSeries = String(seriesName || '').trim()
+      if (!cleanSeries || !sequence) return null
+
+      return [
+        {
+          series: cleanSeries,
+          sequence: String(sequence)
+        }
+      ]
+    }
+
+    return null
+  }
+
   extractIsbn(industryIdentifiers) {
     if (!industryIdentifiers || !industryIdentifiers.length) return null
 
@@ -17,7 +55,7 @@ class GoogleBooks {
   cleanResult(item) {
     var { id, volumeInfo } = item
     if (!volumeInfo) return null
-    const { title, subtitle, authors, publisher, publisherDate, description, industryIdentifiers, categories, imageLinks } = volumeInfo
+    const { title, subtitle, authors, publisher, publishedDate, description, industryIdentifiers, categories, imageLinks, language } = volumeInfo
 
     let cover = null
     // Selects the largest cover assuming the largest is the last key in the object
@@ -26,15 +64,19 @@ class GoogleBooks {
       cover = cover?.replace(/^http:/, 'https:') || null
     }
 
+    const series = this.extractSeriesFromSubtitle(subtitle)
+
     return {
       id,
       title,
       subtitle: subtitle || null,
       author: authors ? authors.join(', ') : null,
       publisher,
-      publishedYear: publisherDate ? publisherDate.split('-')[0] : null,
+      publishedYear: this.parsePublishedYear(publishedDate),
       description,
       cover,
+      language: language || null,
+      series,
       genres: categories && Array.isArray(categories) ? [...categories] : null,
       isbn: this.extractIsbn(industryIdentifiers)
     }
