@@ -75,7 +75,7 @@ export default {
       }
     },
     height() {
-      return Math.min(this.availableHeight, 650)
+      return this.availableHeight
     },
     tabs() {
       return [
@@ -283,6 +283,13 @@ export default {
       setTimeout(this.setHeight, 50)
     },
     setHeight() {
+      const isDesktop = window.innerWidth >= 1024
+      if (isDesktop) {
+        this.marginTop = 16
+        this.availableHeight = Math.max(window.innerHeight - 32, 200)
+        return
+      }
+
       const smAndBelow = window.innerWidth < 1024 && window.innerWidth > window.innerHeight
 
       this.marginTop = smAndBelow ? 90 : 75
