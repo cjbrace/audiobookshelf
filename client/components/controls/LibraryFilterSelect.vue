@@ -151,7 +151,7 @@ export default {
           sublist: true
         },
         {
-          text: 'QC Status',
+          text: 'Ticked Status',
           value: 'qc',
           sublist: true
         }
@@ -223,7 +223,7 @@ export default {
           sublist: true
         },
         {
-          text: 'QC Status',
+          text: 'Ticked Status',
           value: 'qc',
           sublist: true
         },
