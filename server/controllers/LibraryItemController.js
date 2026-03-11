@@ -263,6 +263,41 @@ class LibraryItemController {
   }
 
   /**
+   * PATCH: /api/items/:id/qc-completion
+   *
+   * Manual QC completion state for Task 23 checkmark.
+   * This state is intentionally independent from playback progress.
+   *
+   * @param {LibraryItemControllerRequest} req
+   * @param {Response} res
+   */
+  async updateQcCompletion(req, res) {
+    if (!req.libraryItem.isBook) {
+      return res.status(400).send('QC completion state is only available for books')
+    }
+
+    if (typeof req.body?.manualQcCompleted !== 'boolean') {
+      return res.status(400).send('Invalid payload: manualQcCompleted (boolean) is required')
+    }
+
+    const nextValue = req.body.manualQcCompleted
+    const hasUpdates = !!req.libraryItem.media.manualQcCompleted !== nextValue
+    if (hasUpdates) {
+      req.libraryItem.media.manualQcCompleted = nextValue
+      req.libraryItem.media.changed('manualQcCompleted', true)
+      await req.libraryItem.media.save()
+      req.libraryItem.changed('updatedAt', true)
+      await req.libraryItem.save()
+      SocketAuthority.libraryItemEmitter('item_updated', req.libraryItem)
+    }
+
+    res.json({
+      updated: hasUpdates,
+      libraryItem: req.libraryItem.toOldJSON()
+    })
+  }
+
+  /**
    * POST: /api/items/:id/cover
    *
    * @param {LibraryItemControllerRequest} req
@@ -700,6 +735,72 @@ class LibraryItemController {
     })
     res.json({
       libraryItems: libraryItems.map((li) => li.toOldJSONExpanded())
+    })
+  }
+
+  /**
+   * PATCH: /api/items/batch/qc-completion
+   *
+   * @param {RequestWithUser} req
+   * @param {Response} res
+   */
+  async batchUpdateQcCompletion(req, res) {
+    if (!req.user.canUpdate) {
+      return res.sendStatus(403)
+    }
+
+    const updates = Array.isArray(req.body) ? req.body : null
+    if (!updates?.length) {
+      return res.status(400).send('Invalid payload')
+    }
+
+    const seenIds = new Set()
+    for (const update of updates) {
+      if (!update?.libraryItemId || typeof update.manualQcCompleted !== 'boolean') {
+        return res.status(400).send('Each update must include libraryItemId and manualQcCompleted (boolean)')
+      }
+      if (seenIds.has(update.libraryItemId)) {
+        return res.status(400).send('Each update must have a unique libraryItemId')
+      }
+      seenIds.add(update.libraryItemId)
+    }
+
+    const libraryItems = await Database.libraryItemModel.findAllExpandedWhere({
+      id: updates.map((u) => u.libraryItemId)
+    })
+    if (libraryItems.length !== updates.length) {
+      return res.status(404).send('Not all library items found')
+    }
+    if (libraryItems.some((item) => !item.isBook)) {
+      return res.status(400).send('QC completion state is only available for books')
+    }
+
+    let numUpdated = 0
+    const updateById = {}
+    updates.forEach((u) => {
+      updateById[u.libraryItemId] = u.manualQcCompleted
+    })
+
+    for (const libraryItem of libraryItems) {
+      if (!req.user.checkCanAccessLibraryItem(libraryItem)) {
+        return res.sendStatus(403)
+      }
+      const nextValue = updateById[libraryItem.id]
+      const hasUpdates = !!libraryItem.media.manualQcCompleted !== nextValue
+      if (!hasUpdates) continue
+
+      libraryItem.media.manualQcCompleted = nextValue
+      libraryItem.media.changed('manualQcCompleted', true)
+      await libraryItem.media.save()
+      libraryItem.changed('updatedAt', true)
+      await libraryItem.save()
+      SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
+      numUpdated++
+    }
+
+    res.json({
+      success: true,
+      updates: numUpdated
     })
   }
 

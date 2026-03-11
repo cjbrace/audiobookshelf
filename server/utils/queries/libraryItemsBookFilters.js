@@ -51,10 +51,18 @@ module.exports = {
    */
   getCollapseSeriesMediaProgressFilter(value) {
     const mediaWhere = {}
-    if (value === 'not-finished' || value === 'unticked') {
+    if (value === 'unticked') {
+      mediaWhere['$books.manualQcCompleted$'] = {
+        [Sequelize.Op.or]: [null, false]
+      }
+    } else if (value === 'not-finished') {
       mediaWhere['$books.mediaProgresses.isFinished$'] = {
         [Sequelize.Op.or]: [null, false]
       }
+    } else if (value === 'ticked') {
+      mediaWhere['$books.manualQcCompleted$'] = true
+    } else if (value === 'finished') {
+      mediaWhere['$books.mediaProgresses.isFinished$'] = true
     } else if (value === 'not-started') {
       mediaWhere[Sequelize.Op.and] = [
         {
@@ -68,8 +76,6 @@ module.exports = {
           }
         }
       ]
-    } else if (value === 'finished' || value === 'ticked') {
-      mediaWhere['$books.mediaProgresses.isFinished$'] = true
     } else if (value === 'in-progress') {
       mediaWhere[Sequelize.Op.and] = [
         {
@@ -107,7 +113,11 @@ module.exports = {
     const replacements = {}
 
     if (group === 'progress') {
-      if (value === 'not-finished' || value === 'unticked') {
+      if (value === 'unticked') {
+        mediaWhere['manualQcCompleted'] = {
+          [Sequelize.Op.or]: [null, false]
+        }
+      } else if (value === 'not-finished') {
         mediaWhere['$mediaProgresses.isFinished$'] = {
           [Sequelize.Op.or]: [null, false]
         }
@@ -124,7 +134,9 @@ module.exports = {
             }
           }
         ]
-      } else if (value === 'finished' || value === 'ticked') {
+      } else if (value === 'ticked') {
+        mediaWhere['manualQcCompleted'] = true
+      } else if (value === 'finished') {
         mediaWhere['$mediaProgresses.isFinished$'] = true
       } else if (value === 'in-progress') {
         mediaWhere[Sequelize.Op.and] = [

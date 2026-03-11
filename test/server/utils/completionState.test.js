@@ -1,5 +1,5 @@
 const assert = require('assert')
-const { buildBatchCompletionPayload, getBulkCompletionTarget, getNextCompletionState } = require('../../../client/utils/completionState')
+const { buildBatchCompletionPayload, getBulkCompletionTarget, getNextCompletionState, isLibraryItemTicked } = require('../../../client/utils/completionState')
 
 describe('completionState helper', () => {
   describe('getNextCompletionState', () => {
@@ -14,44 +14,61 @@ describe('completionState helper', () => {
 
   describe('getBulkCompletionTarget', () => {
     it('ticks all when any selected item is unticked', () => {
-      const selected = [{ id: 'a' }, { id: 'b' }]
-      const userMediaProgress = [{ libraryItemId: 'a', isFinished: true }]
-      assert.strictEqual(getBulkCompletionTarget(selected, userMediaProgress), true)
+      const selected = [
+        { id: 'a', media: { manualQcCompleted: true } },
+        { id: 'b', media: { manualQcCompleted: false } }
+      ]
+      assert.strictEqual(getBulkCompletionTarget(selected), true)
     })
 
     it('unticks all when selected items are fully ticked', () => {
-      const selected = [{ id: 'a' }, { id: 'b' }]
-      const userMediaProgress = [
-        { libraryItemId: 'a', isFinished: true },
-        { libraryItemId: 'b', isFinished: true }
+      const selected = [
+        { id: 'a', media: { manualQcCompleted: true } },
+        { id: 'b', media: { manualQcCompleted: true } }
       ]
-      assert.strictEqual(getBulkCompletionTarget(selected, userMediaProgress), false)
+      assert.strictEqual(getBulkCompletionTarget(selected), false)
+    })
+  })
+
+  describe('isLibraryItemTicked', () => {
+    it('uses manual QC state and does not infer ticked from playback completion fields', () => {
+      const item = {
+        id: 'a',
+        media: {
+          manualQcCompleted: false
+        },
+        mediaProgress: {
+          isFinished: true
+        }
+      }
+      assert.strictEqual(isLibraryItemTicked(item), false)
     })
   })
 
   describe('buildBatchCompletionPayload', () => {
-    it('builds payloads with isFinished=true when selection includes unticked', () => {
-      const selected = [{ id: 'a' }, { id: 'b' }]
-      const userMediaProgress = [{ libraryItemId: 'a', isFinished: true }]
-      const payload = buildBatchCompletionPayload(selected, userMediaProgress)
+    it('builds payloads with manualQcCompleted=true when selection includes unticked', () => {
+      const selected = [
+        { id: 'a', media: { manualQcCompleted: true } },
+        { id: 'b', media: { manualQcCompleted: false } }
+      ]
+      const payload = buildBatchCompletionPayload(selected)
 
       assert.deepStrictEqual(payload, [
-        { libraryItemId: 'a', isFinished: true },
-        { libraryItemId: 'b', isFinished: true }
+        { libraryItemId: 'a', manualQcCompleted: true },
+        { libraryItemId: 'b', manualQcCompleted: true }
       ])
     })
 
-    it('builds payloads with isFinished=false when selection is fully ticked', () => {
-      const selected = [{ id: 'a' }, { id: 'b' }]
-      const userMediaProgress = [
-        { libraryItemId: 'a', isFinished: true },
-        { libraryItemId: 'b', isFinished: true }
+    it('builds payloads with manualQcCompleted=false when selection is fully ticked', () => {
+      const selected = [
+        { id: 'a', media: { manualQcCompleted: true } },
+        { id: 'b', media: { manualQcCompleted: true } }
       ]
-      const payload = buildBatchCompletionPayload(selected, userMediaProgress)
+      const payload = buildBatchCompletionPayload(selected)
 
       assert.deepStrictEqual(payload, [
-        { libraryItemId: 'a', isFinished: false },
-        { libraryItemId: 'b', isFinished: false }
+        { libraryItemId: 'a', manualQcCompleted: false },
+        { libraryItemId: 'b', manualQcCompleted: false }
       ])
     })
   })

@@ -415,14 +415,15 @@ export default {
       return this.userProgress.finishedAt
     },
     itemIsFinished() {
+      if (!this.isPodcast) return !!this.media.manualQcCompleted
       if (this.booksInSeries) return this.seriesIsFinished
       return this.userProgress ? !!this.userProgress.isFinished : false
     },
     showCompletionButtonInOverlay() {
-      return !this.isPodcast && !this.isSelectionMode && (this.isHovering || this.isMoreMenuOpen)
+      return !this.isPodcast && !this.isSelectionMode && !this.booksInSeries && (this.isHovering || this.isMoreMenuOpen)
     },
     showPinnedCompletionButton() {
-      return !this.isPodcast && !this.isSelectionMode && this.itemIsFinished && !this.isHovering && !this.isMoreMenuOpen
+      return !this.isPodcast && !this.isSelectionMode && !this.booksInSeries && this.itemIsFinished && !this.isHovering && !this.isMoreMenuOpen
     },
     seriesIsFinished() {
       return !this.libraryItemIdsInSeries.some((lid) => {
@@ -737,13 +738,18 @@ export default {
       this.$emit('edit', this.libraryItem)
     },
     toggleFinished() {
-      var updatePayload = {
-        isFinished: getNextCompletionState(this.itemIsFinished)
-      }
+      const isProgressCompletion = this.isPodcast || !!this.recentEpisode
+      var updatePayload = isProgressCompletion
+        ? {
+            isFinished: getNextCompletionState(this.itemIsFinished)
+          }
+        : {
+            manualQcCompleted: getNextCompletionState(this.itemIsFinished)
+          }
       this.processing = true
 
-      var apiEndpoint = `/api/me/progress/${this.libraryItemId}`
-      if (this.recentEpisode) apiEndpoint += `/${this.recentEpisode.id}`
+      var apiEndpoint = isProgressCompletion ? `/api/me/progress/${this.libraryItemId}` : `/api/items/${this.libraryItemId}/qc-completion`
+      if (isProgressCompletion && this.recentEpisode) apiEndpoint += `/${this.recentEpisode.id}`
 
       var toast = this.$toast || this.$nuxt.$toast
       var axios = this.$axios || this.$nuxt.$axios
@@ -755,7 +761,8 @@ export default {
         .catch((error) => {
           console.error('Failed', error)
           this.processing = false
-          toast.error(updatePayload.isFinished ? this.$strings.ToastItemMarkedAsFinishedFailed : this.$strings.ToastItemMarkedAsNotFinishedFailed)
+          const nextValue = isProgressCompletion ? updatePayload.isFinished : updatePayload.manualQcCompleted
+          toast.error(nextValue ? this.$strings.ToastItemMarkedAsFinishedFailed : this.$strings.ToastItemMarkedAsNotFinishedFailed)
         })
     },
     editPodcast() {

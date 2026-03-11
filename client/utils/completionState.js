@@ -1,36 +1,35 @@
-function getItemProgress(userMediaProgress, libraryItemId) {
-  return (userMediaProgress || []).find((progress) => progress.libraryItemId === libraryItemId) || null
+function isLibraryItemTicked(libraryItem) {
+  return !!libraryItem?.media?.manualQcCompleted
 }
 
-function isLibraryItemTicked(userMediaProgress, libraryItemId) {
-  const progress = getItemProgress(userMediaProgress, libraryItemId)
-  return !!progress?.isFinished
+function getManualQcPayloadValue(isTicked) {
+  return !!isTicked
 }
 
 function getNextCompletionState(isTicked) {
   return !isTicked
 }
 
-function getBulkCompletionTarget(selectedMediaItems, userMediaProgress) {
+function getBulkCompletionTarget(selectedMediaItems) {
   const selected = selectedMediaItems || []
   if (!selected.length) return false
 
-  const hasUntickedItem = selected.some((item) => !isLibraryItemTicked(userMediaProgress, item.id))
+  const hasUntickedItem = selected.some((item) => !isLibraryItemTicked(item))
   if (hasUntickedItem) return true
   return false
 }
 
-function buildBatchCompletionPayload(selectedMediaItems, userMediaProgress) {
-  const isFinished = getBulkCompletionTarget(selectedMediaItems, userMediaProgress)
+function buildBatchCompletionPayload(selectedMediaItems) {
+  const manualQcCompleted = getBulkCompletionTarget(selectedMediaItems)
   return (selectedMediaItems || []).map((item) => ({
     libraryItemId: item.id,
-    isFinished
+    manualQcCompleted
   }))
 }
 
 module.exports = {
-  getItemProgress,
   isLibraryItemTicked,
+  getManualQcPayloadValue,
   getNextCompletionState,
   getBulkCompletionTarget,
   buildBatchCompletionPayload

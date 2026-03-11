@@ -129,9 +129,6 @@ export default {
     selectedMediaItemsArePlayable() {
       return !this.selectedMediaItems.some((i) => !i.hasTracks)
     },
-    userMediaProgress() {
-      return this.$store.state.user.user.mediaProgress || []
-    },
     userCanUpdate() {
       return this.$store.getters['user/getUserCanUpdate']
     },
@@ -142,7 +139,7 @@ export default {
       return this.$store.getters['user/getUserCanUpload']
     },
     selectedIsFinished() {
-      return !getBulkCompletionTarget(this.selectedMediaItems, this.userMediaProgress)
+      return !getBulkCompletionTarget(this.selectedMediaItems)
     },
     processingBatch() {
       return this.$store.state.processingBatch
@@ -305,10 +302,10 @@ export default {
     },
     toggleBatchRead() {
       this.$store.commit('setProcessingBatch', true)
-      const updateProgressPayloads = buildBatchCompletionPayload(this.selectedMediaItems, this.userMediaProgress)
+      const updateProgressPayloads = buildBatchCompletionPayload(this.selectedMediaItems)
       console.log('Progress payloads', updateProgressPayloads)
       this.$axios
-        .patch(`/api/me/progress/batch/update`, updateProgressPayloads)
+        .patch(`/api/items/batch/qc-completion`, updateProgressPayloads)
         .then(() => {
           this.$toast.success(this.$strings.ToastBatchUpdateSuccess)
           this.$store.commit('setProcessingBatch', false)

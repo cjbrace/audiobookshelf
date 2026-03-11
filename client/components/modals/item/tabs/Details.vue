@@ -79,12 +79,8 @@ export default {
     mediaMetadata() {
       return this.media.metadata || {}
     },
-    itemProgress() {
-      if (!this.libraryItemId) return null
-      return this.$store.getters['user/getUserMediaProgress'](this.libraryItemId)
-    },
     itemIsFinished() {
-      return this.itemProgress ? !!this.itemProgress.isFinished : false
+      return !!this.media.manualQcCompleted
     },
     libraryId() {
       return this.libraryItem ? this.libraryItem.libraryId : null
@@ -158,14 +154,14 @@ export default {
     },
     toggleFinished() {
       const updatePayload = {
-        isFinished: getNextCompletionState(this.itemIsFinished)
+        manualQcCompleted: getNextCompletionState(this.itemIsFinished)
       }
       this.isProcessingReadUpdate = true
       this.$axios
-        .$patch(`/api/me/progress/${this.libraryItemId}`, updatePayload)
+        .$patch(`/api/items/${this.libraryItemId}/qc-completion`, updatePayload)
         .catch((error) => {
           console.error('Failed', error)
-          this.$toast.error(updatePayload.isFinished ? this.$strings.ToastItemMarkedAsFinishedFailed : this.$strings.ToastItemMarkedAsNotFinishedFailed)
+          this.$toast.error(updatePayload.manualQcCompleted ? this.$strings.ToastItemMarkedAsFinishedFailed : this.$strings.ToastItemMarkedAsNotFinishedFailed)
         })
         .finally(() => {
           this.isProcessingReadUpdate = false

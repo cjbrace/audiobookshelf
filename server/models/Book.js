@@ -103,6 +103,8 @@ class Book extends Model {
     this.explicit
     /** @type {boolean} */
     this.abridged
+    /** @type {boolean} */
+    this.manualQcCompleted
     /** @type {string} */
     this.coverPath
     /** @type {number} */
@@ -156,6 +158,11 @@ class Book extends Model {
         language: DataTypes.STRING,
         explicit: DataTypes.BOOLEAN,
         abridged: DataTypes.BOOLEAN,
+        manualQcCompleted: {
+          type: DataTypes.BOOLEAN,
+          allowNull: false,
+          defaultValue: false
+        },
         coverPath: DataTypes.STRING,
         duration: DataTypes.FLOAT,
 
@@ -629,6 +636,7 @@ class Book extends Model {
       libraryItemId: libraryItemId,
       metadata: this.oldMetadataToJSON(),
       coverPath: this.coverPath,
+      manualQcCompleted: !!this.manualQcCompleted,
       tags: [...(this.tags || [])],
       audioFiles: structuredClone(this.audioFiles),
       chapters: structuredClone(this.chapters),
@@ -653,6 +661,7 @@ class Book extends Model {
       numAudioFiles: this.audioFiles?.length || 0,
       numChapters: this.chapters?.length || 0,
       duration: this.duration,
+      manualQcCompleted: !!this.manualQcCompleted,
       size: this.size,
       ebookFormat: this.ebookFile?.ebookFormat
     }
@@ -679,6 +688,7 @@ class Book extends Model {
       chapters: structuredClone(this.chapters),
       ebookFile: structuredClone(this.ebookFile),
       duration: this.duration,
+      manualQcCompleted: !!this.manualQcCompleted,
       size: this.size,
       tracks: this.getTracklist(libraryItemId)
     }
