@@ -271,11 +271,13 @@ export default {
     },
     registerListeners() {
       window.addEventListener('orientationchange', this.orientationChange)
+      window.addEventListener('resize', this.setHeight)
       this.$eventBus.$on('modal-hotkey', this.hotkey)
       this.$eventBus.$on(`${this.selectedLibraryItemId}_updated`, this.libraryItemUpdated)
     },
     unregisterListeners() {
       window.removeEventListener('orientationchange', this.orientationChange)
+      window.removeEventListener('resize', this.setHeight)
       this.$eventBus.$off('modal-hotkey', this.hotkey)
       this.$eventBus.$off(`${this.selectedLibraryItemId}_updated`, this.libraryItemUpdated)
     },
@@ -285,8 +287,8 @@ export default {
     setHeight() {
       const isDesktop = window.innerWidth >= 1024
       if (isDesktop) {
-        this.marginTop = 16
-        this.availableHeight = Math.max(window.innerHeight - 32, 200)
+        this.marginTop = 20
+        this.availableHeight = Math.max(window.innerHeight - 40, 200)
         return
       }
 
