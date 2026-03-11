@@ -4,19 +4,27 @@
     <div id="bookshelf" class="w-full h-full px-2 py-4 md:p-8 relative overflow-y-auto">
       <div class="w-full">
         <div class="flex items-center gap-2 mb-3">
-          <h1 class="text-2xl font-semibold">Quick Match</h1>
+          <h1 class="text-2xl font-semibold">Duplicates</h1>
           <div class="grow" />
+          <label class="text-xs text-gray-300">Threshold</label>
+          <input v-model.number="duplicateThreshold" type="range" min="0.5" max="0.98" step="0.01" class="w-32" @change="applyThreshold" />
+          <input v-model.number="duplicateThreshold" type="number" min="0.5" max="0.98" step="0.01" class="w-20 text-xs bg-black/30 border border-white/20 rounded px-2 py-1" @change="applyThreshold" />
           <ui-btn color="bg-bg border border-white/20" small @click="loadSessions">Refresh</ui-btn>
         </div>
 
         <p class="text-sm text-gray-300 mb-6">
-          Always-live quick match change log. Review captured changes and revert selected items when needed.
+          Fuzzy duplicate groups use title + author matching (series is assist-only). Groups auto-reassess and singleton groups are removed.
         </p>
 
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40">
           <div v-if="!selectedSession" class="text-sm text-gray-300">No quick match session data available.</div>
           <template v-else>
             <div class="flex items-center gap-2 mb-3">
+              <div class="text-xs text-gray-300">
+                Groups: {{ duplicateGroupCount }}
+                <span class="ml-2">Suppressed: {{ suppressedGroupCount }}</span>
+                <span class="ml-2">Source Items: {{ sourceItemsCount }}</span>
+              </div>
               <div class="grow" />
               <ui-btn color="bg-success" small :disabled="!canQueueForFullMatch || queueingFullMatch" :loading="queueingFullMatch" @click="queueFullMatch">
                 Queue Full Match (Reverted)
@@ -25,68 +33,54 @@
               <ui-btn color="bg-error/70" small :disabled="!canRevertAny || revertingAll" :loading="revertingAll" @click="revertAll">Revert All</ui-btn>
             </div>
 
-            <div class="overflow-auto max-h-[60vh] border border-white/15 rounded">
+            <div class="overflow-auto max-h-[62vh] border border-white/15 rounded">
               <table class="w-full text-sm table-fixed">
                 <thead class="bg-black/30 sticky top-0">
                   <tr>
                     <th class="text-left px-2 py-2 w-8"></th>
-                    <th class="text-left px-2 py-2">Original Title</th>
-                    <th class="text-left px-2 py-2">Original Author</th>
-                    <th class="text-left px-2 py-2">Original Series</th>
-                    <th class="text-left px-2 py-2">New Title</th>
-                    <th class="text-left px-2 py-2">New Author</th>
-                    <th class="text-left px-2 py-2">New Series</th>
-                    <th class="text-left px-2 py-2">When</th>
+                    <th class="text-left px-2 py-2 w-40">Group</th>
+                    <th class="text-left px-2 py-2">Books</th>
+                    <th class="text-left px-2 py-2 w-36">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in changedSessionRows" :key="row.id" class="border-t border-white/10">
-                    <td class="px-2 py-2">
-                      <input
-                        v-if="!row.isReverted"
-                        :checked="selectedIds.includes(row.libraryItemId)"
-                        :value="row.libraryItemId"
-                        type="checkbox"
-                        @change="toggleSelected(row.libraryItemId, $event.target.checked)"
-                      />
+                  <tr v-for="group in duplicateGroups" :key="group.groupKey + group.groupFingerprint" class="border-t border-white/10 align-top">
+                    <td class="px-2 py-3">
+                      <input :checked="groupSelected(group)" type="checkbox" @change="toggleGroupSelected(group, $event.target.checked)" />
                     </td>
-                    <td class="px-2 py-2">
-                      <div class="truncate" :title="row.originalTitle || '-'">{{ row.originalTitle || '-' }}</div>
+                    <td class="px-2 py-3">
+                      <div class="text-xs text-gray-300">{{ group.size }} items</div>
+                      <div class="font-semibold truncate" :title="group.titleHint || '-'">{{ group.titleHint || '-' }}</div>
+                      <div class="text-xs text-gray-400 truncate" :title="group.authorHint || '-'">{{ group.authorHint || '-' }}</div>
+                      <div class="text-xxs text-gray-500 mt-1">Score {{ group.score }}</div>
                     </td>
-                    <td class="px-2 py-2">
-                      <div class="truncate" :title="row.originalAuthor || '-'">{{ row.originalAuthor || '-' }}</div>
-                    </td>
-                    <td class="px-2 py-2">
-                      <div class="truncate" :title="row.originalSeries || '-'">{{ row.originalSeries || '-' }}</div>
-                    </td>
-                    <td class="px-2 py-2">
-                      <div
-                        :class="['truncate rounded px-1 py-0.5', getMatchToneClass(row.originalTitle, row.newTitle)]"
-                        :title="row.newTitle || '-'"
-                      >
-                        {{ row.newTitle || '-' }}
+                    <td class="px-2 py-3">
+                      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                        <div v-for="member in group.members" :key="member.libraryItemId" class="bg-black/20 border border-white/10 rounded p-2">
+                          <div class="flex gap-2 items-start">
+                            <input :checked="selectedIds.includes(member.libraryItemId)" type="checkbox" class="mt-1" @change="toggleSelected(member.libraryItemId, $event.target.checked)" />
+                            <nuxt-link :to="`/item/${member.libraryItemId}`" class="w-10 h-14 rounded overflow-hidden bg-black/40 border border-white/10 shrink-0">
+                              <img :src="getCoverSrc(member)" :alt="member.title || 'cover'" class="w-full h-full object-cover" />
+                            </nuxt-link>
+                            <div class="min-w-0">
+                              <nuxt-link :to="`/item/${member.libraryItemId}`" class="block font-semibold truncate hover:underline" :title="member.title || '-'">
+                                {{ member.title || '-' }}
+                              </nuxt-link>
+                              <p class="text-xs text-gray-300 truncate" :title="member.author || '-'">{{ member.author || '-' }}</p>
+                              <p class="text-xxs text-gray-400 truncate" :title="member.series || '-'">{{ member.series || '-' }}</p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </td>
-                    <td class="px-2 py-2">
-                      <div
-                        :class="['truncate rounded px-1 py-0.5', getMatchToneClass(row.originalAuthor, row.newAuthor)]"
-                        :title="row.newAuthor || '-'"
-                      >
-                        {{ row.newAuthor || '-' }}
-                      </div>
+                    <td class="px-2 py-3">
+                      <ui-btn color="bg-bg border border-white/20" small :loading="suppressingGroupKey === group.groupKey" @click="markNotDuplicates(group)">
+                        Not Duplicates
+                      </ui-btn>
                     </td>
-                    <td class="px-2 py-2">
-                      <div
-                        :class="['truncate rounded px-1 py-0.5', getMatchToneClass(row.originalSeries, row.newSeries)]"
-                        :title="row.newSeries || '-'"
-                      >
-                        {{ row.newSeries || '-' }}
-                      </div>
-                    </td>
-                    <td class="px-2 py-2 text-xs text-gray-300">{{ formatTime(row.createdAt) }}</td>
                   </tr>
-                  <tr v-if="!changedSessionRows.length" class="border-t border-white/10">
-                    <td colspan="8" class="px-2 py-3 text-xs text-gray-300">No changed rows found in the current session.</td>
+                  <tr v-if="!duplicateGroups.length" class="border-t border-white/10">
+                    <td colspan="4" class="px-2 py-3 text-xs text-gray-300">No duplicate groups currently detected for this session.</td>
                   </tr>
                 </tbody>
               </table>
@@ -165,10 +159,13 @@ export default {
       selectedIds: [],
       selectedSessionId: null,
       selectedSession: null,
+      duplicateThreshold: 0.79,
       reverting: false,
       revertingAll: false,
       queueingFullMatch: false,
-      completingQueueIds: []
+      completingQueueIds: [],
+      suppressingGroupKey: null,
+      autoRefreshTimer: null
     }
   },
   computed: {
@@ -176,15 +173,25 @@ export default {
       return this.$store.state.streamLibraryItem
     },
     canRevertAny() {
-      return this.changedSessionRows.some((row) => !row.isReverted)
+      return (this.selectedSession?.changes || []).some((row) => row.status === 'updated' && row.revertStatus !== 'reverted')
     },
     canQueueForFullMatch() {
       return (this.selectedSession?.changes || []).some((c) => c.status === 'updated' && c.revertStatus === 'reverted')
     },
-    changedSessionRows() {
-      return (this.selectedSession?.changes || [])
-        .map((change) => this.mapChangeRow(change))
-        .filter((row) => row.hasChange)
+    duplicatePayload() {
+      return this.selectedSession?.duplicateGroups || {}
+    },
+    duplicateGroups() {
+      return this.duplicatePayload.groups || []
+    },
+    duplicateGroupCount() {
+      return Number(this.duplicatePayload.groupedCount || 0)
+    },
+    suppressedGroupCount() {
+      return Number(this.duplicatePayload.suppressedCount || 0)
+    },
+    sourceItemsCount() {
+      return Number(this.duplicatePayload.sourceItemsCount || 0)
     },
     fullMatchQueue() {
       return this.selectedSession?.fullMatchQueue || []
@@ -195,108 +202,31 @@ export default {
       if (!value) return '-'
       return new Date(value).toLocaleString()
     },
-    normalizeText(value) {
-      return String(value || '').trim()
+    getCoverSrc(member) {
+      return this.$store.getters['globals/getLibraryItemCoverSrc'](
+        {
+          id: member.libraryItemId,
+          updatedAt: member.updatedAt,
+          media: {
+            coverPath: member.coverPath || null
+          }
+        },
+        null
+      )
     },
-    extractTitleText(snapshot) {
-      return this.normalizeText(snapshot?.metadata?.title || snapshot?.title)
+    groupSelected(group) {
+      if (!group?.members?.length) return false
+      return group.members.every((member) => this.selectedIds.includes(member.libraryItemId))
     },
-    extractAuthorText(snapshot) {
-      const authors = snapshot?.metadata?.authors
-      if (!Array.isArray(authors)) return ''
-      return authors
-        .map((a) => (typeof a === 'string' ? a : a?.name))
-        .map((a) => this.normalizeText(a))
-        .filter((a) => !!a)
-        .join(', ')
+    toggleGroupSelected(group, checked) {
+      if (!group?.members?.length) return
+      group.members.forEach((member) => this.toggleSelected(member.libraryItemId, checked))
     },
-    extractSeriesText(snapshot) {
-      const series = snapshot?.metadata?.series
-      if (!Array.isArray(series)) return ''
-      return series
-        .map((entry) => {
-          const name = this.normalizeText(typeof entry === 'string' ? entry : entry?.name)
-          if (!name) return ''
-          const sequence = this.normalizeText(typeof entry === 'string' ? '' : entry?.sequence)
-          return sequence ? `${name} #${sequence}` : name
-        })
-        .filter((value) => !!value)
-        .join(', ')
-    },
-    tokenize(value) {
-      const matches = this.normalizeText(value)
-        .toLowerCase()
-        .match(/[a-z0-9]+/g)
-      return matches || []
-    },
-    getMatchKind(originalValue, newValue) {
-      const original = this.normalizeText(originalValue).toLowerCase()
-      const updated = this.normalizeText(newValue).toLowerCase()
-      if (!original && !updated) return 'exact'
-      if (original === updated) return 'exact'
-      if (!original || !updated) return 'none'
-
-      if (original.includes(updated) || updated.includes(original)) return 'partial'
-
-      const originalTokens = new Set(this.tokenize(original))
-      const updatedTokens = this.tokenize(updated)
-      const sharedTokenCount = updatedTokens.filter((t) => originalTokens.has(t)).length
-      if (sharedTokenCount > 0) return 'partial'
-
-      return 'none'
-    },
-    getMatchToneClass(originalValue, newValue) {
-      const kind = this.getMatchKind(originalValue, newValue)
-      if (kind === 'exact') return 'bg-green-900/60 text-green-200'
-      if (kind === 'partial') return 'bg-yellow-900/60 text-yellow-200'
-      return 'bg-red-900/60 text-red-200'
-    },
-    isPlainObject(value) {
-      return value && typeof value === 'object' && !Array.isArray(value)
-    },
-    normalizeSnapshotValue(value) {
-      if (Array.isArray(value)) {
-        return value.map((entry) => this.normalizeSnapshotValue(entry))
-      }
-      if (this.isPlainObject(value)) {
-        const normalized = {}
-        Object.keys(value)
-          .sort()
-          .forEach((key) => {
-            const normalizedValue = this.normalizeSnapshotValue(value[key])
-            if (normalizedValue !== undefined) normalized[key] = normalizedValue
-          })
-        return normalized
-      }
-      if (value === undefined) return null
-      return value
-    },
-    hasMeaningfulSnapshotDiff(beforeSnapshot, afterSnapshot) {
-      if (!beforeSnapshot || !afterSnapshot) return false
-      const normalizedBefore = this.normalizeSnapshotValue(beforeSnapshot)
-      const normalizedAfter = this.normalizeSnapshotValue(afterSnapshot)
-      return JSON.stringify(normalizedBefore) !== JSON.stringify(normalizedAfter)
-    },
-    mapChangeRow(change) {
-      const originalTitle = this.extractTitleText(change?.beforeData)
-      const originalAuthor = this.extractAuthorText(change?.beforeData)
-      const originalSeries = this.extractSeriesText(change?.beforeData)
-      const newTitle = this.extractTitleText(change?.afterData)
-      const newAuthor = this.extractAuthorText(change?.afterData)
-      const newSeries = this.extractSeriesText(change?.afterData)
-      const hasChange = this.hasMeaningfulSnapshotDiff(change?.beforeData, change?.afterData)
-      return {
-        id: change?.id,
-        libraryItemId: change?.libraryItemId,
-        createdAt: change?.createdAt,
-        isReverted: change?.revertStatus === 'reverted',
-        originalTitle,
-        originalAuthor,
-        originalSeries,
-        newTitle,
-        newAuthor,
-        newSeries,
-        hasChange
+    toggleSelected(libraryItemId, checked) {
+      if (checked) {
+        if (!this.selectedIds.includes(libraryItemId)) this.selectedIds.push(libraryItemId)
+      } else {
+        this.selectedIds = this.selectedIds.filter((id) => id !== libraryItemId)
       }
     },
     async loadSessions() {
@@ -306,6 +236,7 @@ export default {
         return null
       })
       if (!payload) return
+
       this.sessions = payload.sessions || []
       const activeSessionId = payload.activeSessionId || null
       if ((!this.selectedSessionId || !this.sessions.some((s) => s.id === this.selectedSessionId)) && this.sessions.length) {
@@ -324,20 +255,60 @@ export default {
     async selectSession(sessionId) {
       this.selectedSessionId = sessionId
       this.selectedIds = []
-      const payload = await this.$axios.$get(`/api/quick-match-sessions/${sessionId}`).catch((error) => {
-        const message = error?.response?.data || 'Failed to load session detail'
-        this.$toast.error(message)
-        return null
-      })
+      const payload = await this.$axios
+        .$get(`/api/quick-match-sessions/${sessionId}`, {
+          params: {
+            duplicateThreshold: this.duplicateThreshold
+          }
+        })
+        .catch((error) => {
+          const message = error?.response?.data || 'Failed to load session detail'
+          this.$toast.error(message)
+          return null
+        })
       if (!payload) return
       this.selectedSession = payload.session
-    },
-    toggleSelected(libraryItemId, checked) {
-      if (checked) {
-        if (!this.selectedIds.includes(libraryItemId)) this.selectedIds.push(libraryItemId)
-      } else {
-        this.selectedIds = this.selectedIds.filter((id) => id !== libraryItemId)
+      if (this.selectedSession?.duplicateGroups?.threshold) {
+        this.duplicateThreshold = Number(this.selectedSession.duplicateGroups.threshold)
       }
+    },
+    async applyThreshold() {
+      const next = Number(this.duplicateThreshold)
+      if (!Number.isFinite(next)) {
+        this.duplicateThreshold = 0.79
+      }
+      this.duplicateThreshold = Math.max(0.5, Math.min(0.98, Number(this.duplicateThreshold.toFixed(2))))
+      if (this.selectedSessionId) {
+        await this.selectSession(this.selectedSessionId)
+      }
+    },
+    async markNotDuplicates(group) {
+      if (!this.selectedSessionId || !group?.groupKey || !group?.groupFingerprint) return
+      this.suppressingGroupKey = group.groupKey
+      const payload = await this.$axios
+        .$post(
+          `/api/quick-match-sessions/${this.selectedSessionId}/duplicates/suppress`,
+          {
+            groupKey: group.groupKey,
+            groupFingerprint: group.groupFingerprint
+          },
+          {
+            params: {
+              duplicateThreshold: this.duplicateThreshold
+            }
+          }
+        )
+        .catch((error) => {
+          const message = error?.response?.data || 'Failed to suppress duplicate group'
+          this.$toast.error(message)
+          return null
+        })
+      this.suppressingGroupKey = null
+      if (!payload) return
+
+      this.selectedSession = payload.session
+      this.selectedIds = this.selectedIds.filter((id) => this.duplicateGroups.some((groupRow) => groupRow.members.some((member) => member.libraryItemId === id)))
+      this.$toast.success('Marked as Not Duplicates')
     },
     async revertSelected() {
       if (!this.selectedSessionId || !this.selectedIds.length) return
@@ -402,10 +373,23 @@ export default {
         this.$toast.success(`Completed ${res.completed} queued item${res.completed === 1 ? '' : 's'}`)
         await this.selectSession(this.selectedSessionId)
       }
+    },
+    startAutoRefresh() {
+      if (this.autoRefreshTimer) clearInterval(this.autoRefreshTimer)
+      this.autoRefreshTimer = setInterval(() => {
+        if (this.reverting || this.revertingAll || this.queueingFullMatch || this.suppressingGroupKey) return
+        if (!this.selectedSessionId) return
+        this.selectSession(this.selectedSessionId)
+      }, 15000)
     }
   },
   mounted() {
     this.loadSessions()
+    this.startAutoRefresh()
+  },
+  beforeDestroy() {
+    if (this.autoRefreshTimer) clearInterval(this.autoRefreshTimer)
+    this.autoRefreshTimer = null
   }
 }
 </script>
