@@ -149,6 +149,11 @@ export default {
           text: this.$strings.LabelSeriesProgress,
           value: 'progress',
           sublist: true
+        },
+        {
+          text: 'QC Status',
+          value: 'qc',
+          sublist: true
         }
       ]
     },
@@ -215,6 +220,11 @@ export default {
         {
           text: this.$strings.LabelProgress,
           value: 'progress',
+          sublist: true
+        },
+        {
+          text: 'QC Status',
+          value: 'qc',
           sublist: true
         },
         {
@@ -425,10 +435,6 @@ export default {
           name: this.$strings.LabelFinished
         },
         {
-          id: 'ticked',
-          name: 'Ticked'
-        },
-        {
           id: 'in-progress',
           name: this.$strings.LabelInProgress
         },
@@ -439,6 +445,14 @@ export default {
         {
           id: 'not-finished',
           name: this.$strings.LabelNotFinished
+        }
+      ]
+    },
+    qc() {
+      return [
+        {
+          id: 'ticked',
+          name: 'Ticked'
         },
         {
           id: 'unticked',

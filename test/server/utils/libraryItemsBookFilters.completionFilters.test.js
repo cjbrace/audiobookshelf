@@ -3,6 +3,24 @@ const Sequelize = require('sequelize')
 const libraryItemsBookFilters = require('../../../server/utils/queries/libraryItemsBookFilters')
 
 describe('libraryItemsBookFilters manual QC completion filters', () => {
+  it('maps qc.ticked to manual QC completed only', () => {
+    const ticked = libraryItemsBookFilters.getMediaGroupQuery('qc', 'ticked')
+    assert.deepStrictEqual(ticked.replacements, {})
+    assert.deepStrictEqual(ticked.mediaWhere, {
+      manualQcCompleted: true
+    })
+  })
+
+  it('maps qc.unticked to manual QC incomplete only', () => {
+    const unticked = libraryItemsBookFilters.getMediaGroupQuery('qc', 'unticked')
+    assert.deepStrictEqual(unticked.replacements, {})
+    assert.deepStrictEqual(unticked.mediaWhere, {
+      manualQcCompleted: {
+        [Sequelize.Op.or]: [null, false]
+      }
+    })
+  })
+
   it('maps progress.ticked to manual QC completed only', () => {
     const ticked = libraryItemsBookFilters.getMediaGroupQuery('progress', 'ticked')
     assert.deepStrictEqual(ticked.replacements, {})

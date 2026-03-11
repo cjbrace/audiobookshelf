@@ -104,7 +104,7 @@ export const actions = {
       if (state.settings.orderBy == 'media.metadata.publishedYear' || state.settings.orderBy == 'progress') {
         settingsUpdate.orderBy = 'media.metadata.title'
       }
-      const invalidFilters = ['series', 'authors', 'narrators', 'publishers', 'publishedDecades', 'languages', 'progress', 'issues', 'dbIssues', 'categories', 'specCategories', 'ebooks', 'abridged']
+      const invalidFilters = ['series', 'authors', 'narrators', 'publishers', 'publishedDecades', 'languages', 'progress', 'qc', 'issues', 'dbIssues', 'categories', 'specCategories', 'ebooks', 'abridged']
       const filterByFirstPart = (state.settings.filterBy || '').split('.').shift()
       if (invalidFilters.includes(filterByFirstPart)) {
         settingsUpdate.filterBy = 'all'

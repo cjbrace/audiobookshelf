@@ -27,6 +27,9 @@ async function up({ context: { queryInterface, logger } }) {
     allowNull: false,
     defaultValue: false
   })
+  // Explicit backfill policy for Task 23:
+  // do not derive manual QC from playback/media progress; existing rows start unticked.
+  await queryInterface.sequelize.query('UPDATE books SET manualQcCompleted = 0')
 
   logger.info(`${loggerPrefix} added column "manualQcCompleted" to "books"`)
   logger.info(`${loggerPrefix} UPGRADE END: ${migrationName}`)

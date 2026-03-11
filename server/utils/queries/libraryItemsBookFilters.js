@@ -112,7 +112,15 @@ module.exports = {
     let mediaWhere = {}
     const replacements = {}
 
-    if (group === 'progress') {
+    if (group === 'qc') {
+      if (value === 'ticked') {
+        mediaWhere['manualQcCompleted'] = true
+      } else if (value === 'unticked') {
+        mediaWhere['manualQcCompleted'] = {
+          [Sequelize.Op.or]: [null, false]
+        }
+      }
+    } else if (group === 'progress') {
       if (value === 'unticked') {
         mediaWhere['manualQcCompleted'] = {
           [Sequelize.Op.or]: [null, false]
@@ -601,7 +609,7 @@ module.exports = {
     if (collapseseries) {
       let seriesBookWhere = null
       let seriesWhere = null
-      if (filterGroup === 'progress') {
+      if (filterGroup === 'progress' || filterGroup === 'qc') {
         seriesWhere = this.getCollapseSeriesMediaProgressFilter(filterValue)
       } else if (filterGroup === 'missing' && filterValue === 'authors') {
         seriesWhere = {

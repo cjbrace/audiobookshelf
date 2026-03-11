@@ -25,7 +25,7 @@ module.exports = {
     let filterValue = null
     let filterGroup = null
     if (filterBy) {
-      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages']
+      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'qc', 'narrators', 'publishers', 'languages']
       const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
       filterGroup = group || filterBy
       filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
@@ -71,6 +71,13 @@ module.exports = {
     } else if (filterGroup === 'languages') {
       attrQuery = 'SELECT count(*) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND bs.bookId = b.id AND b.language = :filterValue'
       userPermissionBookWhere.replacements.filterValue = filterValue
+    } else if (filterGroup === 'qc') {
+      if (filterValue === 'unticked') {
+        attrQuery = 'SELECT count(*) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND bs.bookId = b.id AND (b.manualQcCompleted IS NULL OR b.manualQcCompleted = 0)'
+      } else if (filterValue === 'ticked') {
+        const qcQuery = 'SELECT count(*) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND bs.bookId = b.id AND (b.manualQcCompleted IS NULL OR b.manualQcCompleted = 0)'
+        seriesWhere.push(Sequelize.where(Sequelize.literal(`(${qcQuery})`), 0))
+      }
     } else if (filterGroup === 'progress') {
       if (filterValue === 'not-finished') {
         attrQuery = 'SELECT count(*) FROM books b, bookSeries bs LEFT OUTER JOIN mediaProgresses mp ON mp.mediaItemId = b.id AND mp.userId = :userId WHERE bs.seriesId = series.id AND bs.bookId = b.id AND (mp.isFinished IS NULL OR mp.isFinished = 0)'
