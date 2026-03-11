@@ -46,7 +46,6 @@
                   <tr>
                     <th class="text-left px-3 py-2 w-56">Group</th>
                     <th class="text-left px-3 py-2">Books</th>
-                    <th class="text-left px-3 py-2 w-40">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -56,6 +55,9 @@
                       <div class="text-lg font-semibold truncate" :title="group.titleHint || '-'">{{ group.titleHint || '-' }}</div>
                       <div class="text-base text-gray-200 truncate" :title="group.authorHint || '-'">{{ group.authorHint || '-' }}</div>
                       <div class="text-sm text-gray-200 mt-1">Score {{ formatScore(group.score) }}</div>
+                      <ui-btn color="bg-bg border border-white/20" small class="mt-2" :loading="suppressingGroupKey === group.groupKey" @click="markNotDuplicates(group)">
+                        Not Duplicates
+                      </ui-btn>
                     </td>
                     <td class="px-3 py-3">
                       <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
@@ -90,11 +92,6 @@
                           </div>
                         </div>
                       </div>
-                    </td>
-                    <td class="px-3 py-3">
-                      <ui-btn color="bg-bg border border-white/20" small :loading="suppressingGroupKey === group.groupKey" @click="markNotDuplicates(group)">
-                        Not Duplicates
-                      </ui-btn>
                     </td>
                   </tr>
                 </tbody>
