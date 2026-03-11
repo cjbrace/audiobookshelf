@@ -36,10 +36,12 @@ function makeLiveState(libraryItemId, title, author, series = '') {
 describe('QuickMatchSessionManager duplicate grouping', () => {
   const originalGetLiveBookStates = QuickMatchSessionManager.getLiveBookStates
   const originalListDuplicateSuppressions = QuickMatchSessionManager.listDuplicateSuppressions
+  const originalBuildDuplicateGroupsForItemIds = QuickMatchSessionManager.buildDuplicateGroupsForItemIds
 
   afterEach(() => {
     QuickMatchSessionManager.getLiveBookStates = originalGetLiveBookStates
     QuickMatchSessionManager.listDuplicateSuppressions = originalListDuplicateSuppressions
+    QuickMatchSessionManager.buildDuplicateGroupsForItemIds = originalBuildDuplicateGroupsForItemIds
   })
 
   it('builds fuzzy-positive groups and includes exact duplicates', async () => {
@@ -120,5 +122,46 @@ describe('QuickMatchSessionManager duplicate grouping', () => {
     assert.strictEqual(strict.groupedCount, 1)
     const strictIds = strict.groups[0].members.map((member) => member.libraryItemId).sort()
     assert.deepStrictEqual(strictIds, ['a', 'c'])
+  })
+
+  it('processes only targeted duplicate groups by item ids', async () => {
+    const calls = []
+    QuickMatchSessionManager.buildDuplicateGroupsForItemIds = async (sessionId, libraryItemIds, threshold) => {
+      calls.push({ sessionId, libraryItemIds, threshold })
+      return {
+        threshold: Number(threshold || 0.79),
+        groupedCount: 0,
+        suppressedCount: 0,
+        sourceItemsCount: libraryItemIds.length,
+        groups: []
+      }
+    }
+
+    const result = await QuickMatchSessionManager.processDuplicateTargets(
+      'session-targeted',
+      [
+        { token: 'group-a', libraryItemIds: ['a1', 'a2', 'a2'] },
+        { token: 'group-b', libraryItemIds: ['b1'] }
+      ],
+      0.82
+    )
+
+    assert.strictEqual(calls.length, 2)
+    assert.deepStrictEqual(calls[0], {
+      sessionId: 'session-targeted',
+      libraryItemIds: ['a1', 'a2'],
+      threshold: 0.82
+    })
+    assert.deepStrictEqual(calls[1], {
+      sessionId: 'session-targeted',
+      libraryItemIds: ['b1'],
+      threshold: 0.82
+    })
+    assert.strictEqual(result.requestedTargetCount, 2)
+    assert.strictEqual(result.processedTargetCount, 2)
+    assert.deepStrictEqual(
+      result.processedTargets.map((target) => target.token),
+      ['group-a', 'group-b']
+    )
   })
 })

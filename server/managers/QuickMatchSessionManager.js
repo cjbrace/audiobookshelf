@@ -678,6 +678,158 @@ class QuickMatchSessionManager {
     }
   }
 
+  async buildDuplicateGroupsForItemIds(sessionId, libraryItemIds, requestedThreshold = null) {
+    const threshold = this.resolveDuplicateThreshold(requestedThreshold)
+    const liveStatesById = await this.getLiveBookStates(libraryItemIds)
+    const duplicateItems = Object.values(liveStatesById || {})
+    const sourceItemsCount = duplicateItems.length
+
+    if (!duplicateItems.length) {
+      return {
+        threshold,
+        groupedCount: 0,
+        suppressedCount: 0,
+        sourceItemsCount: 0,
+        groups: []
+      }
+    }
+
+    const parent = {}
+    const find = (id) => {
+      if (parent[id] === undefined) parent[id] = id
+      if (parent[id] !== id) parent[id] = find(parent[id])
+      return parent[id]
+    }
+    const union = (a, b) => {
+      const rootA = find(a)
+      const rootB = find(b)
+      if (rootA !== rootB) parent[rootB] = rootA
+    }
+
+    const pairScores = {}
+    for (let i = 0; i < duplicateItems.length; i++) {
+      const itemA = duplicateItems[i]
+      for (let j = i + 1; j < duplicateItems.length; j++) {
+        const itemB = duplicateItems[j]
+        if (!itemA.titleNorm || !itemB.titleNorm || !itemA.authorNorm || !itemB.authorNorm) continue
+        const pair = this.shouldPairAsDuplicate(itemA, itemB, threshold)
+        if (!pair.isDuplicate) continue
+        const pairId = [itemA.libraryItemId, itemB.libraryItemId].sort().join('|')
+        pairScores[pairId] = pair.score
+        union(itemA.libraryItemId, itemB.libraryItemId)
+      }
+    }
+
+    const buckets = {}
+    duplicateItems.forEach((item) => {
+      const root = find(item.libraryItemId)
+      if (!buckets[root]) buckets[root] = []
+      buckets[root].push(item)
+    })
+
+    const suppressionByGroupKey = await this.listDuplicateSuppressions(sessionId)
+    const groups = []
+    let suppressedCount = 0
+
+    Object.values(buckets).forEach((membersRaw) => {
+      if (membersRaw.length <= 1) return
+      const members = membersRaw
+        .map((member) => ({
+          libraryItemId: member.libraryItemId,
+          title: member.title,
+          author: member.author,
+          series: member.series,
+          relPath: member.relPath || '',
+          coverPath: member.coverPath,
+          updatedAt: member.updatedAt,
+          materialKey: member.materialKey,
+          titleNorm: member.titleNorm,
+          authorNorm: member.authorNorm
+        }))
+        .sort((a, b) => {
+          const t = String(a.title || '').localeCompare(String(b.title || ''))
+          if (t !== 0) return t
+          return String(a.libraryItemId).localeCompare(String(b.libraryItemId))
+        })
+
+      const groupKey = this.buildDuplicateGroupKey(members)
+      const groupFingerprint = this.buildDuplicateGroupFingerprint(members)
+      if (suppressionByGroupKey[groupKey] && suppressionByGroupKey[groupKey] === groupFingerprint) {
+        suppressedCount++
+        return
+      }
+
+      let strongestPairScore = 0
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          const pairId = [members[i].libraryItemId, members[j].libraryItemId].sort().join('|')
+          if (pairScores[pairId] !== undefined) {
+            strongestPairScore = Math.max(strongestPairScore, pairScores[pairId])
+          }
+        }
+      }
+
+      groups.push({
+        groupKey,
+        groupFingerprint,
+        score: Number(strongestPairScore.toFixed(4)),
+        size: members.length,
+        titleHint: members[0]?.title || '',
+        authorHint: members[0]?.author || '',
+        members
+      })
+    })
+
+    groups.sort((a, b) => {
+      if (b.size !== a.size) return b.size - a.size
+      if (b.score !== a.score) return b.score - a.score
+      return String(a.titleHint || '').localeCompare(String(b.titleHint || ''))
+    })
+
+    return {
+      threshold,
+      groupedCount: groups.length,
+      suppressedCount,
+      sourceItemsCount,
+      groups
+    }
+  }
+
+  normalizeTargetLibraryItemIds(libraryItemIds) {
+    const ids = Array.isArray(libraryItemIds) ? libraryItemIds : []
+    return [...new Set(ids.filter((id) => typeof id === 'string' && !!id))]
+  }
+
+  async processDuplicateTargets(sessionId, targets = [], requestedThreshold = null) {
+    const normalizedTargets = (Array.isArray(targets) ? targets : [])
+      .map((target, index) => {
+        const token = typeof target?.token === 'string' && target.token.trim() ? target.token.trim() : `target-${index + 1}`
+        const libraryItemIds = this.normalizeTargetLibraryItemIds(target?.libraryItemIds)
+        return { token, libraryItemIds }
+      })
+      .filter((target) => target.libraryItemIds.length > 0)
+
+    const processedTargets = []
+    for (const target of normalizedTargets) {
+      const duplicateGroups = await this.buildDuplicateGroupsForItemIds(sessionId, target.libraryItemIds, requestedThreshold)
+      Logger.info(
+        `[QuickMatchSessionManager] Processed duplicate target session=${sessionId} token=${target.token} requested_items=${target.libraryItemIds.length} grouped=${duplicateGroups.groupedCount}`
+      )
+      processedTargets.push({
+        token: target.token,
+        processedAt: new Date().toISOString(),
+        processedItemIds: target.libraryItemIds,
+        duplicateGroups
+      })
+    }
+
+    return {
+      requestedTargetCount: normalizedTargets.length,
+      processedTargetCount: processedTargets.length,
+      processedTargets
+    }
+  }
+
   async getSessionWithChanges(sessionId, limit = 1000, duplicateThreshold = null) {
     const session = await Database.quickMatchSessionModel.findByPk(sessionId, {
       include: [{ model: Database.userModel, as: 'startedByUser', attributes: ['id', 'username'] }]

@@ -10,6 +10,9 @@
           <input v-model.number="duplicateThreshold" type="range" min="0.5" max="0.98" step="0.01" class="w-32" @change="normalizeThreshold" />
           <input v-model.number="duplicateThreshold" type="number" min="0.5" max="0.98" step="0.01" class="w-20 text-xs bg-black/30 border border-white/20 rounded px-2 py-1" @change="normalizeThreshold" />
           <ui-btn color="bg-primary" small :loading="evaluating" @click="evaluateDuplicates">Evaluate Duplicates</ui-btn>
+          <ui-btn color="bg-red-700 hover:bg-red-600" small :disabled="!doneGroupCount || !sessionId" :loading="processingDoneGroups" @click="processDoneGroups">
+            Process Done ({{ doneGroupCount }})
+          </ui-btn>
           <ui-btn color="bg-bg border border-white/20" small :loading="refreshing" @click="refreshDuplicates">Refresh Results</ui-btn>
         </div>
 
@@ -55,13 +58,26 @@
                       <div class="text-lg font-semibold truncate" :title="group.titleHint || '-'">{{ group.titleHint || '-' }}</div>
                       <div class="text-base text-gray-200 truncate" :title="group.authorHint || '-'">{{ group.authorHint || '-' }}</div>
                       <div class="text-sm text-gray-200 mt-1">Score {{ formatScore(group.score) }}</div>
-                      <ui-btn color="bg-bg border border-white/20" small class="mt-2" :loading="suppressingGroupKey === group.groupKey" @click="markNotDuplicates(group)">
-                        Not Duplicates
-                      </ui-btn>
+                      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                        <ui-btn color="bg-bg border border-white/20" small :loading="suppressingGroupKey === group.groupKey" @click="markNotDuplicates(group)">
+                          Not Duplicates
+                        </ui-btn>
+                        <ui-btn color="bg-yellow-700 hover:bg-yellow-600" small :loading="isProcessingGroup(group)" @click="processGroup(group)">
+                          Process
+                        </ui-btn>
+                        <ui-btn :color="isGroupDone(group) ? 'bg-error' : 'bg-success'" small @click="toggleGroupDone(group)">
+                          {{ isGroupDone(group) ? 'Done (Active)' : 'Done' }}
+                        </ui-btn>
+                      </div>
                     </td>
                     <td class="px-3 py-3">
                       <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
-                        <div v-for="member in group.members" :key="member.libraryItemId" class="bg-black/20 border border-white/10 rounded p-3">
+                        <div
+                          v-for="member in group.members"
+                          :key="member.libraryItemId"
+                          class="border rounded p-3"
+                          :class="isEditedMember(member.libraryItemId) ? 'bg-yellow-900/25 border-yellow-500/60' : 'bg-black/20 border-white/10'"
+                        >
                           <div class="flex gap-3 items-start">
                             <nuxt-link :to="`/item/${member.libraryItemId}`" class="w-20 h-20 rounded overflow-hidden bg-black/40 border border-white/10 shrink-0">
                               <img :src="getCoverSrc(member)" :alt="member.title || 'cover'" class="w-full h-full object-cover" />
@@ -129,12 +145,15 @@ export default {
       evaluating: false,
       refreshing: false,
       suppressingGroupKey: null,
+      processingDoneGroups: false,
       evaluatedOnce: false,
       lastEvaluatedAt: null,
       lastReason: '',
       loadedFromCache: false,
       libraryItemCache: {},
-      reassessTimer: null
+      doneGroupState: {},
+      editedMemberState: {},
+      processingGroupState: {}
     }
   },
   computed: {
@@ -155,6 +174,9 @@ export default {
     },
     sourceItemsCount() {
       return Number(this.duplicatePayload?.sourceItemsCount || 0)
+    },
+    doneGroupCount() {
+      return this.duplicateGroups.filter((group) => this.isGroupDone(group)).length
     },
     lastReasonText() {
       if (!this.evaluatedOnce) return ''
@@ -220,6 +242,8 @@ export default {
         this.lastEvaluatedAt = cached.lastEvaluatedAt || null
         this.lastReason = cached.lastReason || ''
         this.evaluatedOnce = !!cached.evaluatedOnce
+        this.doneGroupState = cached.doneGroupState && typeof cached.doneGroupState === 'object' ? cached.doneGroupState : {}
+        this.editedMemberState = cached.editedMemberState && typeof cached.editedMemberState === 'object' ? cached.editedMemberState : {}
         this.loadedFromCache = true
       } catch (error) {
         console.error('[duplicates] Failed to load cached results', error)
@@ -233,9 +257,89 @@ export default {
         duplicatePayload: this.duplicatePayload,
         lastEvaluatedAt: this.lastEvaluatedAt,
         lastReason: this.lastReason,
-        evaluatedOnce: this.evaluatedOnce
+        evaluatedOnce: this.evaluatedOnce,
+        doneGroupState: this.doneGroupState,
+        editedMemberState: this.editedMemberState
       }
       localStorage.setItem(this.cacheKey(), JSON.stringify(payload))
+    },
+    groupStateKey(group) {
+      return `${group?.groupKey || ''}||${group?.groupFingerprint || ''}`
+    },
+    isGroupDone(group) {
+      return !!this.doneGroupState[this.groupStateKey(group)]
+    },
+    toggleGroupDone(group) {
+      const key = this.groupStateKey(group)
+      if (!key) return
+      if (this.doneGroupState[key]) {
+        this.$delete(this.doneGroupState, key)
+      } else {
+        this.$set(this.doneGroupState, key, true)
+      }
+      this.persistCachedEvaluation()
+    },
+    isProcessingGroup(group) {
+      return !!this.processingGroupState[this.groupStateKey(group)]
+    },
+    isEditedMember(libraryItemId) {
+      return !!this.editedMemberState[libraryItemId]
+    },
+    markMemberEdited(libraryItemId) {
+      if (!libraryItemId || this.editedMemberState[libraryItemId]) return
+      this.$set(this.editedMemberState, libraryItemId, true)
+      this.persistCachedEvaluation()
+    },
+    normalizeGroupForDisplay(group) {
+      const members = Array.isArray(group?.members) ? group.members : []
+      return {
+        ...group,
+        size: members.length,
+        titleHint: members[0]?.title || group?.titleHint || '',
+        authorHint: members[0]?.author || group?.authorHint || ''
+      }
+    },
+    applyGroups(nextGroups) {
+      const groups = Array.isArray(nextGroups) ? nextGroups.map((group) => this.normalizeGroupForDisplay(group)).filter((group) => group.size > 1) : []
+      this.duplicatePayload = {
+        ...(this.duplicatePayload || {}),
+        groups,
+        groupedCount: groups.length
+      }
+      this.persistCachedEvaluation()
+    },
+    replaceProcessedGroup(existingGroup, replacementGroups) {
+      const currentGroups = Array.isArray(this.duplicateGroups) ? [...this.duplicateGroups] : []
+      const existingKey = this.groupStateKey(existingGroup)
+      const existingIndex = currentGroups.findIndex((group) => this.groupStateKey(group) === existingKey)
+      if (existingIndex === -1) return
+
+      const normalizedReplacements = Array.isArray(replacementGroups) ? replacementGroups.map((group) => this.normalizeGroupForDisplay(group)).filter((group) => group.size > 1) : []
+      currentGroups.splice(existingIndex, 1, ...normalizedReplacements)
+      this.applyGroups(currentGroups)
+
+      if (this.doneGroupState[existingKey]) {
+        this.$delete(this.doneGroupState, existingKey)
+      }
+    },
+    removeGroup(group) {
+      const key = this.groupStateKey(group)
+      const currentGroups = Array.isArray(this.duplicateGroups) ? this.duplicateGroups.filter((entry) => this.groupStateKey(entry) !== key) : []
+      this.applyGroups(currentGroups)
+      if (this.doneGroupState[key]) {
+        this.$delete(this.doneGroupState, key)
+      }
+    },
+    removeMemberFromVisibleGroups(libraryItemId) {
+      if (!libraryItemId) return
+      const nextGroups = (Array.isArray(this.duplicateGroups) ? this.duplicateGroups : [])
+        .map((group) => ({
+          ...group,
+          members: (Array.isArray(group.members) ? group.members : []).filter((member) => member.libraryItemId !== libraryItemId)
+        }))
+        .map((group) => this.normalizeGroupForDisplay(group))
+        .filter((group) => group.size > 1)
+      this.applyGroups(nextGroups)
     },
     async evaluateDuplicates() {
       this.normalizeThreshold()
@@ -301,23 +405,9 @@ export default {
       }
       return item
     },
-    async playMember(member) {
-      const item = await this.fetchLibraryItem(member.libraryItemId)
-      if (!item) return
-      const authors = Array.isArray(item.media?.metadata?.authors) ? item.media.metadata.authors.map((author) => author?.name).filter((name) => !!name) : []
-      const queueItem = {
-        libraryItemId: item.id,
-        libraryId: item.libraryId,
-        episodeId: null,
-        title: item.media?.metadata?.title || member.title || '',
-        subtitle: authors.join(', ') || item.media?.metadata?.authorName || member.author || '',
-        caption: '',
-        duration: item.media?.duration || null,
-        coverPath: item.media?.coverPath || member.coverPath || null
-      }
+    playMember(member) {
       this.$eventBus.$emit('play-item', {
-        libraryItemId: item.id,
-        queueItems: [queueItem]
+        libraryItemId: member.libraryItemId
       })
     },
     async editMember(member, tab = 'details') {
@@ -360,13 +450,13 @@ export default {
           await this.$axios
             .$delete(`/api/items/${member.libraryItemId}?hard=${hardDelete ? 1 : 0}`)
             .then(() => {
+              this.removeMemberFromVisibleGroups(member.libraryItemId)
               this.$toast.success(this.$strings.ToastItemDeletedSuccess)
             })
             .catch((error) => {
               console.error('Failed to delete item', error)
               this.$toast.error(this.$strings.ToastItemDeletedFailed)
             })
-          await this.refreshDuplicates()
         },
         type: 'yesNo'
       }
@@ -376,18 +466,108 @@ export default {
       if (!libraryItemId) return false
       return this.duplicateGroups.some((group) => (group.members || []).some((member) => member.libraryItemId === libraryItemId))
     },
-    scheduleReassessment() {
-      if (!this.evaluatedOnce) return
-      if (this.reassessTimer) clearTimeout(this.reassessTimer)
-      this.reassessTimer = setTimeout(() => {
-        this.refreshDuplicates()
-      }, 300)
-    },
     onLibraryItemUpdated(item) {
-      if (this.isGroupMember(item?.id)) this.scheduleReassessment()
+      if (!this.isGroupMember(item?.id)) return
+      this.markMemberEdited(item.id)
     },
     onLibraryItemRemoved(item) {
-      if (this.isGroupMember(item?.id)) this.scheduleReassessment()
+      if (!this.isGroupMember(item?.id)) return
+      this.removeMemberFromVisibleGroups(item.id)
+    },
+    async processGroup(group) {
+      if (!this.sessionId) {
+        this.$toast.error('Run Evaluate Duplicates before processing groups')
+        return
+      }
+      const stateKey = this.groupStateKey(group)
+      const libraryItemIds = (Array.isArray(group?.members) ? group.members : []).map((member) => member.libraryItemId).filter((id) => !!id)
+      if (!libraryItemIds.length) return
+
+      this.$set(this.processingGroupState, stateKey, true)
+      const payload = await this.$axios
+        .$post(
+          `/api/quick-match-sessions/${this.sessionId}/duplicates/process-group`,
+          {
+            token: stateKey,
+            libraryItemIds
+          },
+          {
+            params: {
+              duplicateThreshold: this.duplicateThreshold
+            }
+          }
+        )
+        .catch((error) => {
+          const message = error?.response?.data || 'Failed to process group'
+          this.$toast.error(message)
+          return null
+        })
+      this.$delete(this.processingGroupState, stateKey)
+      if (!payload?.processedTarget) return
+
+      this.replaceProcessedGroup(group, payload.processedTarget.duplicateGroups?.groups || [])
+      this.$toast.success('Processed group')
+    },
+    async processDoneGroups() {
+      if (!this.sessionId) {
+        this.$toast.error('Run Evaluate Duplicates before processing groups')
+        return
+      }
+      const doneTargets = this.duplicateGroups
+        .filter((group) => this.isGroupDone(group))
+        .map((group) => ({
+          key: this.groupStateKey(group),
+          group,
+          token: this.groupStateKey(group),
+          libraryItemIds: (Array.isArray(group.members) ? group.members : []).map((member) => member.libraryItemId).filter((id) => !!id)
+        }))
+        .filter((target) => target.libraryItemIds.length > 0)
+      if (!doneTargets.length) {
+        this.$toast.info('No Done groups to process')
+        return
+      }
+
+      this.processingDoneGroups = true
+      const payload = await this.$axios
+        .$post(
+          `/api/quick-match-sessions/${this.sessionId}/duplicates/process-done`,
+          {
+            targets: doneTargets.map((target) => ({
+              token: target.token,
+              libraryItemIds: target.libraryItemIds
+            }))
+          },
+          {
+            params: {
+              duplicateThreshold: this.duplicateThreshold
+            }
+          }
+        )
+        .catch((error) => {
+          const message = error?.response?.data || 'Failed to process done groups'
+          this.$toast.error(message)
+          return null
+        })
+      this.processingDoneGroups = false
+      if (!payload?.processedTargets?.length) return
+
+      const targetByKey = doneTargets.reduce((acc, target) => {
+        acc[target.key] = target
+        return acc
+      }, {})
+      payload.processedTargets.forEach((processedTarget) => {
+        const target = targetByKey[processedTarget.token]
+        if (!target) return
+        this.replaceProcessedGroup(target.group, processedTarget.duplicateGroups?.groups || [])
+      })
+
+      doneTargets.forEach((target) => {
+        if (this.doneGroupState[target.key]) {
+          this.$delete(this.doneGroupState, target.key)
+        }
+      })
+      this.persistCachedEvaluation()
+      this.$toast.success('Processed Done groups')
     },
     async markNotDuplicates(group) {
       if (!this.sessionId || !group?.groupKey || !group?.groupFingerprint) {
@@ -417,7 +597,12 @@ export default {
       this.suppressingGroupKey = null
       if (!payload) return
 
-      await this.refreshDuplicates()
+      this.removeGroup(group)
+      this.duplicatePayload = {
+        ...(this.duplicatePayload || {}),
+        suppressedCount: this.suppressedGroupCount + 1
+      }
+      this.persistCachedEvaluation()
       this.$toast.success('Marked as Not Duplicates')
     }
   },
@@ -427,7 +612,6 @@ export default {
     this.$root?.socket?.on('item_removed', this.onLibraryItemRemoved)
   },
   beforeDestroy() {
-    if (this.reassessTimer) clearTimeout(this.reassessTimer)
     this.$root?.socket?.off('item_updated', this.onLibraryItemUpdated)
     this.$root?.socket?.off('item_removed', this.onLibraryItemRemoved)
   }

@@ -71,6 +71,56 @@ class QuickMatchSessionController {
     res.json({ suppression, session })
   }
 
+  async processDuplicateGroup(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+    const libraryItemIds = Array.isArray(req.body?.libraryItemIds) ? req.body.libraryItemIds.filter((id) => typeof id === 'string' && id) : []
+    if (!libraryItemIds.length) return res.status(400).send('Missing libraryItemIds')
+
+    const duplicateThreshold = req.query?.duplicateThreshold !== undefined ? Number(req.query.duplicateThreshold) : Number(req.body?.duplicateThreshold)
+    const processed = await QuickMatchSessionManager.processDuplicateTargets(
+      req.params.id,
+      [{ token: token || 'group', libraryItemIds }],
+      duplicateThreshold
+    )
+    const processedTarget = processed.processedTargets?.[0] || null
+    if (!processedTarget) return res.status(400).send('Unable to process duplicate group')
+
+    res.json({
+      sessionId: req.params.id,
+      processedTarget,
+      summary: {
+        requestedTargetCount: processed.requestedTargetCount,
+        processedTargetCount: processed.processedTargetCount
+      }
+    })
+  }
+
+  async processDoneDuplicateGroups(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+
+    const targets = Array.isArray(req.body?.targets)
+      ? req.body.targets.map((target) => ({
+          token: typeof target?.token === 'string' ? target.token : '',
+          libraryItemIds: Array.isArray(target?.libraryItemIds) ? target.libraryItemIds : []
+        }))
+      : []
+    if (!targets.length) return res.status(400).send('Missing targets')
+
+    const duplicateThreshold = req.query?.duplicateThreshold !== undefined ? Number(req.query.duplicateThreshold) : Number(req.body?.duplicateThreshold)
+    const processed = await QuickMatchSessionManager.processDuplicateTargets(req.params.id, targets, duplicateThreshold)
+
+    res.json({
+      sessionId: req.params.id,
+      processedTargets: processed.processedTargets,
+      summary: {
+        requestedTargetCount: processed.requestedTargetCount,
+        processedTargetCount: processed.processedTargetCount
+      }
+    })
+  }
+
   async revert(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     const libraryItemIds = Array.isArray(req.body?.libraryItemIds) ? req.body.libraryItemIds.filter((id) => typeof id === 'string' && id) : null
