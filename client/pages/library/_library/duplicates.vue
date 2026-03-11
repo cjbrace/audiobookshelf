@@ -13,68 +13,85 @@
           <ui-btn color="bg-bg border border-white/20" small :loading="refreshing" @click="refreshDuplicates">Refresh Results</ui-btn>
         </div>
 
-        <p class="text-sm text-gray-300 mb-4">
-          Fuzzy duplicate grouping uses title + author. Series is assist-only. Groups auto-drop when they become singletons.
+        <p class="text-base text-gray-300 mb-4">
+          Fuzzy duplicate grouping uses title + author. Series is assist-only. Results are cached locally until you run Evaluate/Refresh.
         </p>
 
-        <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-xs text-gray-300">
+        <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-sm text-gray-200">
           <div class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Scope: Current library</span>
             <span>Books scanned: {{ sourceItemsCount }}</span>
             <span>Groups: {{ duplicateGroupCount }}</span>
             <span>Suppressed: {{ suppressedGroupCount }}</span>
             <span v-if="lastEvaluatedAt">Last evaluated: {{ formatTime(lastEvaluatedAt) }}</span>
+            <span v-if="loadedFromCache" class="text-blue-200">Showing cached results</span>
           </div>
-          <div v-if="lastReasonText" class="mt-2 text-gray-400">{{ lastReasonText }}</div>
+          <div v-if="lastReasonText" class="mt-2 text-gray-300">{{ lastReasonText }}</div>
         </div>
 
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40">
-          <div v-if="!evaluatedOnce" class="text-sm text-gray-300">
-            Duplicate discovery has not run yet. Click <span class="font-semibold">Evaluate Duplicates</span> to scan the current library now.
+          <div v-if="!evaluatedOnce" class="text-base text-gray-200">
+            Duplicate discovery has not run yet for this screen. Click <span class="font-semibold">Evaluate Duplicates</span> to scan the current library.
           </div>
 
           <template v-else>
-            <div v-if="!duplicateGroups.length" class="text-sm text-gray-300">
+            <div v-if="!duplicateGroups.length" class="text-base text-gray-200">
               <p>No duplicate groups found for this run.</p>
-              <p class="text-xs text-gray-400 mt-1">Try lowering the threshold, then click Evaluate Duplicates again.</p>
+              <p class="text-sm text-gray-300 mt-1">Try lowering the threshold, then click Evaluate Duplicates again.</p>
             </div>
 
             <div v-else class="overflow-auto max-h-[68vh] border border-white/15 rounded">
-              <table class="w-full text-sm table-fixed">
+              <table class="w-full text-base table-fixed">
                 <thead class="bg-black/30 sticky top-0">
                   <tr>
-                    <th class="text-left px-2 py-2 w-44">Group</th>
-                    <th class="text-left px-2 py-2">Books</th>
-                    <th class="text-left px-2 py-2 w-36">Actions</th>
+                    <th class="text-left px-3 py-2 w-56">Group</th>
+                    <th class="text-left px-3 py-2">Books</th>
+                    <th class="text-left px-3 py-2 w-40">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="group in duplicateGroups" :key="group.groupKey + group.groupFingerprint" class="border-t border-white/10 align-top">
-                    <td class="px-2 py-3">
-                      <div class="text-xs text-gray-300">{{ group.size }} items</div>
-                      <div class="font-semibold truncate" :title="group.titleHint || '-'">{{ group.titleHint || '-' }}</div>
-                      <div class="text-xs text-gray-400 truncate" :title="group.authorHint || '-'">{{ group.authorHint || '-' }}</div>
-                      <div class="text-xxs text-gray-500 mt-1">Score {{ group.score }}</div>
+                    <td class="px-3 py-3">
+                      <div class="text-sm text-gray-200">{{ group.size }} items</div>
+                      <div class="text-lg font-semibold truncate" :title="group.titleHint || '-'">{{ group.titleHint || '-' }}</div>
+                      <div class="text-base text-gray-200 truncate" :title="group.authorHint || '-'">{{ group.authorHint || '-' }}</div>
+                      <div class="text-sm text-gray-200 mt-1">Score {{ formatScore(group.score) }}</div>
                     </td>
-                    <td class="px-2 py-3">
-                      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                        <div v-for="member in group.members" :key="member.libraryItemId" class="bg-black/20 border border-white/10 rounded p-2">
-                          <div class="flex gap-2 items-start">
-                            <nuxt-link :to="`/item/${member.libraryItemId}`" class="w-10 h-14 rounded overflow-hidden bg-black/40 border border-white/10 shrink-0">
+                    <td class="px-3 py-3">
+                      <div class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+                        <div v-for="member in group.members" :key="member.libraryItemId" class="bg-black/20 border border-white/10 rounded p-3">
+                          <div class="flex gap-3 items-start">
+                            <nuxt-link :to="`/item/${member.libraryItemId}`" class="w-20 h-20 rounded overflow-hidden bg-black/40 border border-white/10 shrink-0">
                               <img :src="getCoverSrc(member)" :alt="member.title || 'cover'" class="w-full h-full object-cover" />
                             </nuxt-link>
-                            <div class="min-w-0">
-                              <nuxt-link :to="`/item/${member.libraryItemId}`" class="block font-semibold truncate hover:underline" :title="member.title || '-'">
+                            <div class="min-w-0 w-full">
+                              <nuxt-link :to="`/item/${member.libraryItemId}`" class="block text-lg font-semibold truncate hover:underline" :title="member.title || '-'">
                                 {{ member.title || '-' }}
                               </nuxt-link>
-                              <p class="text-xs text-gray-300 truncate" :title="member.author || '-'">{{ member.author || '-' }}</p>
-                              <p class="text-xxs text-gray-400 truncate" :title="member.series || '-'">{{ member.series || '-' }}</p>
+                              <p class="text-base text-gray-200 truncate" :title="member.author || '-'">{{ member.author || '-' }}</p>
+                              <p class="text-base text-gray-300 truncate" :title="member.series || '-'">{{ member.series || '-' }}</p>
+                              <p class="text-sm text-gray-300 truncate mt-0.5" :title="pendingPathSuffix(member)">{{ pendingPathSuffix(member) }}</p>
                             </div>
+                          </div>
+                          <div class="mt-2 flex items-center gap-1.5">
+                            <ui-btn small color="bg-success/80" @click="playMember(member)">
+                              <span class="material-symbols text-lg">play_arrow</span>
+                            </ui-btn>
+                            <ui-btn small color="bg-warning/70" @click="editMember(member)">
+                              <span class="material-symbols text-lg">edit</span>
+                            </ui-btn>
+                            <ui-btn small color="bg-bg border border-white/20" @click="toggleSelectMember(member)">
+                              <span class="material-symbols text-lg">{{ isSelected(member.libraryItemId) ? 'radio_button_checked' : 'radio_button_unchecked' }}</span>
+                            </ui-btn>
+                            <ui-btn small color="bg-bg border border-white/20" @click="$router.push(`/item/${member.libraryItemId}`)">
+                              <span class="material-symbols text-lg">open_in_new</span>
+                            </ui-btn>
+                            <ui-context-menu-dropdown :items="memberMenuItems(member)" @action="memberMenuAction(member, $event)" />
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td class="px-2 py-3">
+                    <td class="px-3 py-3">
                       <ui-btn color="bg-bg border border-white/20" small :loading="suppressingGroupKey === group.groupKey" @click="markNotDuplicates(group)">
                         Not Duplicates
                       </ui-btn>
@@ -117,12 +134,17 @@ export default {
       suppressingGroupKey: null,
       evaluatedOnce: false,
       lastEvaluatedAt: null,
-      lastReason: ''
+      lastReason: '',
+      loadedFromCache: false,
+      libraryItemCache: {}
     }
   },
   computed: {
     streamLibraryItem() {
       return this.$store.state.streamLibraryItem
+    },
+    selectedMediaItems() {
+      return this.$store.state.globals.selectedMediaItems || []
     },
     duplicateGroups() {
       return this.duplicatePayload?.groups || []
@@ -145,9 +167,17 @@ export default {
     }
   },
   methods: {
+    cacheKey() {
+      return `abs-duplicates-cache:${this.$route.params.library}`
+    },
     formatTime(value) {
       if (!value) return '-'
       return new Date(value).toLocaleString()
+    },
+    formatScore(value) {
+      const score = Number(value)
+      if (!Number.isFinite(score)) return '-'
+      return score.toFixed(2)
     },
     normalizeThreshold() {
       const next = Number(this.duplicateThreshold)
@@ -165,6 +195,49 @@ export default {
         },
         null
       )
+    },
+    pendingPathSuffix(member) {
+      const normalized = String(member?.relPath || '')
+        .replace(/\\/g, '/')
+        .trim()
+      if (!normalized) return '-'
+      const lower = normalized.toLowerCase()
+      const marker = '/.pending/'
+      const markerIndex = lower.indexOf(marker)
+      if (markerIndex !== -1) {
+        return normalized.slice(markerIndex + marker.length) || '-'
+      }
+      if (lower.startsWith('.pending/')) return normalized.slice('.pending/'.length) || '-'
+      return normalized
+    },
+    loadCachedEvaluation() {
+      if (!process.client) return
+      const raw = localStorage.getItem(this.cacheKey())
+      if (!raw) return
+      try {
+        const cached = JSON.parse(raw)
+        this.duplicateThreshold = Number(cached.duplicateThreshold || this.duplicateThreshold)
+        this.sessionId = cached.sessionId || null
+        this.duplicatePayload = cached.duplicatePayload || null
+        this.lastEvaluatedAt = cached.lastEvaluatedAt || null
+        this.lastReason = cached.lastReason || ''
+        this.evaluatedOnce = !!cached.evaluatedOnce
+        this.loadedFromCache = true
+      } catch (error) {
+        console.error('[duplicates] Failed to load cached results', error)
+      }
+    },
+    persistCachedEvaluation() {
+      if (!process.client) return
+      const payload = {
+        duplicateThreshold: this.duplicateThreshold,
+        sessionId: this.sessionId,
+        duplicatePayload: this.duplicatePayload,
+        lastEvaluatedAt: this.lastEvaluatedAt,
+        lastReason: this.lastReason,
+        evaluatedOnce: this.evaluatedOnce
+      }
+      localStorage.setItem(this.cacheKey(), JSON.stringify(payload))
     },
     async evaluateDuplicates() {
       this.normalizeThreshold()
@@ -188,11 +261,91 @@ export default {
       this.evaluatedOnce = true
       this.lastEvaluatedAt = payload.evaluation?.evaluatedAt || new Date().toISOString()
       this.lastReason = payload.evaluation?.reason || ''
+      this.loadedFromCache = false
+      this.persistCachedEvaluation()
     },
     async refreshDuplicates() {
       this.refreshing = true
       await this.evaluateDuplicates()
       this.refreshing = false
+    },
+    isSelected(libraryItemId) {
+      return this.selectedMediaItems.some((item) => item.id === libraryItemId)
+    },
+    buildSelectedStub(member) {
+      return {
+        id: member.libraryItemId,
+        libraryId: this.$route.params.library,
+        mediaType: 'book',
+        isMissing: false,
+        isInvalid: false,
+        hasTracks: true,
+        media: {
+          metadata: {
+            title: member.title || '',
+            authorName: member.author || ''
+          },
+          coverPath: member.coverPath || null,
+          numTracks: 1
+        }
+      }
+    },
+    async fetchLibraryItem(libraryItemId) {
+      if (!libraryItemId) return null
+      if (this.libraryItemCache[libraryItemId]) return this.libraryItemCache[libraryItemId]
+      const item = await this.$axios.$get(`/api/items/${libraryItemId}`).catch((error) => {
+        const message = error?.response?.data || 'Failed to load item'
+        this.$toast.error(message)
+        return null
+      })
+      if (item) {
+        this.$set(this.libraryItemCache, libraryItemId, item)
+      }
+      return item
+    },
+    async playMember(member) {
+      const item = await this.fetchLibraryItem(member.libraryItemId)
+      if (!item) return
+      const authors = Array.isArray(item.media?.metadata?.authors) ? item.media.metadata.authors.map((author) => author?.name).filter((name) => !!name) : []
+      const queueItem = {
+        libraryItemId: item.id,
+        libraryId: item.libraryId,
+        episodeId: null,
+        title: item.media?.metadata?.title || member.title || '',
+        subtitle: authors.join(', ') || item.media?.metadata?.authorName || member.author || '',
+        caption: '',
+        duration: item.media?.duration || null,
+        coverPath: item.media?.coverPath || member.coverPath || null
+      }
+      this.$eventBus.$emit('play-item', {
+        libraryItemId: item.id,
+        queueItems: [queueItem]
+      })
+    },
+    async editMember(member, tab = 'details') {
+      const item = await this.fetchLibraryItem(member.libraryItemId)
+      if (!item) return
+      this.$store.commit('showEditModalOnTab', { libraryItem: item, tab })
+    },
+    toggleSelectMember(member) {
+      const item = this.libraryItemCache[member.libraryItemId] || this.buildSelectedStub(member)
+      this.$store.commit('globals/addRemoveSelectedMediaItem', item)
+    },
+    memberMenuItems(member) {
+      return [
+        { text: 'Open Item', action: 'open' },
+        { text: 'Play', action: 'play' },
+        { text: 'Edit Details', action: 'edit-details' },
+        { text: 'Edit Match', action: 'edit-match' },
+        { text: this.isSelected(member.libraryItemId) ? 'Unselect' : 'Select', action: 'select' }
+      ]
+    },
+    async memberMenuAction(member, { action }) {
+      if (action === 'open') return this.$router.push(`/item/${member.libraryItemId}`)
+      if (action === 'play') return this.playMember(member)
+      if (action === 'edit-details') return this.editMember(member, 'details')
+      if (action === 'edit-match') return this.editMember(member, 'match')
+      if (action === 'select') return this.toggleSelectMember(member)
     },
     async markNotDuplicates(group) {
       if (!this.sessionId || !group?.groupKey || !group?.groupFingerprint) {
@@ -227,7 +380,7 @@ export default {
     }
   },
   mounted() {
-    this.evaluateDuplicates()
+    this.loadCachedEvaluation()
   }
 }
 </script>

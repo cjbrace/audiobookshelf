@@ -253,6 +253,7 @@ class QuickMatchSessionManager {
       stateById[libraryItem.id] = {
         libraryItemId: libraryItem.id,
         libraryId: libraryItem.libraryId,
+        relPath: libraryItem.relPath || '',
         updatedAt: libraryItem.updatedAt,
         title,
         author,
@@ -292,6 +293,7 @@ class QuickMatchSessionManager {
         return {
           libraryItemId: libraryItem.id,
           libraryId: libraryItem.libraryId,
+          relPath: libraryItem.relPath || '',
           updatedAt: libraryItem.updatedAt,
           title,
           author,
@@ -464,6 +466,7 @@ class QuickMatchSessionManager {
           title: member.title,
           author: member.author,
           series: member.series,
+          relPath: member.relPath || '',
           coverPath: member.coverPath,
           updatedAt: member.updatedAt,
           materialKey: member.materialKey,
@@ -583,6 +586,7 @@ class QuickMatchSessionManager {
           title: member.title,
           author: member.author,
           series: member.series,
+          relPath: member.relPath || '',
           coverPath: member.coverPath,
           updatedAt: member.updatedAt,
           materialKey: member.materialKey,
