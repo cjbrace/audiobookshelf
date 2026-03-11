@@ -1,8 +1,8 @@
 <template>
-  <button :aria-label="isRead ? $strings.MessageMarkAsNotFinished : $strings.MessageMarkAsFinished" class="icon-btn rounded-md flex items-center justify-center h-9 w-9 relative" :class="borderless ? '' : 'bg-primary border border-gray-600'" @click="clickBtn">
+  <button type="button" :aria-label="isRead ? $strings.MessageMarkAsNotFinished : $strings.MessageMarkAsFinished" class="icon-btn rounded-md flex items-center justify-center h-9 w-9 relative" :class="borderless ? '' : 'bg-primary border border-gray-600'" @click="clickBtn">
     <div class="w-5 h-5 relative">
-      <span v-if="isRead" class="material-symbols fill text-xl text-success">beenhere</span>
-      <span v-else class="material-symbols text-xl text-white">beenhere</span>
+      <span v-if="isRead" class="material-symbols fill text-xl text-[#22c55e]">beenhere</span>
+      <span v-else class="material-symbols text-xl text-gray-500">beenhere</span>
     </div>
   </button>
 </template>

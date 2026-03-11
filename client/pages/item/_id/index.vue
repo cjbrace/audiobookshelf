@@ -147,6 +147,8 @@
 </template>
 
 <script>
+const { getNextCompletionState } = require('@/utils/completionState')
+
 export default {
   async asyncData({ store, params, app, redirect, route }) {
     if (!store.state.user.user) {
@@ -500,23 +502,9 @@ export default {
     openEbook() {
       this.$store.commit('showEReader', { libraryItem: this.libraryItem, keepProgress: true })
     },
-    toggleFinished(confirmed = false) {
-      if (!this.userIsFinished && this.progressPercent > 0 && !confirmed) {
-        const payload = {
-          message: this.$getString('MessageConfirmMarkItemFinished', [this.title]),
-          callback: (confirmed) => {
-            if (confirmed) {
-              this.toggleFinished(true)
-            }
-          },
-          type: 'yesNo'
-        }
-        this.$store.commit('globals/setConfirmPrompt', payload)
-        return
-      }
-
+    toggleFinished() {
       var updatePayload = {
-        isFinished: !this.userIsFinished
+        isFinished: getNextCompletionState(this.userIsFinished)
       }
       this.isProcessingReadUpdate = true
       this.$axios

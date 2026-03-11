@@ -15,6 +15,10 @@
 
         <div class="grow" />
 
+        <ui-tooltip v-if="mediaType === 'book'" :text="itemIsFinished ? $strings.MessageMarkAsNotFinished : $strings.MessageMarkAsFinished" direction="top">
+          <ui-read-icon-btn :disabled="isProcessingReadUpdate || isProcessing" :is-read="itemIsFinished" borderless class="mr-2 md:mr-4" @click="toggleFinished" />
+        </ui-tooltip>
+
         <!-- desktop -->
         <ui-btn @click="save" class="mx-2 hidden md:block">{{ $strings.ButtonSave }}</ui-btn>
         <ui-btn @click="saveAndClose" class="mx-2 hidden md:block">{{ $strings.ButtonSaveAndClose }}</ui-btn>
@@ -26,6 +30,8 @@
 </template>
 
 <script>
+const { getNextCompletionState } = require('@/utils/completionState')
+
 export default {
   props: {
     processing: Boolean,
@@ -37,6 +43,7 @@ export default {
   data() {
     return {
       resettingProgress: false,
+      isProcessingReadUpdate: false,
       isScrollable: false,
       rescanning: false,
       quickMatching: false
@@ -71,6 +78,13 @@ export default {
     },
     mediaMetadata() {
       return this.media.metadata || {}
+    },
+    itemProgress() {
+      if (!this.libraryItemId) return null
+      return this.$store.getters['user/getUserMediaProgress'](this.libraryItemId)
+    },
+    itemIsFinished() {
+      return this.itemProgress ? !!this.itemProgress.isFinished : false
     },
     libraryId() {
       return this.libraryItem ? this.libraryItem.libraryId : null
@@ -140,6 +154,21 @@ export default {
           console.error('Failed to scan library item', error)
           this.$toast.error(this.$strings.ToastScanFailed)
           this.rescanning = false
+        })
+    },
+    toggleFinished() {
+      const updatePayload = {
+        isFinished: getNextCompletionState(this.itemIsFinished)
+      }
+      this.isProcessingReadUpdate = true
+      this.$axios
+        .$patch(`/api/me/progress/${this.libraryItemId}`, updatePayload)
+        .catch((error) => {
+          console.error('Failed', error)
+          this.$toast.error(updatePayload.isFinished ? this.$strings.ToastItemMarkedAsFinishedFailed : this.$strings.ToastItemMarkedAsNotFinishedFailed)
+        })
+        .finally(() => {
+          this.isProcessingReadUpdate = false
         })
     },
     async saveAndClose() {

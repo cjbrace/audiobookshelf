@@ -62,7 +62,11 @@
             <span class="material-symbols" :style="{ fontSize: 1.2 + 'em' }">more_vert</span>
           </div>
 
-          <div cy-id="ebookFormat" v-if="ebookFormat" class="absolute" :style="{ bottom: 0.375 + 'em', left: 0.375 + 'em' }">
+          <div cy-id="completionButton" v-if="showCompletionButtonInOverlay" class="absolute cursor-pointer hover:scale-110 transform duration-150" :style="{ bottom: 0.375 + 'em', left: 0.375 + 'em' }" @click.stop.prevent="toggleFinished">
+            <span class="material-symbols fill" :class="itemIsFinished ? 'text-[#22c55e]' : 'text-gray-500'" :style="{ fontSize: 1.2 + 'em' }">beenhere</span>
+          </div>
+
+          <div cy-id="ebookFormat" v-if="showSmallEBookIcon" class="absolute" :style="{ bottom: 0.375 + 'em', left: 0.375 + 'em' }">
             <span class="text-white/80" :style="{ fontSize: 0.8 + 'em' }">{{ ebookFormat }}</span>
           </div>
         </div>
@@ -115,6 +119,10 @@
         <div cy-id="numEpisodesIncomplete" v-else-if="numEpisodesIncomplete && !isHovering && !isSelectionMode" class="absolute rounded-full bg-yellow-400 text-black font-semibold box-shadow-md z-10 flex items-center justify-center" :style="{ top: 0.375 + 'em', right: 0.375 + 'em', width: 1.25 + 'em', height: 1.25 + 'em' }">
           <p :style="{ fontSize: 0.8 + 'em' }">{{ numEpisodesIncomplete }}</p>
         </div>
+
+        <div cy-id="completionPinned" v-if="showPinnedCompletionButton" class="absolute z-10 cursor-pointer hover:scale-110 transform duration-150" :style="{ bottom: 0.375 + 'em', left: 0.375 + 'em' }" @click.stop.prevent="toggleFinished">
+          <span class="material-symbols fill text-[#22c55e]" :style="{ fontSize: 1.2 + 'em' }">beenhere</span>
+        </div>
       </div>
     </div>
 
@@ -138,6 +146,7 @@
 <script>
 import Vue from 'vue'
 import MoreMenu from '@/components/widgets/MoreMenu'
+const { getNextCompletionState } = require('@/utils/completionState')
 
 export default {
   props: {
@@ -409,6 +418,12 @@ export default {
       if (this.booksInSeries) return this.seriesIsFinished
       return this.userProgress ? !!this.userProgress.isFinished : false
     },
+    showCompletionButtonInOverlay() {
+      return !this.isPodcast && !this.isSelectionMode && (this.isHovering || this.isMoreMenuOpen)
+    },
+    showPinnedCompletionButton() {
+      return !this.isPodcast && !this.isSelectionMode && this.itemIsFinished && !this.isHovering && !this.isMoreMenuOpen
+    },
     seriesIsFinished() {
       return !this.libraryItemIdsInSeries.some((lid) => {
         const progress = this.store.getters['user/getUserMediaProgress'](lid)
@@ -439,7 +454,7 @@ export default {
       return !this.isSelectionMode && !this.isMissing && !this.isInvalid && !this.isStreaming && (this.numTracks || this.recentEpisode)
     },
     showSmallEBookIcon() {
-      return !this.isSelectionMode && this.ebookFormat
+      return !this.isSelectionMode && this.ebookFormat && !this.showCompletionButtonInOverlay && !this.showPinnedCompletionButton
     },
     isMissing() {
       return this._libraryItem.isMissing
@@ -721,23 +736,9 @@ export default {
       }
       this.$emit('edit', this.libraryItem)
     },
-    toggleFinished(confirmed = false) {
-      if (!this.itemIsFinished && this.userProgressPercent > 0 && !confirmed) {
-        const payload = {
-          message: this.$getString('MessageConfirmMarkItemFinished', [this.displayTitle]),
-          callback: (confirmed) => {
-            if (confirmed) {
-              this.toggleFinished(true)
-            }
-          },
-          type: 'yesNo'
-        }
-        this.store.commit('globals/setConfirmPrompt', payload)
-        return
-      }
-
+    toggleFinished() {
       var updatePayload = {
-        isFinished: !this.itemIsFinished
+        isFinished: getNextCompletionState(this.itemIsFinished)
       }
       this.processing = true
 

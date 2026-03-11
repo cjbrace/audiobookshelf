@@ -425,6 +425,10 @@ export default {
           name: this.$strings.LabelFinished
         },
         {
+          id: 'ticked',
+          name: 'Ticked'
+        },
+        {
           id: 'in-progress',
           name: this.$strings.LabelInProgress
         },
@@ -435,6 +439,10 @@ export default {
         {
           id: 'not-finished',
           name: this.$strings.LabelNotFinished
+        },
+        {
+          id: 'unticked',
+          name: 'Unticked'
         }
       ]
     },

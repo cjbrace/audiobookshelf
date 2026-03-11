@@ -84,6 +84,8 @@
 </template>
 
 <script>
+const { buildBatchCompletionPayload, getBulkCompletionTarget } = require('@/utils/completionState')
+
 export default {
   data() {
     return {
@@ -140,11 +142,7 @@ export default {
       return this.$store.getters['user/getUserCanUpload']
     },
     selectedIsFinished() {
-      // Find an item that is not finished, if none then all items finished
-      return !this.selectedMediaItems.find((item) => {
-        const itemProgress = this.userMediaProgress.find((lip) => lip.libraryItemId === item.id)
-        return !itemProgress || !itemProgress.isFinished
-      })
+      return !getBulkCompletionTarget(this.selectedMediaItems, this.userMediaProgress)
     },
     processingBatch() {
       return this.$store.state.processingBatch
@@ -307,13 +305,7 @@ export default {
     },
     toggleBatchRead() {
       this.$store.commit('setProcessingBatch', true)
-      const newIsFinished = !this.selectedIsFinished
-      const updateProgressPayloads = this.selectedMediaItems.map((item) => {
-        return {
-          libraryItemId: item.id,
-          isFinished: newIsFinished
-        }
-      })
+      const updateProgressPayloads = buildBatchCompletionPayload(this.selectedMediaItems, this.userMediaProgress)
       console.log('Progress payloads', updateProgressPayloads)
       this.$axios
         .patch(`/api/me/progress/batch/update`, updateProgressPayloads)

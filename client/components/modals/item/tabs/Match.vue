@@ -26,14 +26,18 @@
       </template>
     </div>
     <div v-if="selectedMatchOrig" class="absolute top-0 left-0 w-full bg-bg h-full px-2 py-6 md:p-8 max-h-full overflow-y-auto overflow-x-hidden">
-      <div class="flex mb-4">
-        <div class="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center cursor-pointer" @click="clearSelectedMatch">
-          <span class="material-symbols text-3xl">arrow_back</span>
-        </div>
-        <p class="text-xl pl-3">{{ $strings.HeaderUpdateDetails }}</p>
-      </div>
-      <ui-checkbox v-model="selectAll" :label="$strings.LabelSelectAll" checkbox-bg="bg" @input="selectAllToggled" />
       <form @submit.prevent="submitMatchUpdate">
+        <div class="sticky top-0 z-20 bg-bg pb-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center cursor-pointer" @click="clearSelectedMatch">
+              <span class="material-symbols text-3xl">arrow_back</span>
+            </div>
+            <p class="text-xl pr-2">{{ $strings.HeaderUpdateDetails }}</p>
+            <ui-read-icon-btn v-if="mediaType === 'book'" :disabled="isProcessingReadUpdate || isProcessing" :is-read="itemIsFinished" borderless @click="toggleFinished" />
+            <ui-btn color="bg-success" type="submit">{{ $strings.ButtonSubmit }}</ui-btn>
+          </div>
+          <ui-checkbox v-model="selectAll" :label="$strings.LabelSelectAll" checkbox-bg="bg" @input="selectAllToggled" />
+        </div>
         <div v-if="selectedMatchOrig.cover" class="flex flex-wrap md:flex-nowrap items-center justify-center">
           <div class="flex grow items-center py-2">
             <ui-checkbox v-model="selectedMatchUsage.cover" checkbox-bg="bg" @input="checkboxToggled" />
@@ -226,6 +230,7 @@
         </div>
 
         <div class="flex items-center justify-end py-2">
+          <ui-read-icon-btn v-if="mediaType === 'book'" :disabled="isProcessingReadUpdate || isProcessing" :is-read="itemIsFinished" borderless class="mr-2" @click="toggleFinished" />
           <ui-btn color="bg-success" type="submit">{{ $strings.ButtonSubmit }}</ui-btn>
         </div>
       </form>
@@ -235,6 +240,7 @@
 
 <script>
 const DEFAULT_BOOK_PROVIDER = 'audible.co.uk'
+const { getNextCompletionState } = require('@/utils/completionState')
 
 export default {
   props: {
@@ -279,7 +285,8 @@ export default {
         feedUrl: true,
         releaseDate: true
       },
-      selectAll: true
+      selectAll: true,
+      isProcessingReadUpdate: false
     }
   },
   watch: {
@@ -344,6 +351,13 @@ export default {
     },
     mediaMetadata() {
       return this.media.metadata || {}
+    },
+    itemProgress() {
+      if (!this.libraryItemId) return null
+      return this.$store.getters['user/getUserMediaProgress'](this.libraryItemId)
+    },
+    itemIsFinished() {
+      return this.itemProgress ? !!this.itemProgress.isFinished : false
     },
     currentBookDuration() {
       if (this.isPodcast) return 0
@@ -661,6 +675,21 @@ export default {
       }
 
       this.isProcessing = false
+    },
+    toggleFinished() {
+      const updatePayload = {
+        isFinished: getNextCompletionState(this.itemIsFinished)
+      }
+      this.isProcessingReadUpdate = true
+      this.$axios
+        .$patch(`/api/me/progress/${this.libraryItemId}`, updatePayload)
+        .catch((error) => {
+          console.error('Failed', error)
+          this.$toast.error(updatePayload.isFinished ? this.$strings.ToastItemMarkedAsFinishedFailed : this.$strings.ToastItemMarkedAsNotFinishedFailed)
+        })
+        .finally(() => {
+          this.isProcessingReadUpdate = false
+        })
     },
     clearSelectedMatch() {
       this.selectedMatch = null
