@@ -287,8 +287,12 @@ export default {
     setHeight() {
       const isDesktop = window.innerWidth >= 1024
       if (isDesktop) {
-        this.marginTop = 20
-        this.availableHeight = Math.max(window.innerHeight - 40, 200)
+        const desktopBottomGap = 20
+        const desktopTopGap = 20
+        const desktopTabClearance = 30
+
+        this.marginTop = desktopTopGap + desktopTabClearance
+        this.availableHeight = Math.max(window.innerHeight - (this.marginTop + desktopBottomGap), 200)
         return
       }
 
