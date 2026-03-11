@@ -265,7 +265,8 @@ class QuickMatchSessionManager {
     })
 
     const stateById = {}
-    libraryItems.forEach((libraryItem) => {
+    libraryItems.forEach((libraryItemRow) => {
+      const libraryItem = typeof libraryItemRow?.toJSON === 'function' ? libraryItemRow.toJSON() : libraryItemRow
       const media = libraryItem?.media || libraryItem?.book || null
       if (!media) return
       const title = String(media.title || '').trim()
@@ -330,7 +331,8 @@ class QuickMatchSessionManager {
     })
 
     return rows
-      .map((libraryItem) => {
+      .map((libraryItemRow) => {
+        const libraryItem = typeof libraryItemRow?.toJSON === 'function' ? libraryItemRow.toJSON() : libraryItemRow
         const media = libraryItem?.media || libraryItem?.book || null
         if (!media) return null
         const title = String(media.title || '').trim()
