@@ -389,6 +389,7 @@ class Server {
         '/library/:library/stats',
         '/library/:library/series/:id?',
         '/library/:library/quickmatch-sessions',
+        '/library/:library/duplicates',
         '/library/:library/podcast/search',
         '/library/:library/podcast/latest',
         '/library/:library/podcast/download-queue',
