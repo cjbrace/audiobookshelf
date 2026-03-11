@@ -133,7 +133,8 @@ export default {
       lastEvaluatedAt: null,
       lastReason: '',
       loadedFromCache: false,
-      libraryItemCache: {}
+      libraryItemCache: {},
+      reassessTimer: null
     }
   },
   computed: {
@@ -334,6 +335,7 @@ export default {
         { text: 'Play', action: 'play' },
         { text: 'Edit Details', action: 'edit-details' },
         { text: 'Edit Match', action: 'edit-match' },
+        { text: 'Delete', action: 'delete' },
         { text: this.isSelected(member.libraryItemId) ? 'Unselect' : 'Select', action: 'select' }
       ]
     },
@@ -342,7 +344,50 @@ export default {
       if (action === 'play') return this.playMember(member)
       if (action === 'edit-details') return this.editMember(member, 'details')
       if (action === 'edit-match') return this.editMember(member, 'match')
+      if (action === 'delete') return this.deleteMember(member)
       if (action === 'select') return this.toggleSelectMember(member)
+    },
+    deleteMember(member) {
+      const payload = {
+        message: this.$strings.MessageConfirmDeleteLibraryItem,
+        checkboxLabel: this.$strings.LabelDeleteFromFileSystemCheckbox,
+        yesButtonText: this.$strings.ButtonDelete,
+        yesButtonColor: 'error',
+        checkboxDefaultValue: !Number(localStorage.getItem('softDeleteDefault') || 0),
+        callback: async (confirmed, hardDelete) => {
+          if (!confirmed) return
+          localStorage.setItem('softDeleteDefault', hardDelete ? 0 : 1)
+          await this.$axios
+            .$delete(`/api/items/${member.libraryItemId}?hard=${hardDelete ? 1 : 0}`)
+            .then(() => {
+              this.$toast.success(this.$strings.ToastItemDeletedSuccess)
+            })
+            .catch((error) => {
+              console.error('Failed to delete item', error)
+              this.$toast.error(this.$strings.ToastItemDeletedFailed)
+            })
+          await this.refreshDuplicates()
+        },
+        type: 'yesNo'
+      }
+      this.$store.commit('globals/setConfirmPrompt', payload)
+    },
+    isGroupMember(libraryItemId) {
+      if (!libraryItemId) return false
+      return this.duplicateGroups.some((group) => (group.members || []).some((member) => member.libraryItemId === libraryItemId))
+    },
+    scheduleReassessment() {
+      if (!this.evaluatedOnce) return
+      if (this.reassessTimer) clearTimeout(this.reassessTimer)
+      this.reassessTimer = setTimeout(() => {
+        this.refreshDuplicates()
+      }, 300)
+    },
+    onLibraryItemUpdated(item) {
+      if (this.isGroupMember(item?.id)) this.scheduleReassessment()
+    },
+    onLibraryItemRemoved(item) {
+      if (this.isGroupMember(item?.id)) this.scheduleReassessment()
     },
     async markNotDuplicates(group) {
       if (!this.sessionId || !group?.groupKey || !group?.groupFingerprint) {
@@ -378,6 +423,13 @@ export default {
   },
   mounted() {
     this.loadCachedEvaluation()
+    this.$root?.socket?.on('item_updated', this.onLibraryItemUpdated)
+    this.$root?.socket?.on('item_removed', this.onLibraryItemRemoved)
+  },
+  beforeDestroy() {
+    if (this.reassessTimer) clearTimeout(this.reassessTimer)
+    this.$root?.socket?.off('item_updated', this.onLibraryItemUpdated)
+    this.$root?.socket?.off('item_removed', this.onLibraryItemRemoved)
   }
 }
 </script>

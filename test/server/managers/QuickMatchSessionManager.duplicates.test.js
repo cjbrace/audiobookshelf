@@ -81,8 +81,8 @@ describe('QuickMatchSessionManager duplicate grouping', () => {
 
   it('suppresses unchanged groups and allows reappearance on material key change', async () => {
     const changes = [makeChange('c1', 'a'), makeChange('c2', 'b')]
-    const baseA = makeLiveState('a', 'Dune', 'Frank Herbert')
-    const baseB = makeLiveState('b', 'Dune Unabridged', 'Frank Herbert')
+    const baseA = makeLiveState('a', 'Dune Messiah', 'Frank Herbert')
+    const baseB = makeLiveState('b', 'Dune Messiah Unabridged', 'Frank Herbert')
     const groupKey = QuickMatchSessionManager.buildDuplicateGroupKey([baseA, baseB])
     const oldFingerprint = QuickMatchSessionManager.buildDuplicateGroupFingerprint([baseA, baseB])
 
@@ -97,7 +97,7 @@ describe('QuickMatchSessionManager duplicate grouping', () => {
     assert.strictEqual(suppressed.groupedCount, 0)
     assert.strictEqual(suppressed.suppressedCount, 1)
 
-    const changedB = makeLiveState('b', 'Dune Audio Edition', 'Frank Herbert')
+    const changedB = makeLiveState('b', 'Dune Messiah Audio Edition', 'Frank Herbert')
     QuickMatchSessionManager.getLiveBookStates = async () => ({
       a: baseA,
       b: changedB
@@ -105,5 +105,20 @@ describe('QuickMatchSessionManager duplicate grouping', () => {
     const reappeared = await QuickMatchSessionManager.buildDuplicateGroups('session-3', changes, 0.79)
     assert.strictEqual(reappeared.groupedCount, 1)
     assert.strictEqual(reappeared.suppressedCount, 0)
+  })
+
+  it('prevents single-token title chaining and enforces near-exact matching at 0.95', async () => {
+    const dune = makeLiveState('a', 'Dune', 'Frank Herbert', 'Dune #1')
+    const chapterhouse = makeLiveState('b', 'Chapterhouse Dune', 'Frank Herbert', 'Dune #6')
+    const exactish = makeLiveState('c', 'Dune', 'Frank Herbert', 'Dune #1')
+    const changes = [makeChange('c1', 'a'), makeChange('c2', 'b'), makeChange('c3', 'c')]
+
+    QuickMatchSessionManager.listDuplicateSuppressions = async () => ({})
+    QuickMatchSessionManager.getLiveBookStates = async () => ({ a: dune, b: chapterhouse, c: exactish })
+
+    const strict = await QuickMatchSessionManager.buildDuplicateGroups('session-4', changes, 0.95)
+    assert.strictEqual(strict.groupedCount, 1)
+    const strictIds = strict.groups[0].members.map((member) => member.libraryItemId).sort()
+    assert.deepStrictEqual(strictIds, ['a', 'c'])
   })
 })

@@ -204,6 +204,17 @@ class QuickMatchSessionManager {
     return shared / Math.min(a.size, b.size)
   }
 
+  sharedTokenCount(tokensA, tokensB) {
+    if (!tokensA.length || !tokensB.length) return 0
+    const a = new Set(tokensA)
+    const b = new Set(tokensB)
+    let shared = 0
+    a.forEach((token) => {
+      if (b.has(token)) shared++
+    })
+    return shared
+  }
+
   extractAuthorText(media) {
     return (Array.isArray(media?.authors) ? media.authors : [])
       .map((author) => author?.name)
@@ -322,8 +333,15 @@ class QuickMatchSessionManager {
 
     const titleScore = Math.max(titleJaccard, titleContainment)
     const authorScore = Math.max(authorJaccard, authorContainment)
-    const titleSignal = titleScore >= 0.72
-    const authorSignal = authorScore >= 0.5
+    const titleShared = this.sharedTokenCount(itemA.titleTokens, itemB.titleTokens)
+    const authorShared = this.sharedTokenCount(itemA.authorTokens, itemB.authorTokens)
+    const minTitleTokens = Math.min(new Set(itemA.titleTokens).size, new Set(itemB.titleTokens).size)
+    const minAuthorTokens = Math.min(new Set(itemA.authorTokens).size, new Set(itemB.authorTokens).size)
+
+    // Avoid one-token containment chains such as "Dune" matching all "Dune X" variants.
+    if (titleShared < 2 && titleJaccard < 1) {
+      return { isDuplicate: false, exact: false, score: Number((0.68 * titleScore + 0.32 * authorScore).toFixed(4)) }
+    }
 
     let seriesAssist = 0
     if (itemA.seriesNorm && itemB.seriesNorm) {
@@ -335,6 +353,22 @@ class QuickMatchSessionManager {
     }
 
     const weightedScore = 0.68 * titleScore + 0.32 * authorScore + 0.04 * seriesAssist
+
+    // High threshold mode (>= 0.95) should behave almost exact.
+    if (threshold >= 0.95) {
+      const titleNearExact = titleJaccard >= 0.95 && titleShared >= Math.max(2, minTitleTokens)
+      const authorNearExact = authorJaccard >= 0.95 && authorShared >= Math.max(1, minAuthorTokens)
+      const seriesCompatible = !itemA.seriesNorm || !itemB.seriesNorm || itemA.seriesNorm === itemB.seriesNorm
+      const isDuplicate = titleNearExact && authorNearExact && seriesCompatible
+      return {
+        isDuplicate,
+        exact: false,
+        score: Number(weightedScore.toFixed(4))
+      }
+    }
+
+    const titleSignal = titleScore >= 0.72 && titleShared >= 2
+    const authorSignal = authorScore >= 0.5
     const isDuplicate = weightedScore >= threshold && titleSignal && authorSignal
     return {
       isDuplicate,
