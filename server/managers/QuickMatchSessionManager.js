@@ -293,6 +293,67 @@ class QuickMatchSessionManager {
     return stateById
   }
 
+  async getLiveBookStatesForLibrary(libraryId, limit = QUICK_MATCH_DUPLICATE_LIMIT) {
+    if (!libraryId) return []
+    const rows = await Database.libraryItemModel.findAll({
+      where: {
+        libraryId,
+        mediaType: 'book',
+        isMissing: false,
+        isInvalid: false
+      },
+      attributes: ['id', 'libraryId', 'updatedAt'],
+      include: [
+        {
+          model: Database.bookModel,
+          attributes: ['id', 'title', 'coverPath'],
+          include: [
+            {
+              model: Database.authorModel,
+              attributes: ['id', 'name'],
+              through: { attributes: [] }
+            },
+            {
+              model: Database.seriesModel,
+              attributes: ['id', 'name'],
+              through: { attributes: ['sequence'] }
+            }
+          ]
+        }
+      ],
+      order: [
+        [Database.bookModel, Database.authorModel, Database.bookAuthorModel, 'createdAt', 'ASC'],
+        [Database.bookModel, Database.seriesModel, 'bookSeries', 'createdAt', 'ASC']
+      ],
+      limit: Math.max(1, Math.min(6000, Number(limit) || QUICK_MATCH_DUPLICATE_LIMIT))
+    })
+
+    return rows
+      .map((libraryItem) => {
+        if (!libraryItem?.media) return null
+        const title = String(libraryItem.media.title || '').trim()
+        const author = this.extractAuthorText(libraryItem.media)
+        const series = this.extractSeriesText(libraryItem.media)
+        return {
+          libraryItemId: libraryItem.id,
+          libraryId: libraryItem.libraryId,
+          updatedAt: libraryItem.updatedAt,
+          title,
+          author,
+          series,
+          coverPath: libraryItem.media.coverPath || null,
+          titleNorm: this.normalizeText(title),
+          authorNorm: this.normalizeText(author),
+          seriesNorm: this.normalizeText(series),
+          titleTokens: this.tokenize(title),
+          authorTokens: this.tokenize(author),
+          seriesTokens: this.tokenize(series),
+          materialKey: this.buildMaterialKey({ title, author, series })
+        }
+      })
+      .filter((row) => !!row)
+  }
+
   shouldPairAsDuplicate(itemA, itemB, threshold) {
     const isExactDuplicate = !!itemA.titleNorm && !!itemA.authorNorm && itemA.titleNorm === itemB.titleNorm && itemA.authorNorm === itemB.authorNorm
     if (isExactDuplicate) return { isDuplicate: true, exact: true, score: 1 }
@@ -502,6 +563,125 @@ class QuickMatchSessionManager {
       suppressedCount,
       sourceItemsCount: duplicateItems.length,
       groups
+    }
+  }
+
+  async buildDuplicateGroupsForLibrary(sessionId, libraryId, requestedThreshold = null) {
+    const threshold = this.resolveDuplicateThreshold(requestedThreshold)
+    const duplicateItems = await this.getLiveBookStatesForLibrary(libraryId, process.env.QUICK_MATCH_DUPLICATE_SCAN_LIMIT || 2500)
+    const sourceItemsCount = duplicateItems.length
+
+    if (!duplicateItems.length) {
+      return {
+        threshold,
+        groupedCount: 0,
+        suppressedCount: 0,
+        sourceItemsCount: 0,
+        groups: [],
+        scopeType: 'library',
+        scopeLibraryId: libraryId
+      }
+    }
+
+    const parent = {}
+    const find = (id) => {
+      if (parent[id] === undefined) parent[id] = id
+      if (parent[id] !== id) parent[id] = find(parent[id])
+      return parent[id]
+    }
+    const union = (a, b) => {
+      const rootA = find(a)
+      const rootB = find(b)
+      if (rootA !== rootB) parent[rootB] = rootA
+    }
+
+    const pairScores = {}
+    for (let i = 0; i < duplicateItems.length; i++) {
+      const itemA = duplicateItems[i]
+      for (let j = i + 1; j < duplicateItems.length; j++) {
+        const itemB = duplicateItems[j]
+        if (!itemA.titleNorm || !itemB.titleNorm || !itemA.authorNorm || !itemB.authorNorm) continue
+        const pair = this.shouldPairAsDuplicate(itemA, itemB, threshold)
+        if (!pair.isDuplicate) continue
+        const pairId = [itemA.libraryItemId, itemB.libraryItemId].sort().join('|')
+        pairScores[pairId] = pair.score
+        union(itemA.libraryItemId, itemB.libraryItemId)
+      }
+    }
+
+    const buckets = {}
+    duplicateItems.forEach((item) => {
+      const root = find(item.libraryItemId)
+      if (!buckets[root]) buckets[root] = []
+      buckets[root].push(item)
+    })
+
+    const suppressionByGroupKey = await this.listDuplicateSuppressions(sessionId)
+    const groups = []
+    let suppressedCount = 0
+
+    Object.values(buckets).forEach((membersRaw) => {
+      if (membersRaw.length <= 1) return
+      const members = membersRaw
+        .map((member) => ({
+          libraryItemId: member.libraryItemId,
+          title: member.title,
+          author: member.author,
+          series: member.series,
+          coverPath: member.coverPath,
+          updatedAt: member.updatedAt,
+          materialKey: member.materialKey,
+          titleNorm: member.titleNorm,
+          authorNorm: member.authorNorm
+        }))
+        .sort((a, b) => {
+          const t = String(a.title || '').localeCompare(String(b.title || ''))
+          if (t !== 0) return t
+          return String(a.libraryItemId).localeCompare(String(b.libraryItemId))
+        })
+
+      const groupKey = this.buildDuplicateGroupKey(members)
+      const groupFingerprint = this.buildDuplicateGroupFingerprint(members)
+      if (suppressionByGroupKey[groupKey] && suppressionByGroupKey[groupKey] === groupFingerprint) {
+        suppressedCount++
+        return
+      }
+
+      let strongestPairScore = 0
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          const pairId = [members[i].libraryItemId, members[j].libraryItemId].sort().join('|')
+          if (pairScores[pairId] !== undefined) {
+            strongestPairScore = Math.max(strongestPairScore, pairScores[pairId])
+          }
+        }
+      }
+
+      groups.push({
+        groupKey,
+        groupFingerprint,
+        score: Number(strongestPairScore.toFixed(4)),
+        size: members.length,
+        titleHint: members[0]?.title || '',
+        authorHint: members[0]?.author || '',
+        members
+      })
+    })
+
+    groups.sort((a, b) => {
+      if (b.size !== a.size) return b.size - a.size
+      if (b.score !== a.score) return b.score - a.score
+      return String(a.titleHint || '').localeCompare(String(b.titleHint || ''))
+    })
+
+    return {
+      threshold,
+      groupedCount: groups.length,
+      suppressedCount,
+      sourceItemsCount,
+      groups,
+      scopeType: 'library',
+      scopeLibraryId: libraryId
     }
   }
 

@@ -33,6 +33,31 @@ class QuickMatchSessionController {
     res.json({ session })
   }
 
+  async evaluateLibraryDuplicates(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library || !req.library.isBook) return res.status(400).send('Duplicates evaluation is only available for book libraries')
+
+    const duplicateThreshold = req.query?.duplicateThreshold !== undefined ? Number(req.query.duplicateThreshold) : Number(req.body?.duplicateThreshold)
+    const sessionId = await QuickMatchSessionManager.ensureActiveSessionIdForUser(req.user.id)
+    if (!sessionId) return res.status(500).send('Unable to resolve active quick match session')
+
+    const duplicateGroups = await QuickMatchSessionManager.buildDuplicateGroupsForLibrary(sessionId, req.library.id, duplicateThreshold)
+    const reason =
+      duplicateGroups.sourceItemsCount === 0 ? 'no_books_in_scope' : duplicateGroups.groupedCount === 0 ? 'no_groups_above_threshold' : 'groups_found'
+
+    res.json({
+      sessionId,
+      duplicateGroups,
+      evaluation: {
+        evaluatedAt: new Date().toISOString(),
+        reason,
+        scopeType: 'library',
+        scopeLibraryId: req.library.id,
+        sourceItemsCount: duplicateGroups.sourceItemsCount
+      }
+    })
+  }
+
   async suppressDuplicateGroup(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     const groupKey = typeof req.body?.groupKey === 'string' ? req.body.groupKey.trim() : ''
