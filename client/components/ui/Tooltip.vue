@@ -63,14 +63,13 @@ export default {
       tooltip.className = 'tooltip-wrapper absolute px-2 py-1 text-white text-xs rounded-sm shadow-lg max-w-xs text-center hidden sm:block'
       tooltip.style.zIndex = 100
       tooltip.style.backgroundColor = 'rgba(0,0,0,0.85)'
+      // Ensure tooltip never blocks clicks on the trigger element.
+      tooltip.style.pointerEvents = 'none'
       if (this.plaintext) {
         tooltip.textContent = this.text
       } else {
         tooltip.innerHTML = this.text
       }
-      tooltip.addEventListener('mouseover', this.cancelHide)
-      tooltip.addEventListener('mouseleave', this.hideTooltip)
-
       this.setTooltipPosition(tooltip)
 
       this.tooltip = tooltip
