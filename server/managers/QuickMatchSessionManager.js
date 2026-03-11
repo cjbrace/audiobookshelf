@@ -266,10 +266,11 @@ class QuickMatchSessionManager {
 
     const stateById = {}
     libraryItems.forEach((libraryItem) => {
-      if (!libraryItem?.media) return
-      const title = String(libraryItem.media.title || '').trim()
-      const author = this.extractAuthorText(libraryItem.media)
-      const series = this.extractSeriesText(libraryItem.media)
+      const media = libraryItem?.media || libraryItem?.book || null
+      if (!media) return
+      const title = String(media.title || '').trim()
+      const author = this.extractAuthorText(media)
+      const series = this.extractSeriesText(media)
       const titleTokens = this.tokenize(title)
       const authorTokens = this.tokenize(author)
       const seriesTokens = this.tokenize(series)
@@ -280,7 +281,7 @@ class QuickMatchSessionManager {
         title,
         author,
         series,
-        coverPath: libraryItem.media.coverPath || null,
+        coverPath: media.coverPath || null,
         titleNorm: this.normalizeText(title),
         authorNorm: this.normalizeText(author),
         seriesNorm: this.normalizeText(series),
@@ -330,10 +331,11 @@ class QuickMatchSessionManager {
 
     return rows
       .map((libraryItem) => {
-        if (!libraryItem?.media) return null
-        const title = String(libraryItem.media.title || '').trim()
-        const author = this.extractAuthorText(libraryItem.media)
-        const series = this.extractSeriesText(libraryItem.media)
+        const media = libraryItem?.media || libraryItem?.book || null
+        if (!media) return null
+        const title = String(media.title || '').trim()
+        const author = this.extractAuthorText(media)
+        const series = this.extractSeriesText(media)
         return {
           libraryItemId: libraryItem.id,
           libraryId: libraryItem.libraryId,
@@ -341,7 +343,7 @@ class QuickMatchSessionManager {
           title,
           author,
           series,
-          coverPath: libraryItem.media.coverPath || null,
+          coverPath: media.coverPath || null,
           titleNorm: this.normalizeText(title),
           authorNorm: this.normalizeText(author),
           seriesNorm: this.normalizeText(series),
