@@ -365,6 +365,7 @@ class ApiRouter {
     this.router.post('/quick-match-sessions/start', QuickMatchSessionController.start.bind(this))
     this.router.post('/quick-match-sessions/stop', QuickMatchSessionController.stop.bind(this))
     this.router.get('/quick-match-sessions/:id', QuickMatchSessionController.getOne.bind(this))
+    this.router.post('/quick-match-sessions/:id/duplicates/suppress', QuickMatchSessionController.suppressDuplicateGroup.bind(this))
     this.router.post('/quick-match-sessions/:id/revert', QuickMatchSessionController.revert.bind(this))
     this.router.post('/quick-match-sessions/:id/queue-full-match', QuickMatchSessionController.queueFullMatch.bind(this))
     this.router.post('/quick-match-sessions/:id/full-match-queue/complete', QuickMatchSessionController.completeFullMatchQueue.bind(this))

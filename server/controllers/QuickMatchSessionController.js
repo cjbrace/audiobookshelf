@@ -27,9 +27,23 @@ class QuickMatchSessionController {
 
   async getOne(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
-    const session = await QuickMatchSessionManager.getSessionWithChanges(req.params.id, Number(req.query.limit || 2000))
+    const duplicateThreshold = req.query?.duplicateThreshold !== undefined ? Number(req.query.duplicateThreshold) : null
+    const session = await QuickMatchSessionManager.getSessionWithChanges(req.params.id, Number(req.query.limit || 2000), duplicateThreshold)
     if (!session) return res.sendStatus(404)
     res.json({ session })
+  }
+
+  async suppressDuplicateGroup(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    const groupKey = typeof req.body?.groupKey === 'string' ? req.body.groupKey.trim() : ''
+    const groupFingerprint = typeof req.body?.groupFingerprint === 'string' ? req.body.groupFingerprint.trim() : ''
+    if (!groupKey || !groupFingerprint) return res.status(400).send('Missing groupKey or groupFingerprint')
+
+    const suppression = await QuickMatchSessionManager.suppressDuplicateGroup(req.params.id, req.user.id, groupKey, groupFingerprint)
+    const duplicateThreshold = req.query?.duplicateThreshold !== undefined ? Number(req.query.duplicateThreshold) : null
+    const session = await QuickMatchSessionManager.getSessionWithChanges(req.params.id, Number(req.query.limit || 2000), duplicateThreshold)
+    if (!session) return res.sendStatus(404)
+    res.json({ suppression, session })
   }
 
   async revert(req, res) {

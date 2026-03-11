@@ -79,7 +79,7 @@
       <nuxt-link v-if="isBookLibrary && userIsAdminOrUp" :to="`/library/${currentLibraryId}/quickmatch-sessions`" class="w-full h-20 flex flex-col items-center justify-center text-white/80 border-b border-primary/70 hover:bg-primary cursor-pointer relative" :class="isQuickMatchSessionsPage ? 'bg-primary/80' : 'bg-bg/60'">
         <span class="material-symbols text-2xl">history</span>
 
-        <p class="pt-1 text-center leading-4" style="font-size: 0.8rem">Quick Sessions</p>
+        <p class="pt-1 text-center leading-4" style="font-size: 0.8rem">Duplicates</p>
 
         <div v-show="isQuickMatchSessionsPage" class="h-full w-0.5 bg-yellow-400 absolute top-0 left-0" />
       </nuxt-link>

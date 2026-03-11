@@ -17,3 +17,4 @@ Please add a record of every database migration that you create to this file. Th
 | v2.19.4        | v2.19.4-improve-podcast-queries              | Adds numEpisodes to podcasts, adds podcastId to mediaProgresses, copies podcast title to libraryItems         |
 | v2.20.0        | v2.20.0-improve-author-sort-queries          | Adds AuthorNames(FirstLast\|LastFirst) to libraryItems to improve author sort queries                         |
 | v2.26.1        | v2.26.1-add-manual-qc-completion-to-books    | Adds durable manual QC completion state (`manualQcCompleted`) for book-level operator checkmark tracking      |
+| v2.32.1        | v2.32.1-add-quick-match-duplicate-suppressions | Adds persistent Not Duplicates suppression keys/fingerprints for grouped duplicates workflow                   |

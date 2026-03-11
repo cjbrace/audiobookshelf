@@ -177,6 +177,11 @@ class Database {
     return this.models.quickMatchFullMatchQueue
   }
 
+  /** @type {typeof import('./models/QuickMatchDuplicateSuppression')} */
+  get quickMatchDuplicateSuppressionModel() {
+    return this.models.quickMatchDuplicateSuppression
+  }
+
   /**
    * Check if db file exists
    * @returns {boolean}
@@ -363,6 +368,7 @@ class Database {
     require('./models/QuickMatchSession').init(this.sequelize)
     require('./models/QuickMatchChange').init(this.sequelize)
     require('./models/QuickMatchFullMatchQueue').init(this.sequelize)
+    require('./models/QuickMatchDuplicateSuppression').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
   }
