@@ -52,13 +52,16 @@ class MigrationManager {
     if (!this.maxVersion || !this.databaseVersion) throw new Error('Failed to fetch versions from the database.')
     Logger.debug(`[MigrationManager] Database version: ${this.databaseVersion}, Max version: ${this.maxVersion}, Server version: ${this.serverVersion}`)
 
-    if (semver.gt(this.serverVersion, this.maxVersion)) {
-      try {
-        await this.copyMigrationsToConfigDir()
-      } catch (error) {
-        throw new Error('Failed to copy migrations to the config directory.', { cause: error })
-      }
+    try {
+      // Always sync migration files into config dir.
+      // This covers cases where new migration files are introduced
+      // without a server semver bump larger than maxVersion.
+      await this.copyMigrationsToConfigDir()
+    } catch (error) {
+      throw new Error('Failed to copy migrations to the config directory.', { cause: error })
+    }
 
+    if (semver.gt(this.serverVersion, this.maxVersion)) {
       try {
         await this.updateMaxVersion()
       } catch (error) {

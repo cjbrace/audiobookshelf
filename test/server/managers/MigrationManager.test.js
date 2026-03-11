@@ -82,6 +82,21 @@ describe('MigrationManager', () => {
         expect(error.message).to.equal('Invalid server version: undefined. Expected a version tag like v1.2.3.')
       }
     })
+
+    it('should still copy migrations when serverVersion equals maxVersion', async () => {
+      // arrange
+      migrationManager.databaseVersion = '1.2.0'
+      migrationManager.maxVersion = '1.2.0'
+      migrationManager.configPath = __dirname
+
+      // Act
+      await migrationManager.init(serverVersion)
+
+      // Assert
+      expect(migrationManager.copyMigrationsToConfigDir.calledOnce).to.be.true
+      expect(migrationManager.updateMaxVersion.called).to.be.false
+      expect(migrationManager.initialized).to.be.true
+    })
   })
 
   describe('runMigrations', () => {
