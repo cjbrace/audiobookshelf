@@ -232,36 +232,11 @@ class QuickMatchSessionManager {
     const uniqueIds = [...new Set((Array.isArray(libraryItemIds) ? libraryItemIds : []).filter((id) => typeof id === 'string' && id))]
     if (!uniqueIds.length) return {}
 
-    const libraryItems = await Database.libraryItemModel.findAll({
-      where: {
-        id: { [Op.in]: uniqueIds },
-        mediaType: 'book',
-        isMissing: false,
-        isInvalid: false
-      },
-      attributes: ['id', 'libraryId', 'updatedAt'],
-      include: [
-        {
-          model: Database.bookModel,
-          attributes: ['id', 'title', 'coverPath'],
-          include: [
-            {
-              model: Database.authorModel,
-              attributes: ['id', 'name'],
-              through: { attributes: [] }
-            },
-            {
-              model: Database.seriesModel,
-              attributes: ['id', 'name'],
-              through: { attributes: ['sequence'] }
-            }
-          ]
-        }
-      ],
-      order: [
-        [Database.bookModel, Database.authorModel, Database.bookAuthorModel, 'createdAt', 'ASC'],
-        [Database.bookModel, Database.seriesModel, 'bookSeries', 'createdAt', 'ASC']
-      ]
+    const libraryItems = await Database.libraryItemModel.findAllExpandedWhere({
+      id: { [Op.in]: uniqueIds },
+      mediaType: 'book',
+      isMissing: false,
+      isInvalid: false
     })
 
     const stateById = {}
@@ -297,40 +272,16 @@ class QuickMatchSessionManager {
 
   async getLiveBookStatesForLibrary(libraryId, limit = QUICK_MATCH_DUPLICATE_LIMIT) {
     if (!libraryId) return []
-    const rows = await Database.libraryItemModel.findAll({
-      where: {
-        libraryId,
-        mediaType: 'book',
-        isMissing: false,
-        isInvalid: false
-      },
-      attributes: ['id', 'libraryId', 'updatedAt'],
-      include: [
-        {
-          model: Database.bookModel,
-          attributes: ['id', 'title', 'coverPath'],
-          include: [
-            {
-              model: Database.authorModel,
-              attributes: ['id', 'name'],
-              through: { attributes: [] }
-            },
-            {
-              model: Database.seriesModel,
-              attributes: ['id', 'name'],
-              through: { attributes: ['sequence'] }
-            }
-          ]
-        }
-      ],
-      order: [
-        [Database.bookModel, Database.authorModel, Database.bookAuthorModel, 'createdAt', 'ASC'],
-        [Database.bookModel, Database.seriesModel, 'bookSeries', 'createdAt', 'ASC']
-      ],
-      limit: Math.max(1, Math.min(6000, Number(limit) || QUICK_MATCH_DUPLICATE_LIMIT))
+    const scanLimit = Math.max(1, Math.min(6000, Number(limit) || QUICK_MATCH_DUPLICATE_LIMIT))
+    const rows = await Database.libraryItemModel.findAllExpandedWhere({
+      libraryId,
+      mediaType: 'book',
+      isMissing: false,
+      isInvalid: false
     })
 
     return rows
+      .slice(0, scanLimit)
       .map((libraryItemRow) => {
         const libraryItem = typeof libraryItemRow?.toJSON === 'function' ? libraryItemRow.toJSON() : libraryItemRow
         const media = libraryItem?.media || libraryItem?.book || null
