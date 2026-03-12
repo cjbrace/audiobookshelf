@@ -24,6 +24,82 @@ const DELETE_RETRY_ERROR_CODES = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM', 'EMFILE
 const DELETE_MAX_ATTEMPTS = 5
 const DELETE_RETRY_BASE_DELAY_MS = 100
 
+function isPathWithinDirectory(basePath, targetPath) {
+  const relativePath = Path.relative(basePath, targetPath)
+  return !!relativePath && !relativePath.startsWith('..') && !Path.isAbsolute(relativePath)
+}
+
+async function getScopedLibraryItemDeleteTarget(libraryItem) {
+  const resolvedItemPath = Path.resolve(libraryItem.path)
+  const library = await Database.libraryModel.findByIdWithFolders(libraryItem.libraryId)
+  const libraryFolders = library?.libraryFolders || []
+
+  for (const libraryFolder of libraryFolders) {
+    if (!libraryFolder?.path) continue
+    const resolvedLibraryFolderPath = Path.resolve(libraryFolder.path)
+    if (isPathWithinDirectory(resolvedLibraryFolderPath, resolvedItemPath)) {
+      return {
+        resolvedItemPath,
+        resolvedLibraryFolderPath
+      }
+    }
+  }
+
+  const error = new Error(`Delete target "${resolvedItemPath}" is outside configured library folders for library "${libraryItem.libraryId}"`)
+  error.code = 'EDELETE_SCOPE'
+  throw error
+}
+
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function deleteLibraryItemPathSafely(libraryItemPath, libraryItemId, libraryId) {
+  const scopedDeleteTarget = await getScopedLibraryItemDeleteTarget({
+    path: libraryItemPath,
+    id: libraryItemId,
+    libraryId
+  })
+  const { resolvedItemPath, resolvedLibraryFolderPath } = scopedDeleteTarget
+
+  Logger.info(`[LibraryItemController] Scoped hard delete requested for item "${libraryItemId}" at "${resolvedItemPath}" inside "${resolvedLibraryFolderPath}"`)
+
+  let lastError = null
+  for (let attempt = 1; attempt <= DELETE_MAX_ATTEMPTS; attempt++) {
+    Logger.debug(`[LibraryItemController] Hard delete attempt ${attempt}/${DELETE_MAX_ATTEMPTS} for "${resolvedItemPath}" using recursive fs.remove`)
+    try {
+      await fs.remove(resolvedItemPath)
+    } catch (error) {
+      lastError = error
+      if (!DELETE_RETRY_ERROR_CODES.has(error?.code) || attempt === DELETE_MAX_ATTEMPTS) {
+        break
+      }
+      const delayMs = DELETE_RETRY_BASE_DELAY_MS * attempt
+      Logger.warn(`[LibraryItemController] Hard delete retry for "${resolvedItemPath}" after ${error.code}. Waiting ${delayMs}ms before attempt ${attempt + 1}/${DELETE_MAX_ATTEMPTS}`)
+      await delay(delayMs)
+      continue
+    }
+
+    if (!(await fs.pathExists(resolvedItemPath))) {
+      Logger.info(`[LibraryItemController] Hard delete completed for "${resolvedItemPath}"`)
+      return
+    }
+
+    lastError = new Error(`Delete target still exists after recursive remove: "${resolvedItemPath}"`)
+    lastError.code = 'EDELETE_VERIFY'
+    if (attempt < DELETE_MAX_ATTEMPTS) {
+      const delayMs = DELETE_RETRY_BASE_DELAY_MS * attempt
+      Logger.warn(`[LibraryItemController] Hard delete verification failed for "${resolvedItemPath}" on attempt ${attempt}/${DELETE_MAX_ATTEMPTS}. Retrying in ${delayMs}ms`)
+      await delay(delayMs)
+    }
+  }
+
+  if (!lastError) {
+    lastError = new Error(`Hard delete failed for unknown reason at "${resolvedItemPath}"`)
+  }
+  throw lastError
+}
+
 /**
  * @typedef RequestUserObject
  * @property {import('../models/User')} user
@@ -43,82 +119,6 @@ const DELETE_RETRY_BASE_DELAY_MS = 100
 
 class LibraryItemController {
   constructor() {}
-
-  isPathWithinDirectory(basePath, targetPath) {
-    const relativePath = Path.relative(basePath, targetPath)
-    return !!relativePath && !relativePath.startsWith('..') && !Path.isAbsolute(relativePath)
-  }
-
-  async getScopedLibraryItemDeleteTarget(libraryItem) {
-    const resolvedItemPath = Path.resolve(libraryItem.path)
-    const library = await Database.libraryModel.findByIdWithFolders(libraryItem.libraryId)
-    const libraryFolders = library?.libraryFolders || []
-
-    for (const libraryFolder of libraryFolders) {
-      if (!libraryFolder?.path) continue
-      const resolvedLibraryFolderPath = Path.resolve(libraryFolder.path)
-      if (this.isPathWithinDirectory(resolvedLibraryFolderPath, resolvedItemPath)) {
-        return {
-          resolvedItemPath,
-          resolvedLibraryFolderPath
-        }
-      }
-    }
-
-    const error = new Error(`Delete target "${resolvedItemPath}" is outside configured library folders for library "${libraryItem.libraryId}"`)
-    error.code = 'EDELETE_SCOPE'
-    throw error
-  }
-
-  async delay(ms) {
-    await new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  async deleteLibraryItemPathSafely(libraryItemPath, libraryItemId, libraryId) {
-    const scopedDeleteTarget = await this.getScopedLibraryItemDeleteTarget({
-      path: libraryItemPath,
-      id: libraryItemId,
-      libraryId
-    })
-    const { resolvedItemPath, resolvedLibraryFolderPath } = scopedDeleteTarget
-
-    Logger.info(`[LibraryItemController] Scoped hard delete requested for item "${libraryItemId}" at "${resolvedItemPath}" inside "${resolvedLibraryFolderPath}"`)
-
-    let lastError = null
-    for (let attempt = 1; attempt <= DELETE_MAX_ATTEMPTS; attempt++) {
-      Logger.debug(`[LibraryItemController] Hard delete attempt ${attempt}/${DELETE_MAX_ATTEMPTS} for "${resolvedItemPath}" using recursive fs.remove`)
-      try {
-        await fs.remove(resolvedItemPath)
-      } catch (error) {
-        lastError = error
-        if (!DELETE_RETRY_ERROR_CODES.has(error?.code) || attempt === DELETE_MAX_ATTEMPTS) {
-          break
-        }
-        const delayMs = DELETE_RETRY_BASE_DELAY_MS * attempt
-        Logger.warn(`[LibraryItemController] Hard delete retry for "${resolvedItemPath}" after ${error.code}. Waiting ${delayMs}ms before attempt ${attempt + 1}/${DELETE_MAX_ATTEMPTS}`)
-        await this.delay(delayMs)
-        continue
-      }
-
-      if (!(await fs.pathExists(resolvedItemPath))) {
-        Logger.info(`[LibraryItemController] Hard delete completed for "${resolvedItemPath}"`)
-        return
-      }
-
-      lastError = new Error(`Delete target still exists after recursive remove: "${resolvedItemPath}"`)
-      lastError.code = 'EDELETE_VERIFY'
-      if (attempt < DELETE_MAX_ATTEMPTS) {
-        const delayMs = DELETE_RETRY_BASE_DELAY_MS * attempt
-        Logger.warn(`[LibraryItemController] Hard delete verification failed for "${resolvedItemPath}" on attempt ${attempt}/${DELETE_MAX_ATTEMPTS}. Retrying in ${delayMs}ms`)
-        await this.delay(delayMs)
-      }
-    }
-
-    if (!lastError) {
-      lastError = new Error(`Hard delete failed for unknown reason at "${resolvedItemPath}"`)
-    }
-    throw lastError
-  }
 
   /**
    * GET: /api/items/:id
@@ -195,7 +195,7 @@ class LibraryItemController {
     await this.handleDeleteLibraryItem(req.libraryItem.id, mediaItemIds)
     if (hardDelete) {
       try {
-        await this.deleteLibraryItemPathSafely(libraryItemPath, req.libraryItem.id, req.libraryItem.libraryId)
+        await deleteLibraryItemPathSafely(libraryItemPath, req.libraryItem.id, req.libraryItem.libraryId)
       } catch (error) {
         Logger.error(`[LibraryItemController] Failed to hard delete library item from file system at "${libraryItemPath}"`, error)
         return res.status(500).send('Failed to fully delete library item from file system')
@@ -688,7 +688,7 @@ class LibraryItemController {
       await this.handleDeleteLibraryItem(libraryItem.id, mediaItemIds)
       if (hardDelete) {
         try {
-          await this.deleteLibraryItemPathSafely(libraryItemPath, libraryItem.id, libraryItem.libraryId)
+          await deleteLibraryItemPathSafely(libraryItemPath, libraryItem.id, libraryItem.libraryId)
         } catch (error) {
           Logger.error(`[LibraryItemController] Failed to hard delete library item from file system at "${libraryItemPath}"`, error)
           return res.status(500).send(`Failed to fully delete library item "${libraryItem.id}" from file system`)
