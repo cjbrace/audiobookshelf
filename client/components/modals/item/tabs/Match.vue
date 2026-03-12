@@ -378,6 +378,14 @@ export default {
     }
   },
   methods: {
+    normalizeProviderValue(provider) {
+      if (!provider) return null
+      if (typeof provider === 'string') return provider
+      if (typeof provider.value === 'string') return provider.value
+      if (typeof provider.id === 'string') return provider.id
+      if (typeof provider.provider === 'string') return provider.provider
+      return null
+    },
     setMatchFieldValue(field, value) {
       if (Array.isArray(value)) {
         this.selectedMatch[field] = [...value]
@@ -401,9 +409,7 @@ export default {
       }
     },
     getDefaultBookProvider() {
-      const availableProviders = this.providers
-        .map((provider) => (typeof provider === 'string' ? provider : provider?.value))
-        .filter((provider) => provider && this.$store.getters['scanners/checkBookProviderExists'](provider))
+      const availableProviders = this.providers.map((provider) => this.normalizeProviderValue(provider)).filter((provider) => !!provider)
 
       const audibleProvider = DEFAULT_BOOK_PROVIDER_PRIORITY.find((provider) => availableProviders.includes(provider))
       if (audibleProvider) {
