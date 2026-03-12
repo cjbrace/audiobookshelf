@@ -239,7 +239,7 @@
 </template>
 
 <script>
-const DEFAULT_BOOK_PROVIDER = 'audible.co.uk'
+const DEFAULT_BOOK_PROVIDER_PRIORITY = ['audible.uk', 'audible', 'audible.ca', 'audible.au', 'audible.fr', 'audible.de', 'audible.jp', 'audible.it', 'audible.in', 'audible.es']
 const { getNextCompletionState } = require('@/utils/completionState')
 
 export default {
@@ -401,18 +401,20 @@ export default {
       }
     },
     getDefaultBookProvider() {
-      if (this.$store.getters['scanners/checkBookProviderExists'](DEFAULT_BOOK_PROVIDER)) {
-        return DEFAULT_BOOK_PROVIDER
+      const availableProviders = this.providers
+        .map((provider) => (typeof provider === 'string' ? provider : provider?.value))
+        .filter((provider) => provider && this.$store.getters['scanners/checkBookProviderExists'](provider))
+
+      const audibleProvider = DEFAULT_BOOK_PROVIDER_PRIORITY.find((provider) => availableProviders.includes(provider))
+      if (audibleProvider) {
+        return audibleProvider
       }
 
       // Do not carry over prior provider state when re-entering Match.
-      // If the preferred Audible provider is unavailable, fall back safely.
-      const fallbackProvider =
-        this.providers
-          .map((provider) => (typeof provider === 'string' ? provider : provider?.value))
-          .find((provider) => provider && this.$store.getters['scanners/checkBookProviderExists'](provider)) || 'google'
+      // If no Audible provider exists, fall back to the first available provider.
+      const fallbackProvider = availableProviders[0] || 'google'
       if (fallbackProvider !== 'google') {
-        console.error('Preferred book provider does not exist, falling back', { preferred: DEFAULT_BOOK_PROVIDER, fallback: fallbackProvider })
+        console.error('No Audible provider available, falling back', { preferred: DEFAULT_BOOK_PROVIDER_PRIORITY, fallback: fallbackProvider })
       }
       return fallbackProvider
     },
