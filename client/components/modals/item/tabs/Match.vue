@@ -405,15 +405,16 @@ export default {
         return DEFAULT_BOOK_PROVIDER
       }
 
-      // Fallback to the previous behavior only if the preferred provider is not available
-      let provider = localStorage.getItem('book-provider')
-      if (!provider) return 'google'
-      if (!this.$store.getters['scanners/checkBookProviderExists'](provider)) {
-        console.error('Stored book provider does not exist', provider)
-        localStorage.removeItem('book-provider')
-        return 'google'
+      // Do not carry over prior provider state when re-entering Match.
+      // If the preferred Audible provider is unavailable, fall back safely.
+      const fallbackProvider =
+        this.providers
+          .map((provider) => (typeof provider === 'string' ? provider : provider?.value))
+          .find((provider) => provider && this.$store.getters['scanners/checkBookProviderExists'](provider)) || 'google'
+      if (fallbackProvider !== 'google') {
+        console.error('Preferred book provider does not exist, falling back', { preferred: DEFAULT_BOOK_PROVIDER, fallback: fallbackProvider })
       }
-      return provider
+      return fallbackProvider
     },
     getSearchQuery() {
       if (this.isPodcast) return `term=${encodeURIComponent(this.searchTitle)}`
