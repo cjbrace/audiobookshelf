@@ -67,8 +67,8 @@
       <p v-if="searchInProgress && !coversFound.length" class="text-gray-300 py-4">{{ $strings.MessageLoading }}</p>
       <p v-else-if="!searchInProgress && !coversFound.length" class="text-gray-300 py-4">{{ $strings.MessageNoCoversFound }}</p>
       <template v-for="cover in coversFound">
-        <div :key="cover" class="m-0.5 mb-5 border-2 border-transparent hover:border-yellow-300 cursor-pointer" :class="cover === coverPath ? 'border-yellow-300' : ''" @click="updateCover(cover)">
-          <covers-preview-cover :src="cover" :width="80" show-open-new-tab :book-cover-aspect-ratio="bookCoverAspectRatio" />
+        <div :key="cover" class="m-1 mb-6 border-2 border-transparent hover:border-yellow-300 cursor-pointer" :class="cover === coverPath ? 'border-yellow-300' : ''" @click="updateCover(cover)">
+          <covers-preview-cover :src="cover" :width="160" show-open-new-tab :book-cover-aspect-ratio="bookCoverAspectRatio" />
         </div>
       </template>
     </div>
