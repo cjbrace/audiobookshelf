@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full h-full overflow-hidden overflow-y-auto px-2 sm:px-4 py-6 relative">
+  <div class="w-full h-full overflow-hidden px-2 sm:px-4 py-6 relative flex flex-col">
     <div class="flex flex-col sm:flex-row mb-4">
       <div class="relative self-center md:self-start">
         <covers-preview-cover :src="coverUrl" :width="120" :book-cover-aspect-ratio="bookCoverAspectRatio" />
@@ -63,14 +63,16 @@
         <ui-btn v-else class="mt-5 ml-1 md:min-w-24" :padding-x="4" type="button" color="bg-error" @click.prevent="cancelCurrentSearch">{{ $strings.ButtonCancel }}</ui-btn>
       </div>
     </form>
-    <div v-if="hasSearched" class="flex items-center flex-wrap justify-center sm:max-h-80 sm:overflow-y-scroll mt-2 max-w-full">
-      <p v-if="searchInProgress && !coversFound.length" class="text-gray-300 py-4">{{ $strings.MessageLoading }}</p>
-      <p v-else-if="!searchInProgress && !coversFound.length" class="text-gray-300 py-4">{{ $strings.MessageNoCoversFound }}</p>
-      <template v-for="cover in coversFound">
-        <div :key="cover" class="m-1 mb-6 border-2 border-transparent hover:border-yellow-300 cursor-pointer" :class="cover === coverPath ? 'border-yellow-300' : ''" @click="updateCover(cover)">
-          <covers-preview-cover :src="cover" :width="160" show-open-new-tab :book-cover-aspect-ratio="bookCoverAspectRatio" />
-        </div>
-      </template>
+    <div v-if="hasSearched" class="mt-2 flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+      <div class="flex items-start flex-wrap justify-center max-w-full">
+        <p v-if="searchInProgress && !coversFound.length" class="text-gray-300 py-4">{{ $strings.MessageLoading }}</p>
+        <p v-else-if="!searchInProgress && !coversFound.length" class="text-gray-300 py-4">{{ $strings.MessageNoCoversFound }}</p>
+        <template v-for="cover in coversFound">
+          <div :key="cover" class="m-1 mb-6 border-2 border-transparent hover:border-yellow-300 cursor-pointer" :class="cover === coverPath ? 'border-yellow-300' : ''" @click="updateCover(cover)">
+            <covers-preview-cover :src="cover" :width="160" show-open-new-tab :book-cover-aspect-ratio="bookCoverAspectRatio" />
+          </div>
+        </template>
+      </div>
     </div>
 
     <div v-if="previewUpload" class="absolute top-0 left-0 w-full h-full z-10 bg-bg p-8">
