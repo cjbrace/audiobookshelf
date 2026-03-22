@@ -390,6 +390,7 @@ class Server {
         '/library/:library/series/:id?',
         '/library/:library/quickmatch-sessions',
         '/library/:library/duplicates',
+        '/library/:library/series-review',
         '/library/:library/podcast/search',
         '/library/:library/podcast/latest',
         '/library/:library/podcast/download-queue',
