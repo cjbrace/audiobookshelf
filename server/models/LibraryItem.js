@@ -556,6 +556,11 @@ class LibraryItem extends Model {
    * @returns {Promise}
    */
   async saveMetadataFile() {
+    if (!this.id || !(await this.constructor.checkExistsById(this.id))) {
+      Logger.warn(`[LibraryItem] Skipping metadata save for deleted library item "${this.id}" at "${this.path}"`)
+      return null
+    }
+
     let metadataPath = Path.join(global.MetadataPath, 'items', this.id)
     let storeMetadataWithItem = global.ServerSettings.storeMetadataWithItem
     if (storeMetadataWithItem && !this.isFile) {

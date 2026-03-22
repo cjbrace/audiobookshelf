@@ -378,5 +378,24 @@ describe('LibraryItemController', () => {
       expect(await Database.seriesModel.checkExistsById(seriesId)).to.be.false
       expect(resetIssuesSpy.calledOnceWith(libraryId)).to.be.true
     })
+
+    it('should not rewrite metadata for a deleted library item from a stale in-memory instance', async () => {
+      global.MetadataPath = '/metadata'
+      global.ServerSettings = {
+        ...global.ServerSettings,
+        metadataFileFormat: 'json',
+        storeMetadataWithItem: true
+      }
+
+      const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      const writeFileStub = sinon.stub(fs, 'writeFile').resolves()
+
+      await Database.libraryItemModel.removeById(libraryItemId)
+
+      const result = await libraryItem.saveMetadataFile()
+
+      expect(result).to.equal(null)
+      expect(writeFileStub.called).to.be.false
+    })
   })
 })
