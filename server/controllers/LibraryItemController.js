@@ -24,6 +24,8 @@ const DELETE_RETRY_ERROR_CODES = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM', 'EMFILE
 const DELETE_MAX_ATTEMPTS = 7
 const DELETE_RETRY_BASE_DELAY_MS = 150
 const DELETE_RETRY_MAX_DELAY_MS = 500
+const DELETE_RESIDUE_BACKGROUND_RETRY_DELAY_MS = 2000
+const DELETE_RESIDUE_BACKGROUND_MAX_ATTEMPTS = 90
 const DELETE_KNOWN_RESIDUE_FILENAMES = new Set(['metadata.json', 'metadata.abs', 'cover.jpg', 'cover.jpeg', 'cover.png', 'cover.webp'])
 const DELETE_BUSY_RESIDUE_PREFIXES = ['.nfs']
 
@@ -145,6 +147,88 @@ async function purgeKnownDeleteResidueFiles(targetPath, residueEntries) {
     }
   }
   return removedCount
+}
+
+async function continueKnownDeleteResidueCleanup(targetPath) {
+  let residueState = await inspectDeleteResidueState(targetPath)
+  if (!residueState.exists) {
+    return {
+      status: 'deleted',
+      remainingEntries: []
+    }
+  }
+
+  if (!residueState.knownResidueOnly) {
+    return {
+      status: 'unknown_residue',
+      remainingEntries: residueState.entries.map((entry) => entry.relativePath).sort()
+    }
+  }
+
+  await purgeKnownDeleteResidueFiles(targetPath, residueState.entries)
+  try {
+    await fs.remove(targetPath)
+  } catch (error) {
+    if (error?.code && !DELETE_RETRY_ERROR_CODES.has(error.code)) {
+      Logger.warn(`[LibraryItemController] Deferred residue cleanup failed for "${targetPath}"`, error)
+    }
+  }
+
+  residueState = await inspectDeleteResidueState(targetPath)
+  if (!residueState.exists) {
+    return {
+      status: 'deleted',
+      remainingEntries: []
+    }
+  }
+
+  if (!residueState.knownResidueOnly) {
+    return {
+      status: 'unknown_residue',
+      remainingEntries: residueState.entries.map((entry) => entry.relativePath).sort()
+    }
+  }
+
+  return {
+    status: 'residue_only',
+    remainingEntries: residueState.entries.map((entry) => entry.relativePath).sort()
+  }
+}
+
+function scheduleKnownDeleteResidueCleanup(libraryItemPath, libraryItemId, libraryId) {
+  const attemptCleanup = async (attempt) => {
+    try {
+      const { resolvedItemPath } = await getScopedLibraryItemDeleteTarget({
+        path: libraryItemPath,
+        id: libraryItemId,
+        libraryId
+      })
+      const cleanupResult = await continueKnownDeleteResidueCleanup(resolvedItemPath)
+      if (cleanupResult.status === 'deleted') {
+        Logger.info(`[LibraryItemController] Deferred residue cleanup completed for deleted item "${libraryItemId}" at "${resolvedItemPath}"`)
+        return
+      }
+      if (cleanupResult.status === 'unknown_residue') {
+        Logger.warn(`[LibraryItemController] Deferred residue cleanup stopped for deleted item "${libraryItemId}" at "${resolvedItemPath}" because unknown residue remains: ${cleanupResult.remainingEntries.join(', ')}`)
+        return
+      }
+      if (attempt >= DELETE_RESIDUE_BACKGROUND_MAX_ATTEMPTS) {
+        Logger.warn(`[LibraryItemController] Deferred residue cleanup exhausted retries for deleted item "${libraryItemId}" at "${resolvedItemPath}": ${cleanupResult.remainingEntries.join(', ')}`)
+        return
+      }
+    } catch (error) {
+      Logger.warn(`[LibraryItemController] Deferred residue cleanup failed for deleted item "${libraryItemId}" at "${libraryItemPath}"`, error)
+      return
+    }
+
+    setTimeout(() => {
+      attemptCleanup(attempt + 1)
+    }, DELETE_RESIDUE_BACKGROUND_RETRY_DELAY_MS)
+  }
+
+  setTimeout(() => {
+    attemptCleanup(1)
+  }, DELETE_RESIDUE_BACKGROUND_RETRY_DELAY_MS)
 }
 
 async function deleteLibraryItemPathSafely(libraryItemPath, libraryItemId, libraryId) {
@@ -348,6 +432,7 @@ class LibraryItemController {
 
     if (hardDeleteResult?.status === 'residue_only') {
       Logger.warn(`[LibraryItemController] Library item "${req.libraryItem.id}" was deleted from ABS metadata but left known file residue at "${hardDeleteResult.path}": ${hardDeleteResult.remainingEntries.join(', ')}`)
+      scheduleKnownDeleteResidueCleanup(req.libraryItem.path, req.libraryItem.id, req.libraryItem.libraryId)
     }
 
     res.sendStatus(200)
@@ -850,6 +935,7 @@ class LibraryItemController {
 
       if (hardDeleteResult?.status === 'residue_only') {
         Logger.warn(`[LibraryItemController] Library item "${libraryItem.id}" was deleted from ABS metadata but left known file residue at "${hardDeleteResult.path}": ${hardDeleteResult.remainingEntries.join(', ')}`)
+        scheduleKnownDeleteResidueCleanup(libraryItem.path, libraryItem.id, libraryItem.libraryId)
       }
     }
 
