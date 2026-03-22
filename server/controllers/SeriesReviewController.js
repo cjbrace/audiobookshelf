@@ -1,6 +1,11 @@
 const SeriesReviewManager = require('../managers/SeriesReviewManager')
 
 class SeriesReviewController {
+  handleActionError(res, error) {
+    const message = String(error?.message || '').trim() || 'Series review action failed'
+    return res.status(400).send(message)
+  }
+
   async getQueue(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
@@ -21,7 +26,12 @@ class SeriesReviewController {
 
   async addSuggestion(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
-    const result = await SeriesReviewManager.applySuggestion(req.params.suggestionId, req.user.id, 'add')
+    let result
+    try {
+      result = await SeriesReviewManager.applySuggestion(req.params.suggestionId, req.user.id, 'add')
+    } catch (error) {
+      return this.handleActionError(res, error)
+    }
     if (!result) return res.sendStatus(404)
 
     res.json({
@@ -39,7 +49,12 @@ class SeriesReviewController {
     const replaceSeriesId = typeof req.body?.replaceSeriesId === 'string' ? req.body.replaceSeriesId : ''
     if (!replaceSeriesId) return res.status(400).send('Missing replaceSeriesId')
 
-    const result = await SeriesReviewManager.applySuggestion(req.params.suggestionId, req.user.id, 'replace', replaceSeriesId)
+    let result
+    try {
+      result = await SeriesReviewManager.applySuggestion(req.params.suggestionId, req.user.id, 'replace', replaceSeriesId)
+    } catch (error) {
+      return this.handleActionError(res, error)
+    }
     if (!result) return res.sendStatus(404)
 
     res.json({
