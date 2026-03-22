@@ -158,6 +158,30 @@ async function continueKnownDeleteResidueCleanup(targetPath) {
     }
   }
 
+  if (!residueState.entries.length) {
+    try {
+      await fs.remove(targetPath)
+    } catch (error) {
+      if (error?.code && !DELETE_RETRY_ERROR_CODES.has(error.code)) {
+        Logger.warn(`[LibraryItemController] Deferred empty-directory cleanup failed for "${targetPath}"`, error)
+      }
+    }
+    residueState = await inspectDeleteResidueState(targetPath)
+    if (!residueState.exists) {
+      return {
+        status: 'deleted',
+        remainingEntries: []
+      }
+    }
+  }
+
+  if (!residueState.entries.length) {
+    return {
+      status: 'residue_only',
+      remainingEntries: []
+    }
+  }
+
   if (!residueState.knownResidueOnly) {
     return {
       status: 'unknown_residue',
