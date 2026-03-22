@@ -6,6 +6,7 @@ const sinon = require('sinon')
 const Database = require('../../../server/Database')
 const ApiRouter = require('../../../server/routers/ApiRouter')
 const LibraryItemController = require('../../../server/controllers/LibraryItemController')
+const BookScanner = require('../../../server/scanner/BookScanner')
 const ApiCacheManager = require('../../../server/managers/ApiCacheManager')
 const Auth = require('../../../server/Auth')
 const fs = require('../../../server/libs/fsExtra')
@@ -393,6 +394,26 @@ describe('LibraryItemController', () => {
       await Database.libraryItemModel.removeById(libraryItemId)
 
       const result = await libraryItem.saveMetadataFile()
+
+      expect(result).to.equal(null)
+      expect(writeFileStub.called).to.be.false
+    })
+
+    it('should not rewrite metadata from the book scanner for a deleted library item', async () => {
+      global.MetadataPath = '/metadata'
+      global.ServerSettings = {
+        ...global.ServerSettings,
+        metadataFileFormat: 'json',
+        storeMetadataWithItem: true
+      }
+
+      const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      const writeFileStub = sinon.stub(fs, 'writeFile').resolves()
+      const scanLogger = { addLog: sinon.stub() }
+
+      await Database.libraryItemModel.removeById(libraryItemId)
+
+      const result = await BookScanner.saveMetadataFile(libraryItem, scanLogger)
 
       expect(result).to.equal(null)
       expect(writeFileStub.called).to.be.false

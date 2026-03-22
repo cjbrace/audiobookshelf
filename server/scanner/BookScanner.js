@@ -808,6 +808,11 @@ class BookScanner {
    * @returns {Promise}
    */
   async saveMetadataFile(libraryItem, libraryScan) {
+    if (!libraryItem.id || !(await Database.libraryItemModel.checkExistsById(libraryItem.id))) {
+      libraryScan.addLog(LogLevel.WARN, `Skipping metadata save for deleted library item "${libraryItem.id}" at "${libraryItem.path}"`)
+      return null
+    }
+
     let metadataPath = Path.join(global.MetadataPath, 'items', libraryItem.id)
     let storeMetadataWithItem = global.ServerSettings.storeMetadataWithItem
     if (storeMetadataWithItem && !libraryItem.isFile) {
