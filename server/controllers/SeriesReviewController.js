@@ -1,11 +1,11 @@
 const SeriesReviewManager = require('../managers/SeriesReviewManager')
 
-class SeriesReviewController {
-  handleActionError(res, error) {
-    const message = String(error?.message || '').trim() || 'Series review action failed'
-    return res.status(400).send(message)
-  }
+function handleActionError(res, error) {
+  const message = String(error?.message || '').trim() || 'Series review action failed'
+  return res.status(400).send(message)
+}
 
+class SeriesReviewController {
   async getQueue(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
@@ -30,7 +30,7 @@ class SeriesReviewController {
     try {
       result = await SeriesReviewManager.applySuggestion(req.params.suggestionId, req.user.id, 'add')
     } catch (error) {
-      return this.handleActionError(res, error)
+      return handleActionError(res, error)
     }
     if (!result) return res.sendStatus(404)
 
@@ -53,7 +53,7 @@ class SeriesReviewController {
     try {
       result = await SeriesReviewManager.applySuggestion(req.params.suggestionId, req.user.id, 'replace', replaceSeriesId)
     } catch (error) {
-      return this.handleActionError(res, error)
+      return handleActionError(res, error)
     }
     if (!result) return res.sendStatus(404)
 
