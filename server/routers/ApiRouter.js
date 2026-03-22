@@ -36,6 +36,7 @@ const ShareController = require('../controllers/ShareController')
 const StatsController = require('../controllers/StatsController')
 const ApiKeyController = require('../controllers/ApiKeyController')
 const QuickMatchSessionController = require('../controllers/QuickMatchSessionController')
+const SeriesReviewController = require('../controllers/SeriesReviewController')
 
 class ApiRouter {
   constructor(Server) {
@@ -92,6 +93,8 @@ class ApiRouter {
     this.router.post('/libraries/:id/scan', LibraryController.middleware.bind(this), LibraryController.scan.bind(this))
     this.router.get('/libraries/:id/recent-episodes', LibraryController.middleware.bind(this), LibraryController.getRecentEpisodes.bind(this))
     this.router.post('/libraries/:id/duplicates/evaluate', LibraryController.middleware.bind(this), QuickMatchSessionController.evaluateLibraryDuplicates.bind(this))
+    this.router.get('/libraries/:id/series-review', LibraryController.middleware.bind(this), SeriesReviewController.getQueue.bind(this))
+    this.router.post('/libraries/:id/series-review/import', LibraryController.middleware.bind(this), SeriesReviewController.importSuggestions.bind(this))
     this.router.get('/libraries/:id/opml', LibraryController.middleware.bind(this), LibraryController.getOPMLFile.bind(this))
     this.router.post('/libraries/order', LibraryController.reorder.bind(this))
     this.router.post('/libraries/:id/remove-metadata', LibraryController.middleware.bind(this), LibraryController.removeAllMetadataFiles.bind(this))
@@ -112,6 +115,9 @@ class ApiRouter {
     this.router.delete('/items/:id', LibraryItemController.middleware.bind(this), LibraryItemController.delete.bind(this))
     this.router.get('/items/:id/download', LibraryItemController.middleware.bind(this), LibraryItemController.download.bind(this))
     this.router.patch('/items/:id/media', LibraryItemController.middleware.bind(this), LibraryItemController.updateMedia.bind(this))
+    this.router.post('/series-review/suggestions/:suggestionId/add', SeriesReviewController.addSuggestion.bind(this))
+    this.router.post('/series-review/suggestions/:suggestionId/replace', SeriesReviewController.replaceSuggestion.bind(this))
+    this.router.post('/series-review/suggestions/:suggestionId/dismiss', SeriesReviewController.dismissSuggestion.bind(this))
     this.router.patch('/items/:id/qc-completion', LibraryItemController.middleware.bind(this), LibraryItemController.updateQcCompletion.bind(this))
     this.router.get('/items/:id/cover', LibraryItemController.getCover.bind(this))
     this.router.post('/items/:id/cover', LibraryItemController.middleware.bind(this), LibraryItemController.uploadCover.bind(this))

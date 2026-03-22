@@ -92,6 +92,14 @@
         <div v-show="isDuplicatesPage" class="h-full w-0.5 bg-yellow-400 absolute top-0 left-0" />
       </nuxt-link>
 
+      <nuxt-link v-if="isBookLibrary && userIsAdminOrUp" :to="`/library/${currentLibraryId}/series-review`" class="w-full h-20 flex flex-col items-center justify-center text-white/80 border-b border-primary/70 hover:bg-primary cursor-pointer relative" :class="isSeriesReviewPage ? 'bg-primary/80' : 'bg-bg/60'">
+        <span class="material-symbols text-2xl">playlist_add_check</span>
+
+        <p class="pt-1 text-center leading-4" style="font-size: 0.8rem">Series Review</p>
+
+        <div v-show="isSeriesReviewPage" class="h-full w-0.5 bg-yellow-400 absolute top-0 left-0" />
+      </nuxt-link>
+
       <nuxt-link v-if="isPodcastLibrary && userIsAdminOrUp" :to="`/library/${currentLibraryId}/podcast/search`" class="w-full h-20 flex flex-col items-center justify-center text-white/80 border-b border-primary/70 hover:bg-primary cursor-pointer relative" :class="isPodcastSearchPage ? 'bg-primary/80' : 'bg-bg/60'">
         <span class="abs-icons icon-podcast text-xl"></span>
 
@@ -201,6 +209,9 @@ export default {
     },
     isDuplicatesPage() {
       return this.$route.name === 'library-library-duplicates'
+    },
+    isSeriesReviewPage() {
+      return this.$route.name === 'library-library-series-review'
     },
     libraryBookshelfPage() {
       return this.$route.name === 'library-library-bookshelf-id'
