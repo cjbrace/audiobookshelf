@@ -1,4 +1,5 @@
 const { expect } = require('chai')
+const Path = require('path')
 const { Sequelize } = require('sequelize')
 const sinon = require('sinon')
 
@@ -7,6 +8,7 @@ const ApiRouter = require('../../../server/routers/ApiRouter')
 const LibraryItemController = require('../../../server/controllers/LibraryItemController')
 const ApiCacheManager = require('../../../server/managers/ApiCacheManager')
 const Auth = require('../../../server/Auth')
+const fs = require('../../../server/libs/fsExtra')
 const Logger = require('../../../server/Logger')
 
 describe('LibraryItemController', () => {
@@ -25,6 +27,9 @@ describe('LibraryItemController', () => {
     })
 
     sinon.stub(Logger, 'info')
+    sinon.stub(Logger, 'warn')
+    sinon.stub(Logger, 'error')
+    sinon.stub(Logger, 'debug')
   })
 
   afterEach(async () => {
@@ -197,6 +202,181 @@ describe('LibraryItemController', () => {
       // Series 2 should not be removed because it still has Book 2
       const series2Exists = await Database.seriesModel.checkExistsById(series2Id)
       expect(series2Exists).to.be.true
+    })
+  })
+
+  describe('hardDeleteResidueHandling', function () {
+    this.timeout(10000)
+    let libraryId
+    let libraryItemId
+    let authorId
+    let seriesId
+    let libraryItemPath
+    let resolvedLibraryItemPath
+
+    async function createDeleteFixture() {
+      const newLibrary = await Database.libraryModel.create({ name: 'Delete Test Library', mediaType: 'book' })
+      libraryId = newLibrary.id
+      const newLibraryFolder = await Database.libraryFolderModel.create({ path: '/library', libraryId })
+
+      const newBook = await Database.bookModel.create({ title: 'Delete Test Book', audioFiles: [], tags: [], narrators: [], genres: [], chapters: [] })
+      libraryItemPath = '/library/Delete Author/Delete Test Book'
+      resolvedLibraryItemPath = Path.resolve(libraryItemPath)
+      const newLibraryItem = await Database.libraryItemModel.create({
+        path: libraryItemPath,
+        libraryFiles: [],
+        mediaId: newBook.id,
+        mediaType: 'book',
+        libraryId,
+        libraryFolderId: newLibraryFolder.id
+      })
+      libraryItemId = newLibraryItem.id
+
+      const newAuthor = await Database.authorModel.create({ name: 'Delete Author', libraryId })
+      authorId = newAuthor.id
+      await Database.bookAuthorModel.create({ bookId: newBook.id, authorId })
+
+      const newSeries = await Database.seriesModel.create({ name: 'Delete Series', libraryId })
+      seriesId = newSeries.id
+      await Database.bookSeriesModel.create({ bookId: newBook.id, seriesId })
+    }
+
+    function createFakeResponse() {
+      return {
+        sendStatus: sinon.spy(),
+        send: sinon.spy(),
+        status: sinon.stub().returnsThis()
+      }
+    }
+
+    beforeEach(async () => {
+      await createDeleteFixture()
+    })
+
+    it('should return success for single hard delete when only known residue remains after db delete', async () => {
+      const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      const resetIssuesSpy = sinon.spy(Database, 'resetLibraryIssuesFilterData')
+      const residueFiles = new Set(['.nfs0001', 'cover.jpg', 'metadata.json'])
+
+      sinon.stub(fs, 'remove').callsFake(async (targetPath) => {
+        if (targetPath === resolvedLibraryItemPath) {
+          const error = new Error('busy residue')
+          error.code = 'EBUSY'
+          throw error
+        }
+
+        residueFiles.delete(Path.basename(targetPath))
+      })
+      sinon.stub(fs, 'pathExists').callsFake(async (targetPath) => targetPath === resolvedLibraryItemPath && residueFiles.size > 0)
+      sinon.stub(fs, 'readdir').callsFake(async (targetPath) => {
+        if (targetPath !== resolvedLibraryItemPath) {
+          const error = new Error('not found')
+          error.code = 'ENOENT'
+          throw error
+        }
+        return Array.from(residueFiles).map((entryName) => ({
+          name: entryName,
+          isDirectory: () => false
+        }))
+      })
+
+      const fakeRes = createFakeResponse()
+      await LibraryItemController.delete.bind(apiRouter)({
+        query: { hard: 1 },
+        libraryItem
+      }, fakeRes)
+
+      expect(fakeRes.sendStatus.calledWith(200)).to.be.true
+      expect(fakeRes.status.called).to.be.false
+      expect(await Database.libraryItemModel.getExpandedById(libraryItemId)).to.equal(null)
+      expect(await Database.authorModel.checkExistsById(authorId)).to.be.false
+      expect(await Database.seriesModel.checkExistsById(seriesId)).to.be.false
+      expect(resetIssuesSpy.calledOnceWith(libraryId)).to.be.true
+    })
+
+    it('should return success for batch hard delete when only known residue remains after db delete', async () => {
+      const resetIssuesSpy = sinon.spy(Database, 'resetLibraryIssuesFilterData')
+      const residueFiles = new Set(['.nfs0002', 'cover.jpg', 'metadata.json'])
+
+      sinon.stub(fs, 'remove').callsFake(async (targetPath) => {
+        if (targetPath === resolvedLibraryItemPath) {
+          const error = new Error('directory busy')
+          error.code = 'ENOTEMPTY'
+          throw error
+        }
+
+        residueFiles.delete(Path.basename(targetPath))
+      })
+      sinon.stub(fs, 'pathExists').callsFake(async (targetPath) => targetPath === resolvedLibraryItemPath && residueFiles.size > 0)
+      sinon.stub(fs, 'readdir').callsFake(async (targetPath) => {
+        if (targetPath !== resolvedLibraryItemPath) {
+          const error = new Error('not found')
+          error.code = 'ENOENT'
+          throw error
+        }
+        return Array.from(residueFiles).map((entryName) => ({
+          name: entryName,
+          isDirectory: () => false
+        }))
+      })
+
+      const fakeRes = createFakeResponse()
+      await LibraryItemController.batchDelete.bind(apiRouter)({
+        query: { hard: 1 },
+        user: {
+          canDelete: true
+        },
+        body: {
+          libraryItemIds: [libraryItemId]
+        }
+      }, fakeRes)
+
+      expect(fakeRes.sendStatus.calledWith(200)).to.be.true
+      expect(fakeRes.status.called).to.be.false
+      expect(await Database.libraryItemModel.getExpandedById(libraryItemId)).to.equal(null)
+      expect(await Database.authorModel.checkExistsById(authorId)).to.be.false
+      expect(await Database.seriesModel.checkExistsById(seriesId)).to.be.false
+      expect(resetIssuesSpy.calledOnceWith(libraryId)).to.be.true
+    })
+
+    it('should still run cleanup and issue reset on hard delete failure after db delete', async () => {
+      const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      const resetIssuesSpy = sinon.spy(Database, 'resetLibraryIssuesFilterData')
+
+      sinon.stub(fs, 'remove').callsFake(async (targetPath) => {
+        if (targetPath === resolvedLibraryItemPath) {
+          const error = new Error('permission denied')
+          error.code = 'EACCES'
+          throw error
+        }
+      })
+      sinon.stub(fs, 'pathExists').callsFake(async (targetPath) => targetPath === resolvedLibraryItemPath)
+      sinon.stub(fs, 'readdir').callsFake(async (targetPath) => {
+        if (targetPath !== resolvedLibraryItemPath) {
+          const error = new Error('not found')
+          error.code = 'ENOENT'
+          throw error
+        }
+        return [
+          {
+            name: 'chapter01.mp3',
+            isDirectory: () => false
+          }
+        ]
+      })
+
+      const fakeRes = createFakeResponse()
+      await LibraryItemController.delete.bind(apiRouter)({
+        query: { hard: 1 },
+        libraryItem
+      }, fakeRes)
+
+      expect(fakeRes.status.calledWith(500)).to.be.true
+      expect(fakeRes.send.calledWith('Failed to fully delete library item from file system')).to.be.true
+      expect(await Database.libraryItemModel.getExpandedById(libraryItemId)).to.equal(null)
+      expect(await Database.authorModel.checkExistsById(authorId)).to.be.false
+      expect(await Database.seriesModel.checkExistsById(seriesId)).to.be.false
+      expect(resetIssuesSpy.calledOnceWith(libraryId)).to.be.true
     })
   })
 })

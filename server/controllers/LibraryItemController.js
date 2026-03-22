@@ -21,8 +21,11 @@ const ShareManager = require('../managers/ShareManager')
 const QuickMatchSessionManager = require('../managers/QuickMatchSessionManager')
 
 const DELETE_RETRY_ERROR_CODES = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM', 'EMFILE', 'ENFILE'])
-const DELETE_MAX_ATTEMPTS = 5
-const DELETE_RETRY_BASE_DELAY_MS = 100
+const DELETE_MAX_ATTEMPTS = 7
+const DELETE_RETRY_BASE_DELAY_MS = 150
+const DELETE_RETRY_MAX_DELAY_MS = 500
+const DELETE_KNOWN_RESIDUE_FILENAMES = new Set(['metadata.json', 'metadata.abs', 'cover.jpg', 'cover.jpeg', 'cover.png', 'cover.webp'])
+const DELETE_BUSY_RESIDUE_PREFIXES = ['.nfs']
 
 function isPathWithinDirectory(basePath, targetPath) {
   const relativePath = Path.relative(basePath, targetPath)
@@ -54,6 +57,96 @@ async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function getDeleteRetryDelayMs(attempt) {
+  return Math.min(DELETE_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1), DELETE_RETRY_MAX_DELAY_MS)
+}
+
+function isBusyDeleteResidueName(entryName) {
+  const normalizedEntryName = entryName?.toLowerCase?.() || ''
+  return DELETE_BUSY_RESIDUE_PREFIXES.some((prefix) => normalizedEntryName.startsWith(prefix))
+}
+
+function isKnownDeleteResidueName(entryName) {
+  const normalizedEntryName = entryName?.toLowerCase?.() || ''
+  return DELETE_KNOWN_RESIDUE_FILENAMES.has(normalizedEntryName) || isBusyDeleteResidueName(normalizedEntryName)
+}
+
+function formatDeleteResidueEntries(entries) {
+  return entries.map((entry) => entry.relativePath).sort().join(', ')
+}
+
+async function inspectDeleteResidueEntries(targetPath, relativePath = '') {
+  const currentPath = relativePath ? Path.join(targetPath, relativePath) : targetPath
+  let dirEntries = []
+  try {
+    dirEntries = await fs.readdir(currentPath, { withFileTypes: true })
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return []
+    }
+    throw error
+  }
+
+  const entries = []
+  for (const dirEntry of dirEntries) {
+    const entryRelativePath = relativePath ? Path.join(relativePath, dirEntry.name) : dirEntry.name
+    if (dirEntry.isDirectory()) {
+      entries.push({
+        name: dirEntry.name,
+        relativePath: entryRelativePath,
+        isDirectory: true
+      })
+      entries.push(...(await inspectDeleteResidueEntries(targetPath, entryRelativePath)))
+    } else {
+      entries.push({
+        name: dirEntry.name,
+        relativePath: entryRelativePath,
+        isDirectory: false
+      })
+    }
+  }
+  return entries
+}
+
+async function inspectDeleteResidueState(targetPath) {
+  if (!(await fs.pathExists(targetPath))) {
+    return {
+      exists: false,
+      entries: [],
+      knownResidueOnly: false,
+      busyResidueOnly: false
+    }
+  }
+
+  const entries = await inspectDeleteResidueEntries(targetPath)
+  const filesOnly = entries.filter((entry) => !entry.isDirectory)
+  const knownResidueOnly = filesOnly.length > 0 && entries.every((entry) => !entry.isDirectory && isKnownDeleteResidueName(entry.name))
+  const busyResidueOnly = knownResidueOnly && filesOnly.every((entry) => isBusyDeleteResidueName(entry.name))
+
+  return {
+    exists: true,
+    entries,
+    knownResidueOnly,
+    busyResidueOnly
+  }
+}
+
+async function purgeKnownDeleteResidueFiles(targetPath, residueEntries) {
+  let removedCount = 0
+  for (const residueEntry of residueEntries) {
+    if (residueEntry.isDirectory || isBusyDeleteResidueName(residueEntry.name)) continue
+
+    const residuePath = Path.join(targetPath, residueEntry.relativePath)
+    try {
+      await fs.remove(residuePath)
+      removedCount++
+    } catch (error) {
+      Logger.warn(`[LibraryItemController] Failed to remove known delete residue "${residuePath}"`, error)
+    }
+  }
+  return removedCount
+}
+
 async function deleteLibraryItemPathSafely(libraryItemPath, libraryItemId, libraryId) {
   const scopedDeleteTarget = await getScopedLibraryItemDeleteTarget({
     path: libraryItemPath,
@@ -71,25 +164,57 @@ async function deleteLibraryItemPathSafely(libraryItemPath, libraryItemId, libra
       await fs.remove(resolvedItemPath)
     } catch (error) {
       lastError = error
-      if (!DELETE_RETRY_ERROR_CODES.has(error?.code) || attempt === DELETE_MAX_ATTEMPTS) {
-        break
-      }
-      const delayMs = DELETE_RETRY_BASE_DELAY_MS * attempt
-      Logger.warn(`[LibraryItemController] Hard delete retry for "${resolvedItemPath}" after ${error.code}. Waiting ${delayMs}ms before attempt ${attempt + 1}/${DELETE_MAX_ATTEMPTS}`)
-      await delay(delayMs)
-      continue
     }
 
-    if (!(await fs.pathExists(resolvedItemPath))) {
+    let residueState = await inspectDeleteResidueState(resolvedItemPath)
+    if (!residueState.exists) {
       Logger.info(`[LibraryItemController] Hard delete completed for "${resolvedItemPath}"`)
-      return
+      return {
+        status: 'deleted',
+        path: resolvedItemPath,
+        attempts: attempt
+      }
     }
 
-    lastError = new Error(`Delete target still exists after recursive remove: "${resolvedItemPath}"`)
-    lastError.code = 'EDELETE_VERIFY'
+    if (residueState.knownResidueOnly) {
+      const removedResidueCount = await purgeKnownDeleteResidueFiles(resolvedItemPath, residueState.entries)
+      if (removedResidueCount > 0) {
+        residueState = await inspectDeleteResidueState(resolvedItemPath)
+        if (!residueState.exists) {
+          Logger.info(`[LibraryItemController] Hard delete completed for "${resolvedItemPath}" after residue cleanup`)
+          return {
+            status: 'deleted',
+            path: resolvedItemPath,
+            attempts: attempt
+          }
+        }
+      }
+
+      if (attempt === DELETE_MAX_ATTEMPTS && residueState.knownResidueOnly) {
+        Logger.warn(`[LibraryItemController] Hard delete left known residue for "${resolvedItemPath}" after DB delete: ${formatDeleteResidueEntries(residueState.entries)}`)
+        return {
+          status: 'residue_only',
+          path: resolvedItemPath,
+          attempts: attempt,
+          remainingEntries: residueState.entries.map((entry) => entry.relativePath).sort(),
+          busyResidueOnly: residueState.busyResidueOnly,
+          errorCode: lastError?.code || 'EDELETE_VERIFY'
+        }
+      }
+    }
+
+    if (!lastError) {
+      lastError = new Error(`Delete target still exists after recursive remove: "${resolvedItemPath}"`)
+      lastError.code = 'EDELETE_VERIFY'
+    }
+
+    if (!DELETE_RETRY_ERROR_CODES.has(lastError?.code) && !residueState.knownResidueOnly) {
+      break
+    }
+
     if (attempt < DELETE_MAX_ATTEMPTS) {
-      const delayMs = DELETE_RETRY_BASE_DELAY_MS * attempt
-      Logger.warn(`[LibraryItemController] Hard delete verification failed for "${resolvedItemPath}" on attempt ${attempt}/${DELETE_MAX_ATTEMPTS}. Retrying in ${delayMs}ms`)
+      const delayMs = getDeleteRetryDelayMs(attempt)
+      Logger.warn(`[LibraryItemController] Hard delete retry for "${resolvedItemPath}" after ${lastError.code}. Waiting ${delayMs}ms before attempt ${attempt + 1}/${DELETE_MAX_ATTEMPTS}`)
       await delay(delayMs)
     }
   }
@@ -98,6 +223,16 @@ async function deleteLibraryItemPathSafely(libraryItemPath, libraryItemId, libra
     lastError = new Error(`Hard delete failed for unknown reason at "${resolvedItemPath}"`)
   }
   throw lastError
+}
+
+async function runLibraryItemDeleteCleanup(apiRouterCtx, authorIds, seriesIds, libraryId) {
+  if (authorIds.length) {
+    await apiRouterCtx.checkRemoveAuthorsWithNoBooks(authorIds)
+  }
+  if (seriesIds.length) {
+    await apiRouterCtx.checkRemoveEmptySeries(seriesIds)
+  }
+  await Database.resetLibraryIssuesFilterData(libraryId)
 }
 
 /**
@@ -192,24 +327,29 @@ class LibraryItemController {
       }
     }
 
+    let hardDeleteResult = null
+    let hardDeleteError = null
+
     await this.handleDeleteLibraryItem(req.libraryItem.id, mediaItemIds)
     if (hardDelete) {
       try {
-        await deleteLibraryItemPathSafely(libraryItemPath, req.libraryItem.id, req.libraryItem.libraryId)
+        hardDeleteResult = await deleteLibraryItemPathSafely(libraryItemPath, req.libraryItem.id, req.libraryItem.libraryId)
       } catch (error) {
-        Logger.error(`[LibraryItemController] Failed to hard delete library item from file system at "${libraryItemPath}"`, error)
-        return res.status(500).send('Failed to fully delete library item from file system')
+        hardDeleteError = error
       }
     }
 
-    if (authorIds.length) {
-      await this.checkRemoveAuthorsWithNoBooks(authorIds)
-    }
-    if (seriesIds.length) {
-      await this.checkRemoveEmptySeries(seriesIds)
+    await runLibraryItemDeleteCleanup(this, authorIds, seriesIds, req.libraryItem.libraryId)
+
+    if (hardDeleteError) {
+      Logger.error(`[LibraryItemController] Failed to hard delete library item from file system at "${libraryItemPath}"`, hardDeleteError)
+      return res.status(500).send('Failed to fully delete library item from file system')
     }
 
-    await Database.resetLibraryIssuesFilterData(req.libraryItem.libraryId)
+    if (hardDeleteResult?.status === 'residue_only') {
+      Logger.warn(`[LibraryItemController] Library item "${req.libraryItem.id}" was deleted from ABS metadata but left known file residue at "${hardDeleteResult.path}": ${hardDeleteResult.remainingEntries.join(', ')}`)
+    }
+
     res.sendStatus(200)
   }
 
@@ -668,6 +808,7 @@ class LibraryItemController {
     }
 
     const libraryId = itemsToDelete[0].libraryId
+    let batchHardDeleteError = null
     for (const libraryItem of itemsToDelete) {
       const libraryItemPath = libraryItem.path
       Logger.info(`[LibraryItemController] (${hardDelete ? 'Hard' : 'Soft'}) deleting Library Item "${libraryItem.media.title}" with id "${libraryItem.id}"`)
@@ -685,24 +826,37 @@ class LibraryItemController {
           authorIds.push(...libraryItem.media.authors.map((au) => au.id))
         }
       }
+      let hardDeleteResult = null
+
       await this.handleDeleteLibraryItem(libraryItem.id, mediaItemIds)
       if (hardDelete) {
         try {
-          await deleteLibraryItemPathSafely(libraryItemPath, libraryItem.id, libraryItem.libraryId)
+          hardDeleteResult = await deleteLibraryItemPathSafely(libraryItemPath, libraryItem.id, libraryItem.libraryId)
         } catch (error) {
-          Logger.error(`[LibraryItemController] Failed to hard delete library item from file system at "${libraryItemPath}"`, error)
-          return res.status(500).send(`Failed to fully delete library item "${libraryItem.id}" from file system`)
+          batchHardDeleteError = {
+            error,
+            libraryItemPath,
+            libraryItemId: libraryItem.id
+          }
         }
+
       }
-      if (seriesIds.length) {
-        await this.checkRemoveEmptySeries(seriesIds)
+      await runLibraryItemDeleteCleanup(this, authorIds, seriesIds, libraryId)
+
+      if (batchHardDeleteError) {
+        Logger.error(`[LibraryItemController] Failed to hard delete library item from file system at "${batchHardDeleteError.libraryItemPath}"`, batchHardDeleteError.error)
+        break
       }
-      if (authorIds.length) {
-        await this.checkRemoveAuthorsWithNoBooks(authorIds)
+
+      if (hardDeleteResult?.status === 'residue_only') {
+        Logger.warn(`[LibraryItemController] Library item "${libraryItem.id}" was deleted from ABS metadata but left known file residue at "${hardDeleteResult.path}": ${hardDeleteResult.remainingEntries.join(', ')}`)
       }
     }
 
-    await Database.resetLibraryIssuesFilterData(libraryId)
+    if (batchHardDeleteError) {
+      return res.status(500).send(`Failed to fully delete library item "${batchHardDeleteError.libraryItemId}" from file system`)
+    }
+
     res.sendStatus(200)
   }
 
