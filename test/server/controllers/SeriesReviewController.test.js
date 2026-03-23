@@ -3,6 +3,7 @@ const sinon = require('sinon')
 
 const SeriesReviewController = require('../../../server/controllers/SeriesReviewController')
 const SeriesReviewManager = require('../../../server/managers/SeriesReviewManager')
+const SeriesImportBridgeManager = require('../../../server/managers/SeriesImportBridgeManager')
 
 describe('SeriesReviewController', () => {
   afterEach(() => {
@@ -151,6 +152,56 @@ describe('SeriesReviewController', () => {
 
     expect(SeriesReviewManager.getCatalogsForLibrary.calledOnceWithExactly('library-1', true)).to.be.true
     expect(res.json.calledOnceWithExactly({ catalogs: [{ id: 'catalog-1' }] })).to.be.true
+  })
+
+  it('returns trusted source import status for the library', async () => {
+    sinon.stub(SeriesImportBridgeManager, 'getStatus').resolves({ has_active_run: true, library_id: 'library-1' })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.getSourceImportStatus(req, res)
+
+    expect(SeriesImportBridgeManager.getStatus.calledOnceWithExactly('library-1')).to.be.true
+    expect(res.json.calledOnceWithExactly({ has_active_run: true, library_id: 'library-1' })).to.be.true
+  })
+
+  it('starts a trusted source import for the library', async () => {
+    sinon.stub(SeriesImportBridgeManager, 'startRun').resolves({ queued: true, job_id: 'job-1' })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.startSourceImport(req, res)
+
+    expect(SeriesImportBridgeManager.startRun.calledOnceWithExactly('library-1')).to.be.true
+    expect(res.json.calledOnceWithExactly({ queued: true, job_id: 'job-1' })).to.be.true
   })
 
   it('returns catalog detail for the library', async () => {

@@ -498,6 +498,8 @@ describe('SeriesReviewManager', () => {
     ])
 
     expect(importResult.importedCount).to.equal(1)
+    expect(importResult.createdCount).to.equal(1)
+    expect(importResult.updatedCount).to.equal(0)
 
     const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id)
     expect(catalogs).to.have.length(1)

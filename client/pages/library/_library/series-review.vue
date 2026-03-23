@@ -11,6 +11,16 @@
             <span>Show decided rows</span>
           </label>
           <ui-btn
+            v-if="activeTab === 'queue'"
+            color="bg-sky-500/80"
+            small
+            :loading="sourceImportStarting"
+            :disabled="sourceImportStatus?.has_active_run"
+            @click="startSourceImport"
+          >
+            Import Trusted Sources
+          </ui-btn>
+          <ui-btn
             color="bg-bg border border-white/20"
             small
             :loading="activeTab === 'queue' ? loading : activeTab === 'management' ? managementLoading : catalogLoading"
@@ -59,6 +69,62 @@
             <span class="font-semibold">{{ entry.code }}</span>
             <span class="text-sky-100/90">{{ entry.name }}</span>
           </a>
+        </div>
+
+        <div v-if="activeTab === 'queue'" class="bg-black/20 rounded-lg p-3 border border-white/10 mb-4">
+          <div class="flex flex-wrap items-start gap-3">
+            <div class="grow min-w-[18rem]">
+              <p class="text-sm uppercase tracking-wide text-gray-400">Trusted Source Import</p>
+              <p class="text-base text-gray-100 mt-1">{{ sourceImportStatusText }}</p>
+              <p v-if="sourceImportStatus?.recent_warning" class="text-sm text-amber-200 mt-1">{{ sourceImportStatus.recent_warning }}</p>
+              <p v-if="sourceImportError" class="text-sm text-red-200 mt-1">{{ sourceImportError }}</p>
+            </div>
+            <div v-if="sourceImportDisplayJob" class="text-sm text-gray-300">
+              <div>Job: {{ sourceImportDisplayJob.job_id }}</div>
+              <div v-if="sourceImportDisplayJob.finished_at_utc">Finished: {{ formatTime(sourceImportDisplayJob.finished_at_utc) }}</div>
+            </div>
+          </div>
+
+          <div v-if="sourceImportSummary" class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-200 mt-3">
+            <span>Books scanned: {{ sourceImportSummary.books_scanned || 0 }} / {{ sourceImportSummary.books_total || 0 }}</span>
+            <span>Lookups: {{ sourceImportSummary.source_lookups_attempted || 0 }}</span>
+            <span>Catalogs created: {{ sourceImportSummary.series_catalogs_created || 0 }}</span>
+            <span>Catalogs updated: {{ sourceImportSummary.series_catalogs_updated || 0 }}</span>
+            <span>Ambiguous: {{ sourceImportSummary.likely_ambiguous_matches || 0 }}</span>
+            <span>Failures: {{ sourceImportSummary.failures || 0 }}</span>
+          </div>
+
+          <div v-if="sourceImportFilterButtons.length" class="flex flex-wrap gap-2 mt-3">
+            <button
+              v-for="button in sourceImportFilterButtons"
+              :key="button.key"
+              type="button"
+              class="px-3 py-1.5 rounded-full border text-sm transition"
+              :class="sourceImportResultFilter === button.key ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
+              @click="toggleSourceImportResultFilter(button.key)"
+            >
+              {{ button.label }} ({{ button.count }})
+            </button>
+          </div>
+
+          <div v-if="sourceImportFilteredResults.length" class="mt-3 space-y-2">
+            <div
+              v-for="entry in sourceImportFilteredResults"
+              :key="sourceImportResultFilter + ':' + entry.libraryItemId + ':' + (entry.title || entry.error)"
+              class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
+            >
+              <div class="flex flex-wrap gap-x-2 gap-y-1">
+                <nuxt-link v-if="entry.libraryItemId" :to="`/item/${entry.libraryItemId}`" class="font-medium text-sky-200 hover:underline">
+                  {{ entry.title || entry.libraryItemId }}
+                </nuxt-link>
+                <span v-else class="font-medium">{{ entry.title || 'Lookup failure' }}</span>
+                <span v-if="entry.author" class="text-gray-400">{{ entry.author }}</span>
+              </div>
+              <p v-if="entry.currentSeries?.length" class="mt-1 text-gray-300">Current: {{ formatSeriesList(entry.currentSeries) }}</p>
+              <p v-if="entry.suggestedSeries?.length" class="mt-1 text-gray-300">Suggested: {{ formatImportSuggestions(entry.suggestedSeries) }}</p>
+              <p v-if="entry.error" class="mt-1 text-red-200">{{ entry.error }}</p>
+            </div>
+          </div>
         </div>
 
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-sm text-gray-200">
@@ -729,7 +795,12 @@ export default {
       catalogChoiceLoadingKey: '',
       catalogCandidateSearchLoadingKey: '',
       catalogCandidateQueueLoadingKey: '',
-      catalogCandidateResultsBySlot: {}
+      catalogCandidateResultsBySlot: {},
+      sourceImportStatus: null,
+      sourceImportError: '',
+      sourceImportStarting: false,
+      sourceImportResultFilter: '',
+      sourceImportPollHandle: null
     }
   },
   computed: {
@@ -757,10 +828,39 @@ export default {
         })
       })
       return [...sources.values()]
+    },
+    sourceImportDisplayJob() {
+      return this.sourceImportStatus?.active_job || this.sourceImportStatus?.latest_job || null
+    },
+    sourceImportSummary() {
+      return this.sourceImportDisplayJob?.summary || null
+    },
+    sourceImportStatusText() {
+      if (!this.sourceImportStatus?.configured) return 'Series import service is not configured yet.'
+      if (this.sourceImportStatus?.has_active_run) return 'Library-wide trusted source import is running.'
+      if (this.sourceImportDisplayJob?.status_label) return `Last run: ${this.sourceImportDisplayJob.status_label}`
+      return 'No trusted source import has run for this library yet.'
+    },
+    sourceImportFilterButtons() {
+      const summary = this.sourceImportSummary
+      if (!summary) return []
+      return [
+        { key: 'new_conflicts', label: 'New conflicts', count: summary.new_conflicts_count || 0 },
+        { key: 'new_possible_series', label: 'New possible series', count: summary.new_possible_series_count || 0 },
+        { key: 'failed_lookups', label: 'Failed lookups', count: (summary.filtered_results?.failed_lookups || []).length }
+      ].filter((entry) => entry.count > 0)
+    },
+    sourceImportFilteredResults() {
+      const summary = this.sourceImportSummary
+      if (!summary || !this.sourceImportResultFilter) return []
+      return summary.filtered_results?.[this.sourceImportResultFilter] || []
     }
   },
   mounted() {
     this.loadQueue()
+  },
+  beforeDestroy() {
+    this.stopSourceImportPolling()
   },
   methods: {
     async switchTab(tab) {
@@ -847,6 +947,72 @@ export default {
         .map((series) => (series.sequence ? `${series.name} #${series.sequence}` : series.name))
         .join(' | ')
     },
+    formatImportSuggestions(suggestions) {
+      const seen = new Set()
+      return (suggestions || [])
+        .map((suggestion) => {
+          const name = suggestion.seriesName || suggestion.suggestedName || ''
+          const sequence = suggestion.sequence || suggestion.suggestedSequence || ''
+          return sequence ? `${name} #${sequence}` : name
+        })
+        .filter((entry) => {
+          if (!entry || seen.has(entry)) return false
+          seen.add(entry)
+          return true
+        })
+        .join(' | ')
+    },
+    toggleSourceImportResultFilter(key) {
+      this.sourceImportResultFilter = this.sourceImportResultFilter === key ? '' : key
+    },
+    ensureSourceImportPolling() {
+      if (!this.sourceImportStatus?.has_active_run || this.sourceImportPollHandle) return
+      this.sourceImportPollHandle = setInterval(() => {
+        this.loadSourceImportStatus({ silent: true })
+      }, 4000)
+    },
+    stopSourceImportPolling() {
+      if (!this.sourceImportPollHandle) return
+      clearInterval(this.sourceImportPollHandle)
+      this.sourceImportPollHandle = null
+    },
+    async loadSourceImportStatus({ silent = false } = {}) {
+      try {
+        const status = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/source-import/status`)
+        this.sourceImportStatus = status
+        this.sourceImportError = ''
+        if (this.sourceImportFilterButtons.length && !this.sourceImportFilterButtons.some((entry) => entry.key === this.sourceImportResultFilter)) {
+          this.sourceImportResultFilter = this.sourceImportFilterButtons[0]?.key || ''
+        }
+        if (!this.sourceImportResultFilter && this.sourceImportFilterButtons.length) {
+          this.sourceImportResultFilter = this.sourceImportFilterButtons[0].key
+        }
+        if (status?.has_active_run) this.ensureSourceImportPolling()
+        else this.stopSourceImportPolling()
+      } catch (error) {
+        this.stopSourceImportPolling()
+        this.sourceImportStatus = null
+        this.sourceImportError = error?.response?.data || 'Failed to load trusted source import status'
+        if (!silent) this.$toast.error(this.sourceImportError)
+      }
+    },
+    async startSourceImport() {
+      this.sourceImportStarting = true
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/source-import/start`)
+        this.sourceImportStatus = response.status || this.sourceImportStatus
+        this.sourceImportError = ''
+        this.sourceImportResultFilter = ''
+        this.ensureSourceImportPolling()
+        this.$toast.success('Trusted source import queued')
+      } catch (error) {
+        const message = error?.response?.data || 'Failed to start trusted source import'
+        this.sourceImportError = message
+        this.$toast.error(message)
+      } finally {
+        this.sourceImportStarting = false
+      }
+    },
     async loadQueue() {
       this.loading = true
       this.errorMessage = ''
@@ -857,6 +1023,7 @@ export default {
           }
         })
         this.rows = response.rows || []
+        await this.loadSourceImportStatus({ silent: true })
         this.lastLoadedAt = new Date().toISOString()
       } catch (error) {
         this.errorMessage = error?.response?.data || 'Failed to load series review rows'

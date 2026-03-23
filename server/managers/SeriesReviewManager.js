@@ -452,17 +452,20 @@ class SeriesReviewManager {
       .filter(Boolean)
   }
 
-  buildSeriesReviewCatalogPayload(catalog) {
+  buildSeriesReviewCatalogPayload(catalog, action = null) {
     return {
       id: catalog.id,
       seriesName: catalog.seriesName,
       trustStatus: catalog.trustStatus,
-      entryCount: Array.isArray(catalog.entries) ? catalog.entries.length : 0
+      entryCount: Array.isArray(catalog.entries) ? catalog.entries.length : 0,
+      action
     }
   }
 
   async importCatalogForLibrary(libraryId, rows) {
     const results = []
+    let createdCount = 0
+    let updatedCount = 0
 
     for (const row of Array.isArray(rows) ? rows : []) {
       const seriesName = this.normalizeSeriesName(row?.seriesName || '')
@@ -483,6 +486,7 @@ class SeriesReviewManager {
         }
       })
 
+      let action = 'updated'
       if (!catalog) {
         catalog = await Database.seriesReviewCatalogModel.create({
           libraryId,
@@ -492,19 +496,24 @@ class SeriesReviewManager {
           entries,
           selectionBySlot
         })
+        createdCount += 1
+        action = 'created'
       } else {
         catalog.seriesName = seriesName
         catalog.trustStatus = trustStatus
         catalog.entries = entries
         catalog.selectionBySlot = selectionBySlot
         await catalog.save()
+        updatedCount += 1
       }
 
-      results.push(this.buildSeriesReviewCatalogPayload(catalog))
+      results.push(this.buildSeriesReviewCatalogPayload(catalog, action))
     }
 
     return {
       importedCount: results.length,
+      createdCount,
+      updatedCount,
       catalogs: results
     }
   }

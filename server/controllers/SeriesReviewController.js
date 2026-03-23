@@ -1,4 +1,5 @@
 const SeriesReviewManager = require('../managers/SeriesReviewManager')
+const SeriesImportBridgeManager = require('../managers/SeriesImportBridgeManager')
 
 function handleActionError(res, error) {
   const message = String(error?.message || '').trim() || 'Series review action failed'
@@ -13,6 +14,38 @@ class SeriesReviewController {
     const includeDecided = req.query.includeDecided === '1'
     const rows = await SeriesReviewManager.getQueueForLibrary(req.library.id, includeDecided)
     res.json({ rows })
+  }
+
+  async getSourceImportStatus(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    try {
+      const status = await SeriesImportBridgeManager.getStatus(req.library.id)
+      res.json(status)
+    } catch (error) {
+      const statusCode = Number(error?.statusCode || 0)
+      if (statusCode >= 400) {
+        return res.status(statusCode).send(String(error?.message || 'Series import status failed'))
+      }
+      return handleActionError(res, error)
+    }
+  }
+
+  async startSourceImport(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    try {
+      const result = await SeriesImportBridgeManager.startRun(req.library.id)
+      res.json(result)
+    } catch (error) {
+      const statusCode = Number(error?.statusCode || 0)
+      if (statusCode >= 400) {
+        return res.status(statusCode).send(String(error?.message || 'Series import start failed'))
+      }
+      return handleActionError(res, error)
+    }
   }
 
   async getManagementData(req, res) {
