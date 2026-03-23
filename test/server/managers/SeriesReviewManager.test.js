@@ -32,7 +32,7 @@ describe('SeriesReviewManager', () => {
     await Database.sequelize.sync({ force: true })
   })
 
-  async function createBookFixture({ title, currentSeries = [], relPath = null, tags = [] }) {
+  async function createBookFixture({ title, currentSeries = [], relPath = null, tags = [], authors = [] }) {
     const book = await Database.bookModel.create({ title, audioFiles: [], tags, narrators: [], genres: [], chapters: [] })
     const libraryItem = await Database.libraryItemModel.create({
       path: `/series-review/${title}`,
@@ -50,6 +50,14 @@ describe('SeriesReviewManager', () => {
         bookId: book.id,
         seriesId: series.id,
         sequence: seriesEntry.sequence || null
+      })
+    }
+
+    for (const authorName of authors) {
+      const author = await Database.authorModel.findOrCreateByNameAndLibrary(authorName, library.id)
+      await Database.bookAuthorModel.create({
+        bookId: book.id,
+        authorId: author.id
       })
     }
 
@@ -545,5 +553,80 @@ describe('SeriesReviewManager', () => {
 
     expect(selectedDetail.slots.find((slot) => slot.slot === '5').selectedEntryKey).to.be.a('string')
     expect(selectedDetail.slots.find((slot) => slot.slot === '5').status).to.equal('missing')
+  })
+
+  it('finds ranked catalog candidates and keeps path-heavy matches visible', async () => {
+    await createBookFixture({
+      title: 'Barrayar',
+      relPath: 'Bujold, Lois McMaster/Barrayar',
+      authors: ['Lois McMaster Bujold']
+    })
+    await createBookFixture({
+      title: 'Disc 01',
+      relPath: 'Bujold, Lois McMaster/Barrayar (Folder Only Match)',
+      authors: ['Unknown Narrator']
+    })
+    await createBookFixture({
+      title: 'Unrelated Book',
+      relPath: 'Other/Unrelated Book',
+      authors: ['Somebody Else']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Vorkosigan Saga',
+        entries: [
+          {
+            title: 'Barrayar',
+            authors: ['Lois McMaster Bujold'],
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const candidates = await SeriesReviewManager.findCatalogSlotCandidates(library.id, importResult.catalogs[0].id, '2')
+    expect(candidates.expectedTitle).to.equal('Barrayar')
+    expect(candidates.results).to.have.length(2)
+    expect(candidates.results[0].title).to.equal('Barrayar')
+    expect(candidates.results[0].reasons.map((reason) => reason.key)).to.include('title-exact')
+    expect(candidates.results[1].title).to.equal('Disc 01')
+    expect(candidates.results[1].reasons.map((reason) => reason.key)).to.include('path-title')
+  })
+
+  it('queues a selected catalog candidate into the existing series review flow without mutating metadata', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Barrayar',
+      relPath: 'Bujold, Lois McMaster/Barrayar',
+      authors: ['Lois McMaster Bujold']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Vorkosigan Saga',
+        entries: [
+          {
+            title: 'Barrayar',
+            authors: ['Lois McMaster Bujold'],
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const queueResult = await SeriesReviewManager.queueCatalogCandidateForReview(library.id, importResult.catalogs[0].id, '2', libraryItem.id)
+    expect(queueResult.queued).to.equal(true)
+    expect(queueResult.importedCount).to.equal(1)
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].title).to.equal('Barrayar')
+    expect(pendingRows[0].suggestions[0].suggestedName).to.equal('Vorkosigan Saga')
+    expect(pendingRows[0].suggestions[0].suggestedSequence).to.equal('2')
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.series).to.have.length(0)
   })
 })

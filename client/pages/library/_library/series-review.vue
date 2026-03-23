@@ -525,6 +525,9 @@
                           <td class="px-3 py-3">
                             <div v-if="slot.choices.length <= 1" class="space-y-2 text-gray-200">
                               <p v-if="slot.expectedTitle">{{ slot.expectedTitle }}</p>
+                              <p v-if="slot.expectedAuthors && slot.expectedAuthors.length" class="text-gray-400">
+                                {{ slot.expectedAuthors.join(', ') }}
+                              </p>
                               <div v-if="slot.sourceSupport.length" class="flex flex-wrap gap-2">
                                 <span
                                   v-for="source in slot.sourceSupport"
@@ -565,6 +568,76 @@
                                     <span>{{ source.label || source.source }}</span>
                                     <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">{{ formatConfidence(source.confidence) }}</span>
                                   </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div v-if="slot.status === 'missing' || slot.status === 'disputed'" class="mt-3 space-y-3">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <ui-btn
+                                  small
+                                  color="bg-bg border border-white/20"
+                                  :disabled="slot.status === 'disputed' && !slot.selectedEntryKey"
+                                  :loading="catalogCandidateSearchLoadingKey === `${selectedCatalogDetail.catalog.id}:${slot.slot}`"
+                                  @click="findCatalogCandidates(slot)"
+                                >
+                                  Find candidates
+                                </ui-btn>
+                                <p v-if="slot.status === 'disputed' && !slot.selectedEntryKey" class="text-sm text-amber-200">
+                                  Choose a preferred interpretation before searching
+                                </p>
+                              </div>
+
+                              <div v-if="catalogCandidateResultsBySlot[slot.slot]" class="rounded border border-white/10 bg-black/20 p-3 space-y-3">
+                                <div class="text-sm text-gray-300">
+                                  {{ catalogCandidateResultsBySlot[slot.slot].results.length }} plausible candidate<span v-if="catalogCandidateResultsBySlot[slot.slot].results.length !== 1">s</span>
+                                </div>
+
+                                <div
+                                  v-for="candidate in catalogCandidateResultsBySlot[slot.slot].results"
+                                  :key="slot.slot + ':' + candidate.libraryItemId"
+                                  class="rounded border border-white/10 bg-black/15 p-3 space-y-2"
+                                >
+                                  <div class="flex flex-wrap items-start gap-2">
+                                    <div class="grow">
+                                      <nuxt-link :to="`/item/${candidate.libraryItemId}`" class="block font-semibold hover:underline">
+                                        {{ candidate.title }}
+                                      </nuxt-link>
+                                      <p class="text-sm text-gray-300 mt-1">{{ formatAuthors(candidate.authors) }}</p>
+                                      <p v-if="candidate.relPath" class="text-sm text-gray-400 mt-1 break-all">{{ candidate.relPath }}</p>
+                                    </div>
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
+                                      Score {{ candidate.score }}
+                                    </span>
+                                  </div>
+
+                                  <div v-if="candidate.currentSeries.length" class="text-sm text-gray-300">
+                                    Current series: {{ formatSeriesList(candidate.currentSeries) }}
+                                  </div>
+
+                                  <div class="flex flex-wrap gap-2">
+                                    <span
+                                      v-for="reason in candidate.reasons"
+                                      :key="slot.slot + ':' + candidate.libraryItemId + ':' + reason.key"
+                                      class="inline-flex items-center px-2 py-0.5 rounded-full border border-white/15 bg-black/20 text-xs text-gray-200"
+                                    >
+                                      {{ reason.text }}
+                                    </span>
+                                  </div>
+
+                                  <div class="flex flex-wrap gap-2">
+                                    <nuxt-link :to="`/item/${candidate.libraryItemId}`" class="inline-flex items-center px-3 py-1.5 rounded border border-white/20 bg-black/20 text-sm text-gray-100 hover:border-sky-300/35">
+                                      Open book
+                                    </nuxt-link>
+                                    <ui-btn
+                                      small
+                                      color="bg-success/80"
+                                      :loading="catalogCandidateQueueLoadingKey === `${slot.slot}:${candidate.libraryItemId}`"
+                                      @click="queueCatalogCandidate(slot, candidate)"
+                                    >
+                                      Queue in Review
+                                    </ui-btn>
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -638,7 +711,10 @@ export default {
       selectedCatalogId: '',
       selectedCatalogDetail: null,
       includeUntrustedCatalogs: false,
-      catalogChoiceLoadingKey: ''
+      catalogChoiceLoadingKey: '',
+      catalogCandidateSearchLoadingKey: '',
+      catalogCandidateQueueLoadingKey: '',
+      catalogCandidateResultsBySlot: {}
     }
   },
   computed: {
@@ -826,6 +902,7 @@ export default {
       this.catalogLoading = true
       try {
         this.selectedCatalogDetail = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}`)
+        this.catalogCandidateResultsBySlot = {}
       } catch (error) {
         this.errorMessage = error?.response?.data || 'Failed to load series detail'
       } finally {
@@ -843,12 +920,50 @@ export default {
             entryKey: choice.entryKey
           }
         )
+        this.$delete(this.catalogCandidateResultsBySlot, slot.slot)
         this.$toast.success('Preferred interpretation updated')
         await this.loadCatalogs()
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to update slot interpretation')
       } finally {
         this.catalogChoiceLoadingKey = ''
+      }
+    },
+    async findCatalogCandidates(slot) {
+      if (!this.selectedCatalogDetail) return
+      this.catalogCandidateSearchLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${slot.slot}`
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/find-candidates`,
+          {
+            slot: slot.slot
+          }
+        )
+        this.$set(this.catalogCandidateResultsBySlot, slot.slot, response)
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to find candidates')
+      } finally {
+        this.catalogCandidateSearchLoadingKey = ''
+      }
+    },
+    async queueCatalogCandidate(slot, candidate) {
+      if (!this.selectedCatalogDetail) return
+      this.catalogCandidateQueueLoadingKey = `${slot.slot}:${candidate.libraryItemId}`
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/queue-candidate`,
+          {
+            slot: slot.slot,
+            libraryItemId: candidate.libraryItemId
+          }
+        )
+        this.$toast.success(`Queued ${response.title} for review`)
+        this.activeTab = 'queue'
+        await this.loadQueue()
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to queue candidate for review')
+      } finally {
+        this.catalogCandidateQueueLoadingKey = ''
       }
     },
     async previewManagementCandidate(candidate) {

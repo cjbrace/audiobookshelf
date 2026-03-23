@@ -65,6 +65,34 @@ class SeriesReviewController {
     res.json(detail)
   }
 
+  async findCatalogCandidates(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let result
+    try {
+      result = await SeriesReviewManager.findCatalogSlotCandidates(req.library.id, req.params.catalogId, req.body?.slot)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
+  }
+
+  async queueCatalogCandidate(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let result
+    try {
+      result = await SeriesReviewManager.queueCatalogCandidateForReview(req.library.id, req.params.catalogId, req.body?.slot, req.body?.libraryItemId)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
+  }
+
   async previewManagementAction(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

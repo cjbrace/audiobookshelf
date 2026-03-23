@@ -240,6 +240,69 @@ describe('SeriesReviewController', () => {
     expect(res.send.calledOnceWithExactly('Selected interpretation was not found for that slot')).to.be.true
   })
 
+  it('returns catalog slot candidates for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'findCatalogSlotCandidates').resolves({ slot: '3', results: [{ libraryItemId: 'item-1' }] })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      params: {
+        catalogId: 'catalog-1'
+      },
+      body: {
+        slot: '3'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.findCatalogCandidates(req, res)
+
+    expect(SeriesReviewManager.findCatalogSlotCandidates.calledOnceWithExactly('library-1', 'catalog-1', '3')).to.be.true
+    expect(res.json.calledOnceWithExactly({ slot: '3', results: [{ libraryItemId: 'item-1' }] })).to.be.true
+  })
+
+  it('queues a selected catalog candidate into the review flow', async () => {
+    sinon.stub(SeriesReviewManager, 'queueCatalogCandidateForReview').resolves({ queued: true, libraryItemId: 'item-1' })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      params: {
+        catalogId: 'catalog-1'
+      },
+      body: {
+        slot: '3',
+        libraryItemId: 'item-1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.queueCatalogCandidate(req, res)
+
+    expect(SeriesReviewManager.queueCatalogCandidateForReview.calledOnceWithExactly('library-1', 'catalog-1', '3', 'item-1')).to.be.true
+    expect(res.json.calledOnceWithExactly({ queued: true, libraryItemId: 'item-1' })).to.be.true
+  })
+
   it('returns 400 instead of throwing when management preview input is invalid', async () => {
     sinon.stub(SeriesReviewManager, 'previewSeriesManagementAction').rejects(new Error('Missing targetLabel'))
 

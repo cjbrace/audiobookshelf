@@ -21,6 +21,18 @@ class SeriesReviewManager {
     return cleaned || null
   }
 
+  normalizeSearchText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+  }
+
+  tokenizeSearchText(value) {
+    const normalized = this.normalizeSearchText(value)
+    return normalized ? normalized.split(/\s+/).filter(Boolean) : []
+  }
+
   normalizeKeyPart(value) {
     return this.normalizeSeriesName(value)
       .toLowerCase()
@@ -331,6 +343,9 @@ class SeriesReviewManager {
     return (Array.isArray(entries) ? entries : [])
       .map((entry) => {
         const title = this.normalizeSeriesName(entry?.title || '')
+        const authors = (Array.isArray(entry?.authors) ? entry.authors : [entry?.author])
+          .map((author) => this.normalizeSeriesName(author || ''))
+          .filter(Boolean)
         const sequenceLabel = String(entry?.sequenceLabel || entry?.sequence || '')
           .trim()
           .replace(/\s+/g, ' ')
@@ -349,6 +364,7 @@ class SeriesReviewManager {
         return {
           entryKey: this.buildCatalogEntryKey({ title, sequenceLabel }),
           title,
+          authors,
           sequenceLabel: sequenceLabel || null,
           coveredSlots,
           sources
@@ -510,6 +526,116 @@ class SeriesReviewManager {
     }))
   }
 
+  buildCatalogCandidateReason(key, text) {
+    return {
+      key,
+      text
+    }
+  }
+
+  computeCatalogCandidateMatch(context, libraryItem) {
+    const media = libraryItem?.media || {}
+    const title = this.normalizeSeriesName(media.title || libraryItem.title || '')
+    const relPath = this.getQueuePath(libraryItem)
+    const authors = Array.isArray(media.authors) ? media.authors.map((author) => this.normalizeSeriesName(author.name || '')) : []
+    const seriesNames = Array.isArray(media.series) ? media.series.map((series) => this.normalizeSeriesName(series.name || '')) : []
+
+    const titleNormalized = this.normalizeSearchText(title)
+    const relPathNormalized = this.normalizeSearchText(relPath)
+    const expectedTitleNormalized = context.expectedTitleNormalized
+    const expectedAuthorNormalized = context.expectedAuthorNormalized
+    const expectedSeriesNormalized = context.seriesNameNormalized
+
+    const titleTokens = this.tokenizeSearchText(title)
+    const expectedTitleTokens = context.expectedTitleTokens
+    const expectedAuthorTokens = context.expectedAuthorTokens
+    const expectedSeriesTokens = context.expectedSeriesTokens
+
+    const reasons = []
+    let score = 0
+
+    if (expectedTitleNormalized && titleNormalized === expectedTitleNormalized) {
+      score += 12
+      reasons.push(this.buildCatalogCandidateReason('title-exact', 'Title matches expected title'))
+    } else {
+      const titleOverlap = expectedTitleTokens.filter((token) => titleTokens.includes(token))
+      if (expectedTitleTokens.length && titleOverlap.length) {
+        score += titleOverlap.length * 3
+        reasons.push(this.buildCatalogCandidateReason('title-token', `Title shares ${titleOverlap.length} expected token${titleOverlap.length === 1 ? '' : 's'}`))
+      }
+    }
+
+    const authorMatches = authors.filter((author) => expectedAuthorNormalized.some((expected) => expected && this.normalizeSearchText(author) === expected))
+    if (authorMatches.length) {
+      score += authorMatches.length * 4
+      reasons.push(this.buildCatalogCandidateReason('author-exact', `Author match: ${authorMatches[0]}`))
+    } else if (expectedAuthorTokens.length) {
+      const authorTokenHit = expectedAuthorTokens.some((token) => this.tokenizeSearchText(authors.join(' ')).includes(token))
+      if (authorTokenHit) {
+        score += 2
+        reasons.push(this.buildCatalogCandidateReason('author-token', 'Author tokens overlap'))
+      }
+    }
+
+    if (expectedSeriesNormalized && seriesNames.some((seriesName) => this.normalizeKeyPart(seriesName) === expectedSeriesNormalized)) {
+      score += 4
+      reasons.push(this.buildCatalogCandidateReason('series-match', `Current series includes ${context.seriesName}`))
+    }
+
+    if (expectedTitleNormalized && relPathNormalized.includes(expectedTitleNormalized)) {
+      score += 8
+      reasons.push(this.buildCatalogCandidateReason('path-title', 'Folder/path mentions expected title'))
+    } else {
+      const pathTitleHit = expectedTitleTokens.filter((token) => relPathNormalized.includes(token))
+      if (pathTitleHit.length >= Math.min(2, expectedTitleTokens.length || 0) && pathTitleHit.length) {
+        score += pathTitleHit.length * 2
+        reasons.push(this.buildCatalogCandidateReason('path-title-token', 'Folder/path overlaps expected title'))
+      }
+    }
+
+    const pathAuthorHit = expectedAuthorTokens.some((token) => relPathNormalized.includes(token))
+    if (pathAuthorHit) {
+      score += 3
+      reasons.push(this.buildCatalogCandidateReason('path-author', 'Folder/path mentions author'))
+    }
+
+    const pathSeriesHit = expectedSeriesTokens.some((token) => relPathNormalized.includes(token))
+    if (pathSeriesHit) {
+      score += 2
+      reasons.push(this.buildCatalogCandidateReason('path-series', 'Folder/path mentions series'))
+    }
+
+    return {
+      libraryItemId: libraryItem.id,
+      title,
+      relPath,
+      authors: authors.map((name) => ({ name })),
+      currentSeries: this.getCurrentSeriesPayload(libraryItem),
+      score,
+      reasons
+    }
+  }
+
+  buildCatalogCandidateContext(catalog, slotDetail) {
+    const selectedChoice = slotDetail.selectedEntryKey ? slotDetail.choices.find((choice) => choice.entryKey === slotDetail.selectedEntryKey) || null : null
+    const primaryChoice = selectedChoice || (slotDetail.choices.length === 1 ? slotDetail.choices[0] : null)
+    if (!primaryChoice?.title) return null
+
+    const authors = Array.isArray(primaryChoice.authors) ? primaryChoice.authors : []
+    return {
+      seriesName: catalog.seriesName,
+      seriesNameNormalized: this.normalizeKeyPart(catalog.seriesName),
+      expectedTitle: primaryChoice.title,
+      expectedTitleNormalized: this.normalizeSearchText(primaryChoice.title),
+      expectedTitleTokens: this.tokenizeSearchText(primaryChoice.title),
+      expectedAuthorNormalized: authors.map((author) => this.normalizeSearchText(author)).filter(Boolean),
+      expectedAuthorTokens: this.tokenizeSearchText(authors.join(' ')),
+      expectedSeriesTokens: this.tokenizeSearchText(catalog.seriesName),
+      slot: slotDetail.slot,
+      choice: primaryChoice
+    }
+  }
+
   finalizeCatalogSlots(slotMap, selectionBySlot, localBooks) {
     const integerSlots = []
     for (const slot of slotMap.keys()) {
@@ -538,9 +664,11 @@ class SeriesReviewManager {
 
       if (selectedChoice) {
         slot.expectedTitle = selectedChoice.title
+        slot.expectedAuthors = selectedChoice.authors || []
         slot.sourceSupport = selectedChoice.sources
       } else if (slot.choices.length === 1) {
         slot.expectedTitle = slot.choices[0].title
+        slot.expectedAuthors = slot.choices[0].authors || []
         slot.sourceSupport = slot.choices[0].sources
       }
 
@@ -600,6 +728,7 @@ class SeriesReviewManager {
         slot.choices.push({
           entryKey: entry.entryKey,
           title: entry.title,
+          authors: entry.authors,
           sequenceLabel: entry.sequenceLabel,
           sources: this.buildCatalogSourceSupport(entry.sources)
         })
@@ -649,6 +778,83 @@ class SeriesReviewManager {
     await catalog.save()
 
     return this.getCatalogDetailForLibrary(libraryId, catalogId)
+  }
+
+  async findCatalogSlotCandidates(libraryId, catalogId, slot) {
+    const detail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
+    if (!detail) return null
+
+    const normalizedSlot = this.normalizeCatalogSlotToken(slot)
+    if (!normalizedSlot) throw new Error('Missing slot')
+
+    const slotDetail = detail.slots.find((candidate) => candidate.slot === normalizedSlot)
+    if (!slotDetail) throw new Error('Slot was not found')
+
+    const context = this.buildCatalogCandidateContext(detail.catalog, slotDetail)
+    if (!context) {
+      throw new Error('Choose a preferred interpretation before searching for candidates')
+    }
+
+    const libraryItems = await Database.libraryItemModel.findAllExpandedWhere({
+      libraryId,
+      mediaType: 'book'
+    })
+
+    const localCoveredIds = new Set(slotDetail.localBooks.map((book) => book.libraryItemId))
+    const results = libraryItems
+      .filter((libraryItem) => !localCoveredIds.has(libraryItem.id))
+      .map((libraryItem) => this.computeCatalogCandidateMatch(context, libraryItem))
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        return a.title.localeCompare(b.title)
+      })
+
+    return {
+      catalog: detail.catalog,
+      slot: normalizedSlot,
+      expectedTitle: context.expectedTitle,
+      expectedAuthors: context.choice.authors || [],
+      expectedSeriesName: detail.catalog.seriesName,
+      results
+    }
+  }
+
+  async queueCatalogCandidateForReview(libraryId, catalogId, slot, libraryItemId) {
+    const searchResult = await this.findCatalogSlotCandidates(libraryId, catalogId, slot)
+    if (!searchResult) return null
+
+    const candidate = searchResult.results.find((result) => result.libraryItemId === libraryItemId)
+    if (!candidate) {
+      throw new Error('Selected candidate was not found for that slot')
+    }
+
+    const strongestReason = candidate.reasons[0]?.text || 'Catalog candidate search'
+    const importResult = await this.importSuggestionsForLibrary(libraryId, [
+      {
+        libraryItemId,
+        sourceSuggestions: [
+          {
+            source: 'catalog',
+            label: 'CAT',
+            seriesName: searchResult.expectedSeriesName,
+            sequence: searchResult.slot,
+            confidence: Number(Math.min(candidate.score / 20, 0.99).toFixed(2)),
+            notes: `Task 5 candidate for slot ${searchResult.slot}: ${searchResult.expectedTitle} (${strongestReason})`
+          }
+        ]
+      }
+    ])
+
+    return {
+      queued: true,
+      importedCount: importResult.importedCount,
+      libraryItemId: candidate.libraryItemId,
+      title: candidate.title,
+      slot: searchResult.slot,
+      expectedTitle: searchResult.expectedTitle,
+      targetSeriesName: searchResult.expectedSeriesName
+    }
   }
 
   async getSeriesManagementCandidatesForLibrary(libraryId) {
