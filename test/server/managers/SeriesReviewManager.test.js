@@ -202,6 +202,83 @@ describe('SeriesReviewManager', () => {
     expect(updatedLibraryItem.media.tags).to.deep.equal(['existing-tag'])
   })
 
+  it('reopens a decided suggestion when the grouped source evidence changes meaningfully', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Ancillary Justice',
+      tags: ['-series-edit']
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'Imperial Radch', sequence: '1', confidence: 0.91 }]
+      }
+    ])
+
+    const initialRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const suggestionId = initialRows[0].suggestions[0].id
+    await SeriesReviewManager.dismissSuggestion(suggestionId, user.id)
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Imperial Radch', sequence: '1', confidence: 0.91 },
+          { source: 'wikidata', label: 'WD', seriesName: 'Imperial Radch', sequence: '1', confidence: 0.67, notes: 'Second agreeing source' }
+        ]
+      }
+    ])
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].hasPreviousSeriesEdit).to.equal(true)
+    expect(pendingRows[0].seriesEditTag).to.equal('-series-edit')
+    expect(pendingRows[0].suggestions[0].state).to.equal('pending')
+    expect(pendingRows[0].suggestions[0].previousDecision).to.include({
+      action: 'dismiss',
+      reopened: true
+    })
+    expect(pendingRows[0].suggestions[0].hasMeaningfulUpdateSinceDecision).to.equal(true)
+    expect(pendingRows[0].suggestions[0].evidenceSummary).to.include({
+      supportCount: 2,
+      conflictCount: 0,
+      disagreement: false
+    })
+  })
+
+  it('keeps prior decision metadata on reopened pending rows so the UI can explain why they returned', async () => {
+    const { libraryItem } = await createBookFixture({ title: 'Leviathan Wakes' })
+    await stubExpandedLibraryItems()
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Expanse', sequence: '1', confidence: 0.93 }]
+      }
+    ])
+
+    const initialRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const suggestionId = initialRows[0].suggestions[0].id
+    await SeriesReviewManager.applySuggestion(suggestionId, user.id, 'add')
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Expanse', sequence: '1', confidence: 0.81, notes: 'Lower confidence after source refresh' }]
+      }
+    ])
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].suggestions[0].state).to.equal('pending')
+    expect(pendingRows[0].suggestions[0].previousDecision).to.include({
+      action: 'add',
+      reopened: true
+    })
+    expect(pendingRows[0].suggestions[0].hasMeaningfulUpdateSinceDecision).to.equal(true)
+    expect(pendingRows[0].suggestions[0].contributions[0].notes).to.equal('Lower confidence after source refresh')
+  })
+
   it('removes a selected current series entry and adds the temp series-edit tag', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Shards of Honor',

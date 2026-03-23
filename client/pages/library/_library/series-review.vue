@@ -60,6 +60,11 @@
                       {{ row.title || '-' }}
                     </nuxt-link>
                     <p class="text-base text-gray-200 mt-1">{{ formatAuthors(row.authors) }}</p>
+                    <div v-if="row.hasPreviousSeriesEdit" class="mt-2">
+                      <span class="inline-flex items-center px-2.5 py-1 rounded-full border border-amber-300/35 bg-amber-500/10 text-sm text-amber-50">
+                        Previous series edit
+                      </span>
+                    </div>
                     <p v-if="row.relPath" class="text-sm text-gray-400 mt-2 break-all">{{ row.relPath }}</p>
                   </td>
                   <td class="px-3 py-3">
@@ -107,6 +112,9 @@
                             <p class="text-sm text-gray-300 mt-1">
                               {{ suggestion.state === 'pending' ? 'Pending review' : formatDecisionState(suggestion) }}
                             </p>
+                            <p v-if="suggestion.previousDecision" class="text-sm mt-1" :class="suggestion.hasMeaningfulUpdateSinceDecision ? 'text-amber-200' : 'text-gray-400'">
+                              {{ formatPreviousDecision(suggestion) }}
+                            </p>
                           </div>
                           <div class="text-xs text-gray-400 whitespace-nowrap">{{ suggestion.sourceCount }} source<span v-if="suggestion.sourceCount !== 1">s</span></div>
                         </div>
@@ -133,6 +141,46 @@
                               {{ contribution.seriesName }}
                               <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
                             </span>
+                          </div>
+                        </div>
+
+                        <div class="mt-3 text-sm text-gray-300 space-y-1">
+                          <p>
+                            Seen {{ formatTime(suggestion.firstSeenAt) }}
+                            <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt">, updated {{ formatTime(suggestion.lastSeenAt) }}</span>
+                          </p>
+                          <p v-if="suggestion.evidenceSummary?.disagreement" class="text-amber-200">
+                            Source disagreement: {{ suggestion.evidenceSummary.supportCount }} positive / {{ suggestion.evidenceSummary.conflictCount }} conflicting
+                          </p>
+                        </div>
+
+                        <div class="mt-3 space-y-2">
+                          <div
+                            v-for="contribution in suggestion.contributions"
+                            :key="suggestion.id + ':detail:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
+                            class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
+                          >
+                            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
+                              <span v-if="contribution.noSeries" class="text-red-200">No series evidence</span>
+                              <span v-else>
+                                {{ contribution.seriesName }}
+                                <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
+                              </span>
+                              <span v-if="contribution.confidence !== null && contribution.confidence !== undefined" class="text-gray-400">
+                                confidence {{ formatConfidence(contribution.confidence) }}
+                              </span>
+                            </div>
+                            <p v-if="contribution.notes" class="mt-1 text-gray-300">{{ contribution.notes }}</p>
+                            <a
+                              v-if="contribution.evidenceUrl"
+                              class="mt-1 inline-flex text-sky-200 hover:underline"
+                              :href="contribution.evidenceUrl"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Evidence link
+                            </a>
                           </div>
                         </div>
 
@@ -235,6 +283,9 @@ export default {
     formatTime(value) {
       return value ? new Date(value).toLocaleString() : '-'
     },
+    formatConfidence(value) {
+      return Number(value).toFixed(2)
+    },
     formatAuthors(authors) {
       return (authors || []).map((author) => author.name).join(', ') || '-'
     },
@@ -243,6 +294,17 @@ export default {
       if (suggestion.state === 'manual_override') return 'Applied by replace'
       if (suggestion.state === 'applied') return 'Applied by add'
       return suggestion.state
+    },
+    formatPreviousDecision(suggestion) {
+      if (!suggestion.previousDecision) return ''
+      const actionMap = {
+        dismiss: 'Previously dismissed',
+        add: 'Previously applied by add',
+        replace: 'Previously applied by replace'
+      }
+      const baseLabel = actionMap[suggestion.previousDecision.action] || 'Previously decided'
+      if (!suggestion.hasMeaningfulUpdateSinceDecision) return `${baseLabel} on ${this.formatTime(suggestion.previousDecision.decidedAt)}`
+      return `${baseLabel} on ${this.formatTime(suggestion.previousDecision.decidedAt)}; reopened after evidence changed`
     },
     toggleReplaceTarget(libraryItemId, seriesId) {
       if (this.selectedReplaceTarget[libraryItemId] === seriesId) {

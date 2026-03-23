@@ -84,6 +84,53 @@ class SeriesReviewManager {
     }))
   }
 
+  buildSuggestionFingerprint(groupedSuggestion) {
+    const contributions = Array.isArray(groupedSuggestion?.contributions) ? groupedSuggestion.contributions : []
+    return JSON.stringify({
+      kind: groupedSuggestion?.kind || 'series',
+      suggestedNameNormalized: groupedSuggestion?.suggestedNameNormalized || null,
+      suggestedSequence: groupedSuggestion?.suggestedSequence || null,
+      contributions: contributions.map((contribution) => ({
+        source: contribution.source || null,
+        label: contribution.label || null,
+        noSeries: !!contribution.noSeries,
+        seriesName: contribution.seriesName || null,
+        sequence: contribution.sequence || null,
+        confidence: contribution.confidence ?? null,
+        evidenceUrl: contribution.evidenceUrl || null,
+        notes: contribution.notes || null
+      }))
+    })
+  }
+
+  hasMeaningfulSuggestionChange(existingSuggestion, groupedSuggestion) {
+    return this.buildSuggestionFingerprint(existingSuggestion) !== this.buildSuggestionFingerprint(groupedSuggestion)
+  }
+
+  buildPreviousDecisionPayload(suggestion) {
+    if (!suggestion?.decisionAction || !suggestion?.decidedAt) return null
+    return {
+      action: suggestion.decisionAction,
+      decisionSeriesId: suggestion.decisionSeriesId || null,
+      decidedAt: suggestion.decidedAt,
+      decidedByUserId: suggestion.decidedByUserId || null,
+      reopened: suggestion.state === 'pending'
+    }
+  }
+
+  buildSuggestionEvidenceSummary(suggestion) {
+    const contributions = Array.isArray(suggestion?.contributions) ? suggestion.contributions : []
+    const positiveSources = contributions.filter((contribution) => !contribution.noSeries)
+    const negativeSources = contributions.filter((contribution) => contribution.noSeries)
+    return {
+      supportCount: positiveSources.length,
+      conflictCount: negativeSources.length,
+      disagreement: positiveSources.length > 0 && negativeSources.length > 0,
+      hasSourceNotes: contributions.some((contribution) => !!contribution.notes),
+      hasEvidenceLinks: contributions.some((contribution) => !!contribution.evidenceUrl)
+    }
+  }
+
   async importSuggestionsForLibrary(libraryId, rows) {
     const now = new Date()
     const results = []
@@ -132,6 +179,7 @@ class SeriesReviewManager {
             isActive: true
           })
         } else {
+          const shouldReopen = suggestion.state !== 'pending' && this.hasMeaningfulSuggestionChange(suggestion, groupedSuggestion)
           suggestion.kind = groupedSuggestion.kind
           suggestion.suggestedName = groupedSuggestion.suggestedName
           suggestion.suggestedNameNormalized = groupedSuggestion.suggestedNameNormalized
@@ -139,6 +187,9 @@ class SeriesReviewManager {
           suggestion.contributions = groupedSuggestion.contributions
           suggestion.lastSeenAt = now
           suggestion.isActive = true
+          if (shouldReopen) {
+            suggestion.state = 'pending'
+          }
           await suggestion.save()
         }
         results.push(suggestion)
@@ -181,8 +232,12 @@ class SeriesReviewManager {
       decisionSeriesId: suggestion.decisionSeriesId,
       contributions,
       sourceCount: contributions.length,
+      firstSeenAt: suggestion.firstSeenAt,
       lastSeenAt: suggestion.lastSeenAt,
-      decidedAt: suggestion.decidedAt
+      decidedAt: suggestion.decidedAt,
+      previousDecision: this.buildPreviousDecisionPayload(suggestion),
+      hasMeaningfulUpdateSinceDecision: suggestion.state === 'pending' && !!suggestion.decisionAction && !!suggestion.decidedAt,
+      evidenceSummary: this.buildSuggestionEvidenceSummary(suggestion)
     }
   }
 
@@ -218,11 +273,14 @@ class SeriesReviewManager {
   buildQueueRow(libraryItem, suggestions) {
     const media = libraryItem.media
     const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion))
+    const currentTags = Array.isArray(media?.tags) ? media.tags : []
     return {
       libraryItemId: libraryItem.id,
       title: media?.title || libraryItem.title || '',
       relPath: this.getQueuePath(libraryItem),
       authors: Array.isArray(media?.authors) ? media.authors.map((author) => ({ id: author.id, name: author.name })) : [],
+      hasPreviousSeriesEdit: currentTags.includes(this.SERIES_EDIT_TAG),
+      seriesEditTag: currentTags.includes(this.SERIES_EDIT_TAG) ? this.SERIES_EDIT_TAG : null,
       currentSeries: this.getCurrentSeriesPayload(libraryItem),
       suggestions: this.sortSuggestionsForDisplay(suggestionPayloads)
     }
