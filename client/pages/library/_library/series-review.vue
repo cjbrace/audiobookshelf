@@ -292,7 +292,6 @@
                                 conf: {{ formatConfidence(contribution.confidence) }}
                               </span>
                             </div>
-                            <p v-if="formatContributionNotes(contribution)" class="mt-1 text-gray-300">{{ formatContributionNotes(contribution) }}</p>
                             <a
                               v-if="contribution.evidenceUrl"
                               class="mt-1 inline-flex text-sky-200 hover:underline"
@@ -907,19 +906,6 @@ export default {
     },
     formatConfidence(value) {
       return Number(value).toFixed(2)
-    },
-    formatContributionNotes(contribution) {
-      const notes = typeof contribution?.notes === 'string' ? contribution.notes.trim() : ''
-      if (!notes) return ''
-      const sourceName = this.getSourceDisplayName(contribution?.source)
-      const boilerplateNotes = [
-        `${contribution?.roleLabel} source from ${sourceName}`,
-        `Primary automated source from ${sourceName}`,
-        `Secondary automated source from ${sourceName}`,
-        `Manual reference source from ${sourceName}`
-      ]
-      if (boilerplateNotes.includes(notes)) return ''
-      return notes
     },
     getSourceDisplayName(source) {
       const key = String(source || '').toLowerCase()
