@@ -18,7 +18,7 @@ class SeriesImportBridgeManager {
       .filter(Boolean)
     configured.push(...envMany)
 
-    const defaults = ['http://cjbuntu:8011', 'http://host.docker.internal:8011', 'http://127.0.0.1:8011']
+    const defaults = ['http://192.168.0.108:8011', 'http://cjbuntu:8011', 'http://host.docker.internal:8011', 'http://127.0.0.1:8011']
     const urls = [...configured, ...defaults].map((value) => value.replace(/\/+$/, ''))
     return [...new Set(urls)]
   }

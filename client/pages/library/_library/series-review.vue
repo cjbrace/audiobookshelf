@@ -215,8 +215,8 @@
                         class="rounded border p-3"
                         :class="getSuggestionCardClass(suggestion)"
                       >
-                        <div class="flex items-start gap-3">
-                          <div class="grow">
+                        <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                          <div class="grow min-w-[16rem]">
                             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-lg font-semibold text-white">
                               <template v-if="suggestion.kind === 'no_series'">No series suggested</template>
                               <template v-else>
@@ -227,12 +227,12 @@
                             <p v-if="suggestion.previousDecision" class="text-sm mt-1" :class="suggestion.hasMeaningfulUpdateSinceDecision ? 'text-amber-200' : 'text-gray-400'">
                               {{ formatPreviousDecision(suggestion) }}
                             </p>
-                            <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400">
-                              <span>Seen {{ formatTime(suggestion.firstSeenAt) }}</span>
-                              <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt">Updated {{ formatTime(suggestion.lastSeenAt) }}</span>
-                            </div>
                           </div>
-                          <div class="text-xs text-gray-400 whitespace-nowrap">{{ suggestion.sourceCount }} source<span v-if="suggestion.sourceCount !== 1">s</span></div>
+                          <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-gray-400 text-right">
+                            <span class="whitespace-nowrap">Seen {{ formatTime(suggestion.firstSeenAt) }}</span>
+                            <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt" class="whitespace-nowrap">Updated {{ formatTime(suggestion.lastSeenAt) }}</span>
+                            <span class="whitespace-nowrap">{{ suggestion.sourceCount }} source<span v-if="suggestion.sourceCount !== 1">s</span></span>
+                          </div>
                         </div>
 
                         <div class="mt-3 flex flex-wrap gap-2">
@@ -292,7 +292,7 @@
                                 conf: {{ formatConfidence(contribution.confidence) }}
                               </span>
                             </div>
-                            <p v-if="contribution.notes" class="mt-1 text-gray-300">{{ contribution.notes }}</p>
+                            <p v-if="formatContributionNotes(contribution)" class="mt-1 text-gray-300">{{ formatContributionNotes(contribution) }}</p>
                             <a
                               v-if="contribution.evidenceUrl"
                               class="mt-1 inline-flex text-sky-200 hover:underline"
@@ -907,6 +907,19 @@ export default {
     },
     formatConfidence(value) {
       return Number(value).toFixed(2)
+    },
+    formatContributionNotes(contribution) {
+      const notes = typeof contribution?.notes === 'string' ? contribution.notes.trim() : ''
+      if (!notes) return ''
+      const sourceName = this.getSourceDisplayName(contribution?.source)
+      const boilerplateNotes = [
+        `${contribution?.roleLabel} source from ${sourceName}`,
+        `Primary automated source from ${sourceName}`,
+        `Secondary automated source from ${sourceName}`,
+        `Manual reference source from ${sourceName}`
+      ]
+      if (boilerplateNotes.includes(notes)) return ''
+      return notes
     },
     getSourceDisplayName(source) {
       const key = String(source || '').toLowerCase()
