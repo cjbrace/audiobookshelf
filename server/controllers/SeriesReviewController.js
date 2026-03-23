@@ -24,6 +24,15 @@ class SeriesReviewController {
     res.json(result)
   }
 
+  async resetSuggestions(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+    if (!Array.isArray(req.body?.libraryItemIds)) return res.status(400).send('Missing libraryItemIds')
+
+    const result = await SeriesReviewManager.resetSuggestionsForLibrary(req.library.id, req.body.libraryItemIds)
+    res.json(result)
+  }
+
   async addSuggestion(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     let result

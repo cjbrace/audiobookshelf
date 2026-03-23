@@ -95,6 +95,7 @@ class ApiRouter {
     this.router.post('/libraries/:id/duplicates/evaluate', LibraryController.middleware.bind(this), QuickMatchSessionController.evaluateLibraryDuplicates.bind(this))
     this.router.get('/libraries/:id/series-review', LibraryController.middleware.bind(this), SeriesReviewController.getQueue.bind(this))
     this.router.post('/libraries/:id/series-review/import', LibraryController.middleware.bind(this), SeriesReviewController.importSuggestions.bind(this))
+    this.router.post('/libraries/:id/series-review/reset', LibraryController.middleware.bind(this), SeriesReviewController.resetSuggestions.bind(this))
     this.router.get('/libraries/:id/opml', LibraryController.middleware.bind(this), LibraryController.getOPMLFile.bind(this))
     this.router.post('/libraries/order', LibraryController.reorder.bind(this))
     this.router.post('/libraries/:id/remove-metadata', LibraryController.middleware.bind(this), LibraryController.removeAllMetadataFiles.bind(this))

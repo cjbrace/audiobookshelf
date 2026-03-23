@@ -150,6 +150,24 @@ class SeriesReviewManager {
     }
   }
 
+  async resetSuggestionsForLibrary(libraryId, libraryItemIds) {
+    const ids = [...new Set((Array.isArray(libraryItemIds) ? libraryItemIds : []).filter((value) => typeof value === 'string' && value.trim()))]
+    if (!ids.length) return { deletedCount: 0 }
+
+    const deletedCount = await Database.seriesReviewSuggestionModel.destroy({
+      where: {
+        libraryId,
+        libraryItemId: {
+          [Op.in]: ids
+        }
+      }
+    })
+
+    return {
+      deletedCount
+    }
+  }
+
   buildSuggestionPayload(suggestion) {
     const contributions = Array.isArray(suggestion.contributions) ? suggestion.contributions : []
     return {

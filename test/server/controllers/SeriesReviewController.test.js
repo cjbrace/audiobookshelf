@@ -68,4 +68,35 @@ describe('SeriesReviewController', () => {
     expect(res.sendStatus.notCalled).to.be.true
     expect(res.json.notCalled).to.be.true
   })
+
+  it('resets suggestions for explicit library item ids', async () => {
+    sinon.stub(SeriesReviewManager, 'resetSuggestionsForLibrary').resolves({ deletedCount: 3 })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      body: {
+        libraryItemIds: ['item-1', 'item-2']
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.resetSuggestions(req, res)
+
+    expect(SeriesReviewManager.resetSuggestionsForLibrary.calledOnceWithExactly('library-1', ['item-1', 'item-2'])).to.be.true
+    expect(res.json.calledOnceWithExactly({ deletedCount: 3 })).to.be.true
+    expect(res.status.notCalled).to.be.true
+    expect(res.send.notCalled).to.be.true
+    expect(res.sendStatus.notCalled).to.be.true
+  })
 })

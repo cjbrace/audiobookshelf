@@ -221,4 +221,40 @@ describe('SeriesReviewManager', () => {
     expect(updatedLibraryItem.media.series.map((series) => series.name)).to.deep.equal(['Vorkosigan Saga'])
     expect(updatedLibraryItem.media.tags).to.include('-series-edit')
   })
+
+  it('hard resets stored suggestions so an identical dismissed suggestion can return as pending', async () => {
+    const { libraryItem } = await createBookFixture({ title: '84K' })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: '84K Sequence', sequence: '1' },
+          { source: 'goodreads', label: 'GR', seriesName: '84K Sequence', sequence: '1' }
+        ]
+      }
+    ])
+
+    const initialRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const suggestionId = initialRows[0].suggestions[0].id
+    await SeriesReviewManager.dismissSuggestion(suggestionId, user.id)
+
+    const resetResult = await SeriesReviewManager.resetSuggestionsForLibrary(library.id, [libraryItem.id])
+    expect(resetResult.deletedCount).to.equal(1)
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: '84K Sequence', sequence: '1' },
+          { source: 'goodreads', label: 'GR', seriesName: '84K Sequence', sequence: '1' }
+        ]
+      }
+    ])
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].title).to.equal('84K')
+    expect(pendingRows[0].suggestions[0].state).to.equal('pending')
+  })
 })
