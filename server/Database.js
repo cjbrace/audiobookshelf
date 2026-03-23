@@ -187,6 +187,11 @@ class Database {
     return this.models.seriesReviewSuggestion
   }
 
+  /** @type {typeof import('./models/SeriesReviewAction')} */
+  get seriesReviewActionModel() {
+    return this.models.seriesReviewAction
+  }
+
   /**
    * Check if db file exists
    * @returns {boolean}
@@ -375,6 +380,7 @@ class Database {
     require('./models/QuickMatchFullMatchQueue').init(this.sequelize)
     require('./models/QuickMatchDuplicateSuppression').init(this.sequelize)
     require('./models/SeriesReviewSuggestion').init(this.sequelize)
+    require('./models/SeriesReviewAction').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
   }

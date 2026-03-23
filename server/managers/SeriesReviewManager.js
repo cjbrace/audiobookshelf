@@ -28,6 +28,10 @@ class SeriesReviewManager {
       .trim()
   }
 
+  normalizeManagementBaseName(value) {
+    return this.normalizeSeriesName(value).replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, ' ')
+  }
+
   buildSuggestionKey(kind, suggestedName, suggestedSequence) {
     if (kind === 'no_series') return 'no_series'
     const normalizedName = this.normalizeKeyPart(suggestedName)
@@ -129,6 +133,366 @@ class SeriesReviewManager {
       hasSourceNotes: contributions.some((contribution) => !!contribution.notes),
       hasEvidenceLinks: contributions.some((contribution) => !!contribution.evidenceUrl)
     }
+  }
+
+  buildSeriesListSnapshot(seriesList) {
+    return [...(seriesList || [])]
+      .map((series) => ({
+        name: this.normalizeSeriesName(series.name),
+        sequence: this.normalizeSequence(series.sequence)
+      }))
+      .filter((series) => !!series.name)
+      .sort((a, b) => {
+        const byName = a.name.localeCompare(b.name)
+        if (byName !== 0) return byName
+        return String(a.sequence || '').localeCompare(String(b.sequence || ''))
+      })
+  }
+
+  seriesListsEqual(a, b) {
+    return JSON.stringify(this.buildSeriesListSnapshot(a)) === JSON.stringify(this.buildSeriesListSnapshot(b))
+  }
+
+  getQueuePath(libraryItem) {
+    const relPath = String(libraryItem?.relPath || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+    if (!relPath) return ''
+    if (!libraryItem?.isFile && !relPath.endsWith('/')) return `${relPath}/`
+    return relPath
+  }
+
+  getCurrentSeriesPayload(libraryItem) {
+    return Array.isArray(libraryItem?.media?.series)
+      ? libraryItem.media.series.map((series) => ({
+          id: series.id,
+          name: series.name,
+          sequence: series.bookSeries?.sequence || null
+        }))
+      : []
+  }
+
+  buildLibraryItemSeriesSnapshot(libraryItem) {
+    const currentTags = Array.isArray(libraryItem?.media?.tags) ? libraryItem.media.tags : []
+    return {
+      libraryItemId: libraryItem.id,
+      title: libraryItem.media?.title || libraryItem.title || '',
+      relPath: this.getQueuePath(libraryItem),
+      series: this.buildSeriesListSnapshot(this.getCurrentSeriesPayload(libraryItem)),
+      hadSeriesEditTag: currentTags.includes(this.SERIES_EDIT_TAG)
+    }
+  }
+
+  getManagementNameMeta(series) {
+    const name = this.normalizeSeriesName(series?.name || '')
+    return {
+      id: series.id,
+      name,
+      exactKey: this.normalizeKeyPart(name),
+      baseKey: this.normalizeKeyPart(this.normalizeManagementBaseName(name)),
+      hasBracketVariant: /[\(\[\{][^\)\]\}]*[\)\]\}]/.test(name),
+      punctuationCount: (name.match(/[^a-z0-9\s]/gi) || []).length,
+      bookCount: Array.isArray(series.bookSeries) ? series.bookSeries.length : 0
+    }
+  }
+
+  choosePreferredManagementTarget(entries) {
+    return [...entries]
+      .sort((a, b) => {
+        if (a.hasBracketVariant !== b.hasBracketVariant) return a.hasBracketVariant ? 1 : -1
+        if (a.punctuationCount !== b.punctuationCount) return a.punctuationCount - b.punctuationCount
+        if (a.name.length !== b.name.length) return a.name.length - b.name.length
+        return a.name.localeCompare(b.name)
+      })[0]
+  }
+
+  buildManagementCandidatePayload(groupKey, entries) {
+    const suggestedTarget = this.choosePreferredManagementTarget(entries)
+    const uniqueBookIds = new Set()
+    entries.forEach((entry) => {
+      ;(entry.bookSeries || []).forEach((bookSeries) => {
+        if (bookSeries.bookId) uniqueBookIds.add(bookSeries.bookId)
+      })
+    })
+    return {
+      groupKey,
+      suggestedTargetLabel: suggestedTarget?.name || '',
+      labels: entries
+        .map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          bookCount: entry.bookCount
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      seriesCount: entries.length,
+      affectedBookCount: uniqueBookIds.size
+    }
+  }
+
+  buildSeriesReviewActionPayload(action) {
+    const beforeMap = new Map()
+    ;(Array.isArray(action?.beforeData) ? action.beforeData : []).forEach((entry) => {
+      beforeMap.set(entry.libraryItemId, entry)
+    })
+
+    const changedBooks = (Array.isArray(action?.afterData) ? action.afterData : []).map((entry) => {
+      const beforeEntry = beforeMap.get(entry.libraryItemId) || {}
+      return {
+        libraryItemId: entry.libraryItemId,
+        title: entry.title || beforeEntry.title || '',
+        relPath: entry.relPath || beforeEntry.relPath || '',
+        beforeSeries: beforeEntry.series || [],
+        afterSeries: entry.series || [],
+        reverted: action?.revertStatus === 'reverted'
+      }
+    })
+
+    return {
+      id: action.id,
+      actionType: action.actionType,
+      sourceSeriesIds: Array.isArray(action.sourceSeriesIds) ? action.sourceSeriesIds : [],
+      sourceSeriesNames: Array.isArray(action.sourceSeriesNames) ? action.sourceSeriesNames : [],
+      targetLabel: action.targetLabel,
+      revertStatus: action.revertStatus,
+      createdAt: action.createdAt,
+      revertedAt: action.revertedAt,
+      changedCount: changedBooks.length,
+      changedBooks
+    }
+  }
+
+  async getSeriesManagementCandidatesForLibrary(libraryId) {
+    const seriesRows = await Database.seriesModel.findAll({
+      where: {
+        libraryId
+      },
+      include: [
+        {
+          model: Database.bookSeriesModel,
+          attributes: ['id', 'bookId'],
+          required: false
+        }
+      ],
+      order: [['name', 'ASC']]
+    })
+
+    const seriesMeta = seriesRows.map((series) => {
+      const meta = this.getManagementNameMeta(series)
+      return {
+        ...meta,
+        bookSeries: series.bookSeries || []
+      }
+    })
+
+    const exactGroups = {}
+    seriesMeta.forEach((meta) => {
+      if (!meta.exactKey) return
+      if (!exactGroups[meta.exactKey]) exactGroups[meta.exactKey] = []
+      exactGroups[meta.exactKey].push(meta)
+    })
+
+    const candidateGroups = new Map()
+
+    Object.entries(exactGroups).forEach(([key, entries]) => {
+      if (entries.length < 2) return
+      candidateGroups.set(`exact:${key}`, new Map(entries.map((entry) => [entry.id, entry])))
+    })
+
+    seriesMeta.forEach((meta) => {
+      if (!meta.hasBracketVariant || !meta.baseKey || meta.baseKey === meta.exactKey) return
+      const baseEntries = exactGroups[meta.baseKey] || []
+      if (!baseEntries.length) return
+      const groupKey = `base:${meta.baseKey}`
+      const group = candidateGroups.get(groupKey) || new Map()
+      baseEntries.forEach((entry) => group.set(entry.id, entry))
+      group.set(meta.id, meta)
+      candidateGroups.set(groupKey, group)
+    })
+
+    return [...candidateGroups.entries()]
+      .map(([groupKey, seriesMap]) => this.buildManagementCandidatePayload(groupKey, [...seriesMap.values()]))
+      .filter((candidate) => candidate.labels.length > 1)
+      .sort((a, b) => {
+        if (b.labels.length !== a.labels.length) return b.labels.length - a.labels.length
+        if (b.affectedBookCount !== a.affectedBookCount) return b.affectedBookCount - a.affectedBookCount
+        return a.suggestedTargetLabel.localeCompare(b.suggestedTargetLabel)
+      })
+  }
+
+  async getSeriesManagementSources(libraryId, sourceSeriesIds) {
+    const ids = [...new Set((Array.isArray(sourceSeriesIds) ? sourceSeriesIds : []).filter((value) => typeof value === 'string' && value.trim()))]
+    if (!ids.length) {
+      throw new Error('Missing sourceSeriesIds')
+    }
+
+    const sourceSeries = await Database.seriesModel.findAll({
+      where: {
+        libraryId,
+        id: {
+          [Op.in]: ids
+        }
+      },
+      order: [['name', 'ASC']]
+    })
+    if (!sourceSeries.length) {
+      throw new Error('No source series found for this library')
+    }
+
+    return sourceSeries
+  }
+
+  async previewSeriesManagementAction(libraryId, sourceSeriesIds, targetLabel) {
+    const sourceSeries = await this.getSeriesManagementSources(libraryId, sourceSeriesIds)
+    const normalizedTargetLabel = this.normalizeSeriesName(targetLabel)
+    if (!normalizedTargetLabel) {
+      throw new Error('Missing targetLabel')
+    }
+
+    const sourceIds = sourceSeries.map((series) => series.id)
+    const sourceIdSet = new Set(sourceIds)
+    const targetLabelLower = normalizedTargetLabel.toLowerCase()
+
+    const bookSeriesRows = await Database.bookSeriesModel.findAll({
+      where: {
+        seriesId: {
+          [Op.in]: sourceIds
+        }
+      },
+      include: [
+        {
+          model: Database.bookModel,
+          include: [
+            {
+              model: Database.libraryItemModel
+            }
+          ]
+        }
+      ]
+    })
+
+    const libraryItemIds = [
+      ...new Set(
+        bookSeriesRows
+          .map((bookSeries) => bookSeries.book?.libraryItem?.id)
+          .filter((libraryItemId) => !!libraryItemId)
+      )
+    ]
+
+    if (!libraryItemIds.length) {
+      return {
+        sourceSeries: sourceSeries.map((series) => ({ id: series.id, name: series.name })),
+        targetLabel: normalizedTargetLabel,
+        books: [],
+        changedCount: 0,
+        conflictCount: 0
+      }
+    }
+
+    const libraryItems = await Database.libraryItemModel.findAllExpandedWhere({
+      id: {
+        [Op.in]: libraryItemIds
+      }
+    })
+
+    const books = []
+    libraryItems.forEach((libraryItem) => {
+      const currentSeries = this.getCurrentSeriesPayload(libraryItem)
+      const sourceMemberships = currentSeries.filter((series) => sourceIdSet.has(series.id))
+      if (!sourceMemberships.length) return
+
+      const targetMatches = currentSeries.filter((series) => this.normalizeSeriesName(series.name).toLowerCase() === targetLabelLower)
+      const targetMatchesOutsideSource = targetMatches.filter((series) => !sourceIdSet.has(series.id))
+      const uniqueSequences = [
+        ...new Set(
+          [...sourceMemberships, ...targetMatchesOutsideSource]
+            .map((series) => this.normalizeSequence(series.sequence))
+            .filter((sequence) => !!sequence)
+        )
+      ]
+
+      const conflictReasons = []
+      if (sourceMemberships.length > 1) {
+        conflictReasons.push('Book already has multiple duplicate labels in this group')
+      }
+      if (targetMatchesOutsideSource.length) {
+        conflictReasons.push('Book already has the chosen target label')
+      }
+      if (uniqueSequences.length > 1) {
+        conflictReasons.push('Book has conflicting sequence values between source and target labels')
+      }
+
+      const primarySource = sourceMemberships[0] || null
+      const wouldChange =
+        !!primarySource &&
+        (this.normalizeSeriesName(primarySource.name).toLowerCase() !== targetLabelLower ||
+          targetMatchesOutsideSource.length > 0 ||
+          sourceMemberships.length > 1)
+
+      if (!wouldChange && !conflictReasons.length) return
+
+      let nextSeriesPreview = null
+      if (!conflictReasons.length && primarySource) {
+        nextSeriesPreview = currentSeries
+          .filter((series) => !sourceIdSet.has(series.id))
+          .map((series) => ({
+            name: series.name,
+            sequence: series.sequence || null
+          }))
+        const targetIndex = nextSeriesPreview.findIndex((series) => this.normalizeSeriesName(series.name).toLowerCase() === targetLabelLower)
+        const targetEntry = {
+          name: normalizedTargetLabel,
+          sequence: primarySource.sequence || null
+        }
+        if (targetIndex === -1) nextSeriesPreview.push(targetEntry)
+        else nextSeriesPreview.splice(targetIndex, 1, targetEntry)
+        nextSeriesPreview = this.buildSeriesListSnapshot(nextSeriesPreview)
+      }
+
+      books.push({
+        libraryItemId: libraryItem.id,
+        title: libraryItem.media?.title || libraryItem.title || '',
+        relPath: this.getQueuePath(libraryItem),
+        authors: Array.isArray(libraryItem.media?.authors) ? libraryItem.media.authors.map((author) => ({ id: author.id, name: author.name })) : [],
+        currentSeries,
+        sourceSeries: sourceMemberships,
+        conflictReasons,
+        includedByDefault: wouldChange && !conflictReasons.length,
+        nextSeriesPreview
+      })
+    })
+
+    return {
+      sourceSeries: sourceSeries.map((series) => ({ id: series.id, name: series.name })),
+      targetLabel: normalizedTargetLabel,
+      books,
+      changedCount: books.filter((book) => book.includedByDefault).length,
+      conflictCount: books.filter((book) => book.conflictReasons.length).length
+    }
+  }
+
+  async getRecentSeriesManagementActionsForLibrary(libraryId, limit = 5) {
+    const actions = await Database.seriesReviewActionModel.findAll({
+      where: {
+        libraryId
+      },
+      order: [['createdAt', 'DESC']],
+      limit
+    })
+
+    return actions.map((action) => this.buildSeriesReviewActionPayload(action))
+  }
+
+  async setSeriesEditTagPresence(libraryItem, shouldHaveTag) {
+    const currentTags = Array.isArray(libraryItem?.media?.tags) ? libraryItem.media.tags : []
+    const hasTag = currentTags.includes(this.SERIES_EDIT_TAG)
+    if (hasTag === shouldHaveTag) return false
+
+    const nextTags = shouldHaveTag ? [...currentTags, this.SERIES_EDIT_TAG] : currentTags.filter((tag) => tag !== this.SERIES_EDIT_TAG)
+    const hasTagUpdates = await libraryItem.media.updateFromRequest({ tags: nextTags })
+    if (hasTagUpdates && shouldHaveTag) {
+      Database.addTagsToFilterData(libraryItem.libraryId, [this.SERIES_EDIT_TAG])
+    }
+    return hasTagUpdates
   }
 
   async importSuggestionsForLibrary(libraryId, rows) {
@@ -241,15 +605,6 @@ class SeriesReviewManager {
     }
   }
 
-  getQueuePath(libraryItem) {
-    const relPath = String(libraryItem?.relPath || '')
-      .replace(/\\/g, '/')
-      .replace(/^\/+/, '')
-    if (!relPath) return ''
-    if (!libraryItem?.isFile && !relPath.endsWith('/')) return `${relPath}/`
-    return relPath
-  }
-
   sortSuggestionsForDisplay(suggestions) {
     return [...(suggestions || [])].sort((a, b) => {
       const aPriority = a.kind === 'series' ? 0 : 1
@@ -258,16 +613,6 @@ class SeriesReviewManager {
       if ((b.sourceCount || 0) !== (a.sourceCount || 0)) return (b.sourceCount || 0) - (a.sourceCount || 0)
       return String(a.suggestedName || '').localeCompare(String(b.suggestedName || ''))
     })
-  }
-
-  getCurrentSeriesPayload(libraryItem) {
-    return Array.isArray(libraryItem?.media?.series)
-      ? libraryItem.media.series.map((series) => ({
-          id: series.id,
-          name: series.name,
-          sequence: series.bookSeries?.sequence || null
-        }))
-      : []
   }
 
   buildQueueRow(libraryItem, suggestions) {
@@ -366,15 +711,10 @@ class SeriesReviewManager {
   }
 
   async ensureSeriesEditTag(libraryItem) {
-    const currentTags = Array.isArray(libraryItem?.media?.tags) ? libraryItem.media.tags : []
-    if (currentTags.includes(this.SERIES_EDIT_TAG)) return false
-    const nextTags = [...currentTags, this.SERIES_EDIT_TAG]
-    const hasTagUpdates = await libraryItem.media.updateFromRequest({ tags: nextTags })
-    if (hasTagUpdates) Database.addTagsToFilterData(libraryItem.libraryId, [this.SERIES_EDIT_TAG])
-    return hasTagUpdates
+    return this.setSeriesEditTagPresence(libraryItem, true)
   }
 
-  async persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag = false } = {}) {
+  async persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag = false, setSeriesEditTag = null } = {}) {
     if (seriesUpdateData?.seriesRemoved?.length) {
       await this.checkRemoveEmptySeries(seriesUpdateData.seriesRemoved.map((series) => series.id))
     }
@@ -383,13 +723,128 @@ class SeriesReviewManager {
         Database.addSeriesToFilterData(libraryItem.libraryId, series.name, series.id)
       })
     }
-    if (addSeriesEditTag) {
+    if (typeof setSeriesEditTag === 'boolean') {
+      await this.setSeriesEditTagPresence(libraryItem, setSeriesEditTag)
+    } else if (addSeriesEditTag) {
       await this.ensureSeriesEditTag(libraryItem)
     }
 
     libraryItem.changed('updatedAt', true)
     await libraryItem.save()
     await libraryItem.saveMetadataFile()
+  }
+
+  async applySeriesManagementAction(libraryId, userId, sourceSeriesIds, targetLabel, includedLibraryItemIds) {
+    const preview = await this.previewSeriesManagementAction(libraryId, sourceSeriesIds, targetLabel)
+    const includedSet = new Set((Array.isArray(includedLibraryItemIds) ? includedLibraryItemIds : []).filter((value) => typeof value === 'string' && value.trim()))
+    const selectedBooks = preview.books.filter((book) => includedSet.has(book.libraryItemId))
+
+    if (!selectedBooks.length) {
+      throw new Error('No books selected for apply')
+    }
+    if (selectedBooks.some((book) => book.conflictReasons.length)) {
+      throw new Error('Conflicting books must be excluded before apply')
+    }
+
+    const beforeData = []
+    const afterData = []
+
+    for (const book of selectedBooks) {
+      const libraryItem = await Database.libraryItemModel.getExpandedById(book.libraryItemId)
+      if (!libraryItem || !libraryItem.isBook) {
+        throw new Error(`Book ${book.libraryItemId} was not found`)
+      }
+
+      beforeData.push(this.buildLibraryItemSeriesSnapshot(libraryItem))
+      const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(book.nextSeriesPreview || [], libraryItem.libraryId)
+      await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
+      const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(book.libraryItemId)
+      afterData.push(this.buildLibraryItemSeriesSnapshot(updatedLibraryItem))
+    }
+
+    const action = await Database.seriesReviewActionModel.create({
+      libraryId,
+      userId: userId || null,
+      sourceSeriesIds: preview.sourceSeries.map((series) => series.id),
+      sourceSeriesNames: preview.sourceSeries.map((series) => series.name),
+      targetLabel: preview.targetLabel,
+      beforeData,
+      afterData
+    })
+
+    return {
+      action: this.buildSeriesReviewActionPayload(action),
+      changedCount: selectedBooks.length,
+      conflictCount: preview.conflictCount
+    }
+  }
+
+  async revertSeriesManagementAction(actionId, userId) {
+    if (!actionId) return null
+    const action = await Database.seriesReviewActionModel.findByPk(actionId)
+    if (!action) return null
+    if (action.revertStatus === 'reverted') {
+      return {
+        action: this.buildSeriesReviewActionPayload(action),
+        reverted: 0,
+        failed: 0,
+        failures: []
+      }
+    }
+
+    const beforeMap = new Map()
+    ;(Array.isArray(action.beforeData) ? action.beforeData : []).forEach((entry) => {
+      beforeMap.set(entry.libraryItemId, entry)
+    })
+
+    let reverted = 0
+    let failed = 0
+    const failures = []
+
+    for (const afterEntry of Array.isArray(action.afterData) ? action.afterData : []) {
+      const beforeEntry = beforeMap.get(afterEntry.libraryItemId)
+      if (!beforeEntry) continue
+
+      try {
+        const libraryItem = await Database.libraryItemModel.getExpandedById(afterEntry.libraryItemId)
+        if (!libraryItem || !libraryItem.isBook) {
+          throw new Error('Book not found')
+        }
+
+        const currentSeries = this.buildSeriesListSnapshot(this.getCurrentSeriesPayload(libraryItem))
+        if (!this.seriesListsEqual(currentSeries, afterEntry.series || [])) {
+          throw new Error('Book series changed after the action; refusing unsafe revert')
+        }
+
+        const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(beforeEntry.series || [], libraryItem.libraryId)
+        await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, {
+          setSeriesEditTag: !!beforeEntry.hadSeriesEditTag
+        })
+        reverted++
+      } catch (error) {
+        failed++
+        failures.push({
+          libraryItemId: afterEntry.libraryItemId,
+          title: afterEntry.title || beforeEntry.title || '',
+          error: String(error?.message || error)
+        })
+        Logger.error(`[SeriesReviewManager] Failed to revert series management action ${action.id} for item ${afterEntry.libraryItemId}`, error)
+      }
+    }
+
+    if (failed === 0) {
+      action.revertStatus = 'reverted'
+      action.revertedAt = new Date()
+      action.revertedByUserId = userId || null
+      await action.save()
+    }
+
+    return {
+      action: this.buildSeriesReviewActionPayload(action),
+      reverted,
+      failed,
+      failures
+    }
   }
 
   async applySuggestion(suggestionId, userId, mode, replaceSeriesId = null) {

@@ -15,6 +15,47 @@ class SeriesReviewController {
     res.json({ rows })
   }
 
+  async getManagementData(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const candidates = await SeriesReviewManager.getSeriesManagementCandidatesForLibrary(req.library.id)
+    const recentActions = await SeriesReviewManager.getRecentSeriesManagementActionsForLibrary(req.library.id)
+    res.json({ candidates, recentActions })
+  }
+
+  async previewManagementAction(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let preview
+    try {
+      preview = await SeriesReviewManager.previewSeriesManagementAction(req.library.id, req.body?.sourceSeriesIds, req.body?.targetLabel)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    res.json(preview)
+  }
+
+  async applyManagementAction(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let result
+    try {
+      result = await SeriesReviewManager.applySeriesManagementAction(
+        req.library.id,
+        req.user.id,
+        req.body?.sourceSeriesIds,
+        req.body?.targetLabel,
+        req.body?.includedLibraryItemIds
+      )
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    res.json(result)
+  }
+
   async importSuggestions(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
@@ -101,6 +142,19 @@ class SeriesReviewController {
     res.json({
       currentSeries: SeriesReviewManager.getCurrentSeriesPayload(result.libraryItem)
     })
+  }
+
+  async revertManagementAction(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+
+    let result
+    try {
+      result = await SeriesReviewManager.revertSeriesManagementAction(req.params.actionId, req.user.id)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
   }
 }
 

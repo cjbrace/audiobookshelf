@@ -99,4 +99,57 @@ describe('SeriesReviewController', () => {
     expect(res.send.notCalled).to.be.true
     expect(res.sendStatus.notCalled).to.be.true
   })
+
+  it('returns management candidates and recent actions for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'getSeriesManagementCandidatesForLibrary').resolves([{ groupKey: 'g1' }])
+    sinon.stub(SeriesReviewManager, 'getRecentSeriesManagementActionsForLibrary').resolves([{ id: 'a1' }])
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.getManagementData(req, res)
+
+    expect(res.json.calledOnceWithExactly({ candidates: [{ groupKey: 'g1' }], recentActions: [{ id: 'a1' }] })).to.be.true
+  })
+
+  it('returns 400 instead of throwing when management preview input is invalid', async () => {
+    sinon.stub(SeriesReviewManager, 'previewSeriesManagementAction').rejects(new Error('Missing targetLabel'))
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      body: {
+        sourceSeriesIds: ['series-1']
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.previewManagementAction(req, res)
+
+    expect(res.status.calledOnceWithExactly(400)).to.be.true
+    expect(res.send.calledOnceWithExactly('Missing targetLabel')).to.be.true
+  })
 })

@@ -334,4 +334,57 @@ describe('SeriesReviewManager', () => {
     expect(pendingRows[0].title).to.equal('84K')
     expect(pendingRows[0].suggestions[0].state).to.equal('pending')
   })
+
+  it('suggests obvious duplicate series groups and prefers the simpler target label', async () => {
+    await createBookFixture({
+      title: 'Skylark Three',
+      currentSeries: [{ name: 'Skylark', sequence: '3' }]
+    })
+    await createBookFixture({
+      title: 'Skylark of Space',
+      currentSeries: [{ name: 'Skylark (Smith)', sequence: '1' }]
+    })
+
+    const candidates = await SeriesReviewManager.getSeriesManagementCandidatesForLibrary(library.id)
+    expect(candidates).to.have.length(1)
+    expect(candidates[0].labels.map((label) => label.name)).to.deep.equal(['Skylark', 'Skylark (Smith)'])
+    expect(candidates[0].suggestedTargetLabel).to.equal('Skylark')
+  })
+
+  it('previews, applies, and reverts a safe series management action', async () => {
+    const { libraryItem: targetItem } = await createBookFixture({
+      title: 'Skylark Three',
+      currentSeries: [{ name: 'Skylark', sequence: '3' }]
+    })
+    const { libraryItem: sourceItem } = await createBookFixture({
+      title: 'Skylark of Space',
+      currentSeries: [{ name: 'Skylark (Smith)', sequence: '1' }]
+    })
+    await stubExpandedLibraryItems()
+
+    const candidates = await SeriesReviewManager.getSeriesManagementCandidatesForLibrary(library.id)
+    const sourceSeriesIds = candidates[0].labels.map((label) => label.id)
+
+    const preview = await SeriesReviewManager.previewSeriesManagementAction(library.id, sourceSeriesIds, 'Skylark')
+    expect(preview.changedCount).to.equal(1)
+    expect(preview.conflictCount).to.equal(0)
+    expect(preview.books[0].title).to.equal('Skylark of Space')
+
+    const applyResult = await SeriesReviewManager.applySeriesManagementAction(library.id, user.id, sourceSeriesIds, 'Skylark', [sourceItem.id])
+    expect(applyResult.changedCount).to.equal(1)
+    expect(applyResult.action.targetLabel).to.equal('Skylark')
+
+    const updatedSourceItem = await Database.libraryItemModel.getExpandedById(sourceItem.id)
+    expect(updatedSourceItem.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Skylark#1'])
+    expect(updatedSourceItem.media.tags).to.include('-series-edit')
+
+    const revertResult = await SeriesReviewManager.revertSeriesManagementAction(applyResult.action.id, user.id)
+    expect(revertResult.reverted).to.equal(1)
+    expect(revertResult.failed).to.equal(0)
+
+    const revertedSourceItem = await Database.libraryItemModel.getExpandedById(sourceItem.id)
+    expect(revertedSourceItem.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Skylark (Smith)#1'])
+    const untouchedTargetItem = await Database.libraryItemModel.getExpandedById(targetItem.id)
+    expect(untouchedTargetItem.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Skylark#3'])
+  })
 })

@@ -6,16 +6,35 @@
         <div class="flex items-center gap-2 mb-3">
           <h1 class="text-2xl font-semibold">Series Review</h1>
           <div class="grow" />
-          <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+          <label v-if="activeTab === 'queue'" class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
             <input v-model="includeDecided" type="checkbox" class="rounded border-white/20 bg-black/30" @change="loadQueue" />
             <span>Show decided rows</span>
           </label>
-          <ui-btn color="bg-bg border border-white/20" small :loading="loading" @click="loadQueue">
+          <ui-btn color="bg-bg border border-white/20" small :loading="activeTab === 'queue' ? loading : managementLoading" @click="activeTab === 'queue' ? loadQueue() : loadManagementData()">
             Refresh
           </ui-btn>
         </div>
 
-        <div v-if="sourceLegendEntries.length" class="flex flex-wrap gap-2 mb-4 text-sm">
+        <div class="flex flex-wrap gap-2 mb-4">
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-full border text-sm transition"
+            :class="activeTab === 'queue' ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
+            @click="switchTab('queue')"
+          >
+            Review Queue
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-full border text-sm transition"
+            :class="activeTab === 'management' ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
+            @click="switchTab('management')"
+          >
+            Series Management
+          </button>
+        </div>
+
+        <div v-if="activeTab === 'queue' && sourceLegendEntries.length" class="flex flex-wrap gap-2 mb-4 text-sm">
           <a
             v-for="entry in sourceLegendEntries"
             :key="entry.code"
@@ -30,9 +49,14 @@
         </div>
 
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-sm text-gray-200">
-          <div class="flex flex-wrap gap-x-4 gap-y-1">
+          <div v-if="activeTab === 'queue'" class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Rows: {{ rows.length }}</span>
             <span>Pending suggestions: {{ pendingSuggestionCount }}</span>
+            <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
+          </div>
+          <div v-else class="flex flex-wrap gap-x-4 gap-y-1">
+            <span>Candidate groups: {{ managementCandidates.length }}</span>
+            <span>Recent actions: {{ managementRecentActions.length }}</span>
             <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
           </div>
         </div>
@@ -40,6 +64,7 @@
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40">
           <div v-if="errorMessage" class="text-red-200 mb-3">{{ errorMessage }}</div>
 
+          <template v-if="activeTab === 'queue'">
           <div v-if="!rows.length && !loading" class="text-base text-gray-200">
             No series review rows are stored for this library yet.
           </div>
@@ -211,6 +236,177 @@
               </tbody>
             </table>
           </div>
+          </template>
+
+          <template v-else>
+            <div v-if="!managementCandidates.length && !managementLoading" class="text-base text-gray-200">
+              No obvious duplicate series labels are queued for management yet.
+            </div>
+
+            <div v-else class="space-y-4">
+              <div
+                v-for="candidate in managementCandidates"
+                :key="candidate.groupKey"
+                class="rounded border border-white/15 bg-black/15 p-4"
+              >
+                <div class="flex flex-wrap items-start gap-3">
+                  <div class="grow min-w-[16rem]">
+                    <p class="text-sm text-gray-300">Possible duplicate labels</p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <span
+                        v-for="label in candidate.labels"
+                        :key="label.id"
+                        class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/15 bg-black/20 text-sm text-gray-100"
+                      >
+                        <span>{{ label.name }}</span>
+                        <span class="text-gray-400">{{ label.bookCount }}</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="w-full md:w-72">
+                    <label class="block text-sm text-gray-300 mb-1">Target label</label>
+                    <input
+                      v-model="managementTargetLabels[candidate.groupKey]"
+                      type="text"
+                      class="w-full rounded border border-white/20 bg-black/20 px-3 py-2 text-gray-100"
+                    />
+                    <div class="mt-2 flex gap-2">
+                      <ui-btn
+                        small
+                        color="bg-bg border border-white/20"
+                        :loading="managementPreviewLoadingKey === candidate.groupKey"
+                        @click="previewManagementCandidate(candidate)"
+                      >
+                        Preview
+                      </ui-btn>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="managementPreviewByGroup[candidate.groupKey]" class="mt-4 space-y-3">
+                  <div class="text-sm text-gray-300">
+                    {{ managementPreviewByGroup[candidate.groupKey].changedCount }} ready to change,
+                    {{ managementPreviewByGroup[candidate.groupKey].conflictCount }} conflict<span v-if="managementPreviewByGroup[candidate.groupKey].conflictCount !== 1">s</span>
+                  </div>
+
+                  <div class="overflow-auto border border-white/10 rounded">
+                    <table class="w-full text-sm table-fixed">
+                      <thead class="bg-black/30">
+                        <tr>
+                          <th class="text-left px-3 py-2 w-12">Use</th>
+                          <th class="text-left px-3 py-2 w-64">Book</th>
+                          <th class="text-left px-3 py-2 w-72">Current duplicate labels</th>
+                          <th class="text-left px-3 py-2">Preview / conflict</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="book in managementPreviewByGroup[candidate.groupKey].books"
+                          :key="book.libraryItemId"
+                          class="border-t border-white/10 align-top"
+                        >
+                          <td class="px-3 py-3">
+                            <input
+                              type="checkbox"
+                              class="rounded border-white/20 bg-black/30"
+                              :checked="isManagementBookSelected(candidate.groupKey, book.libraryItemId)"
+                              :disabled="book.conflictReasons.length > 0"
+                              @change="toggleManagementBook(candidate.groupKey, book.libraryItemId)"
+                            />
+                          </td>
+                          <td class="px-3 py-3">
+                            <nuxt-link :to="`/item/${book.libraryItemId}`" class="block font-semibold hover:underline">
+                              {{ book.title }}
+                            </nuxt-link>
+                            <p class="text-gray-300 mt-1">{{ formatAuthors(book.authors) }}</p>
+                            <p v-if="book.relPath" class="text-gray-400 mt-2 break-all">{{ book.relPath }}</p>
+                          </td>
+                          <td class="px-3 py-3 text-gray-200">
+                            {{ formatSeriesList(book.sourceSeries) }}
+                          </td>
+                          <td class="px-3 py-3">
+                            <div v-if="book.conflictReasons.length" class="space-y-1 text-red-200">
+                              <p
+                                v-for="reason in book.conflictReasons"
+                                :key="book.libraryItemId + ':' + reason"
+                              >
+                                {{ reason }}
+                              </p>
+                            </div>
+                            <div v-else class="text-gray-200">
+                              {{ formatSeriesList(book.nextSeriesPreview) }}
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <ui-btn
+                    small
+                    color="bg-success/80"
+                    :loading="managementActionLoadingKey === candidate.groupKey"
+                    @click="applyManagementCandidate(candidate)"
+                  >
+                    Apply
+                  </ui-btn>
+                </div>
+              </div>
+
+              <div v-if="managementRecentActions.length" class="rounded border border-white/15 bg-black/15 p-4">
+                <h2 class="text-lg font-semibold">Recent management actions</h2>
+                <div class="mt-3 space-y-3">
+                  <div
+                    v-for="action in managementRecentActions"
+                    :key="action.id"
+                    class="rounded border border-white/10 bg-black/20 p-3"
+                  >
+                    <div class="flex flex-wrap items-center gap-3">
+                      <div class="grow">
+                        <p class="font-medium text-gray-100">
+                          {{ action.sourceSeriesNames.join(', ') }} -> {{ action.targetLabel }}
+                        </p>
+                        <p class="text-sm text-gray-300">
+                          {{ action.changedCount }} book<span v-if="action.changedCount !== 1">s</span> changed on {{ formatTime(action.createdAt) }}
+                        </p>
+                        <p v-if="action.revertStatus === 'reverted'" class="text-sm text-amber-200">
+                          Reverted {{ formatTime(action.revertedAt) }}
+                        </p>
+                      </div>
+                      <ui-btn
+                        small
+                        color="bg-bg border border-white/20"
+                        @click="toggleManagementActionDetails(action.id)"
+                      >
+                        {{ managementActionDetailsOpen[action.id] ? 'Hide changes' : 'Show changes' }}
+                      </ui-btn>
+                      <ui-btn
+                        v-if="action.revertStatus !== 'reverted'"
+                        small
+                        color="bg-warning/70"
+                        :loading="managementRevertLoadingKey === action.id"
+                        @click="revertManagementAction(action)"
+                      >
+                        Revert
+                      </ui-btn>
+                    </div>
+
+                    <div v-if="managementActionDetailsOpen[action.id]" class="mt-3 space-y-2">
+                      <div
+                        v-for="book in action.changedBooks"
+                        :key="action.id + ':' + book.libraryItemId"
+                        class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
+                      >
+                        <p class="font-medium">{{ book.title }}</p>
+                        <p class="text-gray-400">Before: {{ formatSeriesList(book.beforeSeries) || '-' }}</p>
+                        <p class="text-gray-300">After: {{ formatSeriesList(book.afterSeries) || '-' }}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -240,13 +436,24 @@ export default {
   },
   data() {
     return {
+      activeTab: 'queue',
       rows: [],
       includeDecided: false,
       loading: false,
+      managementLoading: false,
       errorMessage: '',
       lastLoadedAt: null,
       selectedReplaceTarget: {},
-      actionKey: ''
+      actionKey: '',
+      managementCandidates: [],
+      managementPreviewByGroup: {},
+      managementSelectionByGroup: {},
+      managementTargetLabels: {},
+      managementRecentActions: [],
+      managementPreviewLoadingKey: '',
+      managementActionLoadingKey: '',
+      managementRevertLoadingKey: '',
+      managementActionDetailsOpen: {}
     }
   },
   computed: {
@@ -280,6 +487,16 @@ export default {
     this.loadQueue()
   },
   methods: {
+    async switchTab(tab) {
+      if (this.activeTab === tab) return
+      this.activeTab = tab
+      this.errorMessage = ''
+      if (tab === 'queue') {
+        await this.loadQueue()
+      } else {
+        await this.loadManagementData()
+      }
+    },
     formatTime(value) {
       return value ? new Date(value).toLocaleString() : '-'
     },
@@ -335,6 +552,11 @@ export default {
       if (contribution.noSeries) return 'bg-red-500/10 border-red-300/35 text-red-50'
       return 'bg-sky-400/15 border-sky-300/35 text-sky-50'
     },
+    formatSeriesList(seriesList) {
+      return (seriesList || [])
+        .map((series) => (series.sequence ? `${series.name} #${series.sequence}` : series.name))
+        .join(' | ')
+    },
     async loadQueue() {
       this.loading = true
       this.errorMessage = ''
@@ -350,6 +572,94 @@ export default {
         this.errorMessage = error?.response?.data || 'Failed to load series review rows'
       } finally {
         this.loading = false
+      }
+    },
+    async loadManagementData() {
+      this.managementLoading = true
+      this.errorMessage = ''
+      try {
+        const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/management`)
+        this.managementCandidates = response.candidates || []
+        this.managementRecentActions = response.recentActions || []
+        this.managementCandidates.forEach((candidate) => {
+          if (!this.managementTargetLabels[candidate.groupKey]) {
+            this.$set(this.managementTargetLabels, candidate.groupKey, candidate.suggestedTargetLabel)
+          }
+        })
+        this.lastLoadedAt = new Date().toISOString()
+      } catch (error) {
+        this.errorMessage = error?.response?.data || 'Failed to load series management data'
+      } finally {
+        this.managementLoading = false
+      }
+    },
+    async previewManagementCandidate(candidate) {
+      const groupKey = candidate.groupKey
+      this.managementPreviewLoadingKey = groupKey
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/management/preview`, {
+          sourceSeriesIds: candidate.labels.map((label) => label.id),
+          targetLabel: this.managementTargetLabels[groupKey] || candidate.suggestedTargetLabel
+        })
+        this.$set(this.managementPreviewByGroup, groupKey, response)
+        this.$set(
+          this.managementSelectionByGroup,
+          groupKey,
+          (response.books || []).filter((book) => book.includedByDefault).map((book) => book.libraryItemId)
+        )
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to build management preview')
+      } finally {
+        this.managementPreviewLoadingKey = ''
+      }
+    },
+    toggleManagementBook(groupKey, libraryItemId) {
+      const current = new Set(this.managementSelectionByGroup[groupKey] || [])
+      if (current.has(libraryItemId)) current.delete(libraryItemId)
+      else current.add(libraryItemId)
+      this.$set(this.managementSelectionByGroup, groupKey, [...current])
+    },
+    isManagementBookSelected(groupKey, libraryItemId) {
+      return (this.managementSelectionByGroup[groupKey] || []).includes(libraryItemId)
+    },
+    async applyManagementCandidate(candidate) {
+      const groupKey = candidate.groupKey
+      this.managementActionLoadingKey = groupKey
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/management/apply`, {
+          sourceSeriesIds: candidate.labels.map((label) => label.id),
+          targetLabel: this.managementTargetLabels[groupKey] || candidate.suggestedTargetLabel,
+          includedLibraryItemIds: this.managementSelectionByGroup[groupKey] || []
+        })
+        this.$toast.success(`Applied to ${response.changedCount} book${response.changedCount === 1 ? '' : 's'}`)
+        await this.loadManagementData()
+        delete this.managementPreviewByGroup[groupKey]
+        delete this.managementSelectionByGroup[groupKey]
+        await this.loadQueue()
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to apply series management action')
+      } finally {
+        this.managementActionLoadingKey = ''
+      }
+    },
+    toggleManagementActionDetails(actionId) {
+      this.$set(this.managementActionDetailsOpen, actionId, !this.managementActionDetailsOpen[actionId])
+    },
+    async revertManagementAction(action) {
+      this.managementRevertLoadingKey = action.id
+      try {
+        const response = await this.$axios.$post(`/api/series-review/management/actions/${action.id}/revert`)
+        if (response.failed) {
+          this.$toast.error(`Reverted ${response.reverted}; ${response.failed} could not be reverted safely`)
+        } else {
+          this.$toast.success(`Reverted ${response.reverted} book${response.reverted === 1 ? '' : 's'}`)
+        }
+        await this.loadManagementData()
+        await this.loadQueue()
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to revert series management action')
+      } finally {
+        this.managementRevertLoadingKey = ''
       }
     },
     updateRowCurrentSeries(row, currentSeries) {
