@@ -15,23 +15,6 @@
           </ui-btn>
         </div>
 
-        <div class="bg-sky-950/40 rounded-lg p-3 border border-sky-400/30 mb-4 text-sm text-sky-50">
-          <div class="font-medium mb-2">Source key</div>
-          <div class="flex flex-wrap gap-2">
-            <a
-              v-for="entry in sourceLegendEntries"
-              :key="entry.code"
-              class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-sky-400/15 border border-sky-300/35 hover:bg-sky-400/25 transition"
-              :href="entry.url"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <span class="font-semibold">{{ entry.code }}</span>
-              <span class="text-sky-100/90">{{ entry.name }}</span>
-            </a>
-          </div>
-        </div>
-
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-sm text-gray-200">
           <div class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Rows: {{ rows.length }}</span>
@@ -123,28 +106,19 @@
                           >
                             <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
                             <span v-if="contribution.noSeries" class="text-gray-300"> no series</span>
-                            <span v-else class="text-gray-300">
+                          </div>
+                          <div
+                            v-for="contribution in getConflictContributions(row)"
+                            v-if="showSubordinateConflicts(row, suggestion)"
+                            :key="suggestion.id + ':conflict:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
+                            class="px-2.5 py-1 rounded-full border border-red-300/35 bg-red-500/10 text-sm text-red-50"
+                          >
+                            <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
+                            <span v-if="contribution.noSeries"> no series</span>
+                            <span v-else>
                               {{ contribution.seriesName }}
                               <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
                             </span>
-                          </div>
-                        </div>
-
-                        <div v-if="showSubordinateConflicts(row, suggestion)" class="mt-3 rounded-md border border-red-400/30 bg-red-950/30 p-3">
-                          <div class="text-sm font-medium text-red-100 mb-2">Conflicting evidence</div>
-                          <div class="flex flex-wrap gap-2">
-                            <div
-                              v-for="contribution in getConflictContributions(row)"
-                              :key="suggestion.id + ':conflict:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
-                              class="px-2.5 py-1 rounded-full border border-red-300/35 bg-red-500/10 text-sm text-red-50"
-                            >
-                              <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
-                              <span v-if="contribution.noSeries"> no series</span>
-                              <span v-else>
-                                {{ contribution.seriesName }}
-                                <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
-                              </span>
-                            </div>
                           </div>
                         </div>
 
@@ -182,14 +156,6 @@
 </template>
 
 <script>
-const SOURCE_LEGEND = {
-  fictiondb: { code: 'FDB', name: 'FictionDB', url: 'https://www.fictiondb.com/' },
-  goodreads: { code: 'GR', name: 'Goodreads', url: 'https://www.goodreads.com/' },
-  wikidata: { code: 'WD', name: 'Wikidata', url: 'https://www.wikidata.org/' },
-  librarything: { code: 'LT', name: 'LibraryThing', url: 'https://www.librarything.com/' },
-  fantasticfiction: { code: 'FF', name: 'Fantastic Fiction', url: 'https://www.fantasticfiction.com/' }
-}
-
 export default {
   async asyncData({ redirect, store, params }) {
     if (!store.getters['user/getIsAdminOrUp']) {
@@ -219,25 +185,6 @@ export default {
     },
     pendingSuggestionCount() {
       return this.rows.reduce((count, row) => count + row.suggestions.filter((suggestion) => suggestion.state === 'pending').length, 0)
-    },
-    sourceLegendEntries() {
-      const sources = new Map()
-      this.rows.forEach((row) => {
-        ;(row.suggestions || []).forEach((suggestion) => {
-          ;(suggestion.contributions || []).forEach((contribution) => {
-            const sourceKey = String(contribution.source || '').toLowerCase()
-            if (!sourceKey || sources.has(sourceKey)) return
-            const knownEntry = SOURCE_LEGEND[sourceKey]
-            const fallbackCode = (contribution.label || sourceKey).toUpperCase()
-            sources.set(sourceKey, knownEntry || {
-              code: fallbackCode,
-              name: fallbackCode,
-              url: '#'
-            })
-          })
-        })
-      })
-      return [...sources.values()]
     }
   },
   mounted() {
