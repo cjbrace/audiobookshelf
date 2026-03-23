@@ -15,9 +15,22 @@
           </ui-btn>
         </div>
 
-        <p class="text-base text-gray-300 mb-4">
-          Review stored series suggestions by book. Add keeps the current series entries, clicking a current series chip replaces that specific entry, and Dismiss hides the suggestion from pending review on reruns.
-        </p>
+        <div class="bg-sky-950/40 rounded-lg p-3 border border-sky-400/30 mb-4 text-sm text-sky-50">
+          <div class="font-medium mb-2">Source key</div>
+          <div class="flex flex-wrap gap-2">
+            <a
+              v-for="entry in sourceLegendEntries"
+              :key="entry.code"
+              class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-sky-400/15 border border-sky-300/35 hover:bg-sky-400/25 transition"
+              :href="entry.url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span class="font-semibold">{{ entry.code }}</span>
+              <span class="text-sky-100/90">{{ entry.name }}</span>
+            </a>
+          </div>
+        </div>
 
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-sm text-gray-200">
           <div class="flex flex-wrap gap-x-4 gap-y-1">
@@ -50,40 +63,48 @@
                       {{ row.title || '-' }}
                     </nuxt-link>
                     <p class="text-base text-gray-200 mt-1">{{ formatAuthors(row.authors) }}</p>
-                    <p class="text-sm text-gray-400 mt-2">Book ID: {{ row.libraryItemId }}</p>
+                    <p v-if="row.relPath" class="text-sm text-gray-400 mt-2 break-all">{{ row.relPath }}</p>
                   </td>
                   <td class="px-3 py-3">
                     <div v-if="row.currentSeries.length" class="flex flex-wrap gap-2">
-                      <button
+                      <div
                         v-for="series in row.currentSeries"
                         :key="series.id"
-                        type="button"
-                        class="px-2 py-1 rounded border text-left transition"
+                        class="inline-flex items-center gap-2 px-2 py-1 rounded border text-left transition"
                         :class="selectedReplaceTarget[row.libraryItemId] === series.id ? 'bg-yellow-700/40 border-yellow-400 text-yellow-100' : 'bg-black/20 border-white/15 hover:border-yellow-400/70'"
-                        @click="toggleReplaceTarget(row.libraryItemId, series.id)"
                       >
-                        <span class="font-medium">{{ series.name }}</span>
-                        <span v-if="series.sequence" class="text-sm text-gray-300">&nbsp;#{{ series.sequence }}</span>
-                      </button>
+                        <button type="button" class="contents" @click="toggleReplaceTarget(row.libraryItemId, series.id)">
+                          <span class="font-medium">{{ series.name }}</span>
+                          <span v-if="series.sequence" class="text-sm text-gray-300">#{{ series.sequence }}</span>
+                        </button>
+                        <button
+                          v-if="selectedReplaceTarget[row.libraryItemId] === series.id"
+                          type="button"
+                          class="w-5 h-5 rounded-full border border-red-300/50 bg-red-500/15 text-red-100 leading-none hover:bg-red-500/25"
+                          :disabled="actionKey === `${row.libraryItemId}:remove:${series.id}`"
+                          @click.stop="removeCurrentSeries(row, series)"
+                        >
+                          X
+                        </button>
+                      </div>
                     </div>
                     <p v-else class="text-gray-300">No current ABS series entries</p>
-                    <p class="text-xs text-gray-400 mt-2">Click a chip, then use Replace on a suggestion card.</p>
                   </td>
                   <td class="px-3 py-3">
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
                       <div
-                        v-for="suggestion in row.suggestions"
+                        v-for="suggestion in getPrimarySuggestions(row)"
                         :key="suggestion.id"
                         class="rounded border p-3"
-                        :class="suggestion.state === 'pending' ? 'bg-black/20 border-white/15' : 'bg-slate-900/40 border-slate-500/40'"
+                        :class="getSuggestionCardClass(suggestion)"
                       >
                         <div class="flex items-start gap-2">
                           <div class="grow">
-                            <div class="text-lg font-semibold">
+                            <div class="text-xl font-semibold text-white">
                               <template v-if="suggestion.kind === 'no_series'">No series suggested</template>
                               <template v-else>
                                 {{ suggestion.suggestedName }}
-                                <span v-if="suggestion.suggestedSequence" class="text-gray-300">#{{ suggestion.suggestedSequence }}</span>
+                                <span v-if="suggestion.suggestedSequence" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-white/10 text-sm text-gray-100 border border-white/15">#{{ suggestion.suggestedSequence }}</span>
                               </template>
                             </div>
                             <p class="text-sm text-gray-300 mt-1">
@@ -97,7 +118,8 @@
                           <div
                             v-for="contribution in suggestion.contributions"
                             :key="suggestion.id + ':' + contribution.source"
-                            class="px-2 py-1 rounded bg-primary/20 border border-primary/30 text-sm"
+                            class="px-2.5 py-1 rounded-full border text-sm"
+                            :class="getContributionPillClass(contribution)"
                           >
                             <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
                             <span v-if="contribution.noSeries" class="text-gray-300"> no series</span>
@@ -108,25 +130,34 @@
                           </div>
                         </div>
 
-                        <div class="mt-3 flex flex-wrap gap-2">
+                        <div v-if="showSubordinateConflicts(row, suggestion)" class="mt-3 rounded-md border border-red-400/30 bg-red-950/30 p-3">
+                          <div class="text-sm font-medium text-red-100 mb-2">Conflicting evidence</div>
+                          <div class="flex flex-wrap gap-2">
+                            <div
+                              v-for="contribution in getConflictContributions(row)"
+                              :key="suggestion.id + ':conflict:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
+                              class="px-2.5 py-1 rounded-full border border-red-300/35 bg-red-500/10 text-sm text-red-50"
+                            >
+                              <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
+                              <span v-if="contribution.noSeries"> no series</span>
+                              <span v-else>
+                                {{ contribution.seriesName }}
+                                <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div v-if="suggestion.state === 'pending'" class="mt-3 flex flex-wrap gap-2">
                           <ui-btn
                             v-if="suggestion.kind === 'series'"
                             small
-                            color="bg-success/80"
-                            :loading="actionKey === suggestion.id + ':add'"
-                            @click="applySuggestion(row, suggestion, 'add')"
+                            class="w-28 justify-center text-center"
+                            :color="selectedReplaceTarget[row.libraryItemId] ? 'bg-warning/70' : 'bg-success/80'"
+                            :loading="actionKey === suggestion.id + ':apply'"
+                            @click="applySuggestion(row, suggestion)"
                           >
-                            Add
-                          </ui-btn>
-                          <ui-btn
-                            v-if="suggestion.kind === 'series'"
-                            small
-                            :disabled="!selectedReplaceTarget[row.libraryItemId]"
-                            color="bg-warning/70"
-                            :loading="actionKey === suggestion.id + ':replace'"
-                            @click="applySuggestion(row, suggestion, 'replace')"
-                          >
-                            Replace Selected Current
+                            {{ selectedReplaceTarget[row.libraryItemId] ? 'Replace' : 'Add' }}
                           </ui-btn>
                           <ui-btn
                             small
@@ -151,6 +182,14 @@
 </template>
 
 <script>
+const SOURCE_LEGEND = {
+  fictiondb: { code: 'FDB', name: 'FictionDB', url: 'https://www.fictiondb.com/' },
+  goodreads: { code: 'GR', name: 'Goodreads', url: 'https://www.goodreads.com/' },
+  wikidata: { code: 'WD', name: 'Wikidata', url: 'https://www.wikidata.org/' },
+  librarything: { code: 'LT', name: 'LibraryThing', url: 'https://www.librarything.com/' },
+  fantasticfiction: { code: 'FF', name: 'Fantastic Fiction', url: 'https://www.fantasticfiction.com/' }
+}
+
 export default {
   async asyncData({ redirect, store, params }) {
     if (!store.getters['user/getIsAdminOrUp']) {
@@ -180,6 +219,25 @@ export default {
     },
     pendingSuggestionCount() {
       return this.rows.reduce((count, row) => count + row.suggestions.filter((suggestion) => suggestion.state === 'pending').length, 0)
+    },
+    sourceLegendEntries() {
+      const sources = new Map()
+      this.rows.forEach((row) => {
+        ;(row.suggestions || []).forEach((suggestion) => {
+          ;(suggestion.contributions || []).forEach((contribution) => {
+            const sourceKey = String(contribution.source || '').toLowerCase()
+            if (!sourceKey || sources.has(sourceKey)) return
+            const knownEntry = SOURCE_LEGEND[sourceKey]
+            const fallbackCode = (contribution.label || sourceKey).toUpperCase()
+            sources.set(sourceKey, knownEntry || {
+              code: fallbackCode,
+              name: fallbackCode,
+              url: '#'
+            })
+          })
+        })
+      })
+      return [...sources.values()]
     }
   },
   mounted() {
@@ -204,6 +262,28 @@ export default {
         return
       }
       this.$set(this.selectedReplaceTarget, libraryItemId, seriesId)
+    },
+    getPrimarySuggestions(row) {
+      const suggestions = row?.suggestions || []
+      const positiveSuggestions = suggestions.filter((suggestion) => suggestion.kind === 'series')
+      return positiveSuggestions.length ? positiveSuggestions : suggestions
+    },
+    getConflictContributions(row) {
+      return (row?.suggestions || [])
+        .filter((suggestion) => suggestion.kind !== 'series')
+        .flatMap((suggestion) => suggestion.contributions || [])
+    },
+    showSubordinateConflicts(row, suggestion) {
+      return suggestion.kind === 'series' && this.getPrimarySuggestions(row).length !== (row?.suggestions || []).length && this.getConflictContributions(row).length > 0
+    },
+    getSuggestionCardClass(suggestion) {
+      if (suggestion.kind === 'no_series') return 'bg-red-950/30 border-red-400/35'
+      if (suggestion.state === 'pending') return 'bg-black/20 border-white/15'
+      return 'bg-slate-900/40 border-slate-500/40'
+    },
+    getContributionPillClass(contribution) {
+      if (contribution.noSeries) return 'bg-red-500/10 border-red-300/35 text-red-50'
+      return 'bg-sky-400/15 border-sky-300/35 text-sky-50'
     },
     async loadQueue() {
       this.loading = true
@@ -236,14 +316,15 @@ export default {
         }
       }
     },
-    async applySuggestion(row, suggestion, mode) {
+    async applySuggestion(row, suggestion) {
+      const mode = this.selectedReplaceTarget[row.libraryItemId] ? 'replace' : 'add'
       const replaceSeriesId = this.selectedReplaceTarget[row.libraryItemId]
       if (mode === 'replace' && !replaceSeriesId) {
         this.$toast.error('Select a current series entry to replace first')
         return
       }
 
-      this.actionKey = `${suggestion.id}:${mode}`
+      this.actionKey = `${suggestion.id}:apply`
       try {
         const payload = mode === 'replace' ? { replaceSeriesId } : {}
         const response = await this.$axios.$post(`/api/series-review/suggestions/${suggestion.id}/${mode}`, payload)
@@ -253,6 +334,21 @@ export default {
         this.$toast.success(mode === 'replace' ? 'Series replaced' : 'Series added')
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to apply suggestion')
+      } finally {
+        this.actionKey = ''
+      }
+    },
+    async removeCurrentSeries(row, series) {
+      this.actionKey = `${row.libraryItemId}:remove:${series.id}`
+      try {
+        const response = await this.$axios.$post(`/api/series-review/library-items/${row.libraryItemId}/remove-series`, {
+          seriesId: series.id
+        })
+        this.updateRowCurrentSeries(row, response.currentSeries)
+        this.$delete(this.selectedReplaceTarget, row.libraryItemId)
+        this.$toast.success('Series removed')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to remove series')
       } finally {
         this.actionKey = ''
       }

@@ -75,6 +75,24 @@ class SeriesReviewController {
       suggestion: SeriesReviewManager.buildSuggestionPayload(suggestion)
     })
   }
+
+  async removeSeries(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    const seriesId = typeof req.body?.seriesId === 'string' ? req.body.seriesId : ''
+    if (!seriesId) return res.status(400).send('Missing seriesId')
+
+    let result
+    try {
+      result = await SeriesReviewManager.removeSeriesEntry(req.params.libraryItemId, seriesId)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+
+    res.json({
+      currentSeries: SeriesReviewManager.getCurrentSeriesPayload(result.libraryItem)
+    })
+  }
 }
 
 module.exports = new SeriesReviewController()

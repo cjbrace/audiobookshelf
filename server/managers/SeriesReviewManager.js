@@ -4,6 +4,10 @@ const Database = require('../Database')
 const Logger = require('../Logger')
 
 class SeriesReviewManager {
+  get SERIES_EDIT_TAG() {
+    return '-series-edit'
+  }
+
   normalizeSeriesName(value) {
     return String(value || '')
       .trim()
@@ -164,20 +168,45 @@ class SeriesReviewManager {
     }
   }
 
+  getQueuePath(libraryItem) {
+    const relPath = String(libraryItem?.relPath || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+    if (!relPath) return ''
+    if (!libraryItem?.isFile && !relPath.endsWith('/')) return `${relPath}/`
+    return relPath
+  }
+
+  sortSuggestionsForDisplay(suggestions) {
+    return [...(suggestions || [])].sort((a, b) => {
+      const aPriority = a.kind === 'series' ? 0 : 1
+      const bPriority = b.kind === 'series' ? 0 : 1
+      if (aPriority !== bPriority) return aPriority - bPriority
+      if ((b.sourceCount || 0) !== (a.sourceCount || 0)) return (b.sourceCount || 0) - (a.sourceCount || 0)
+      return String(a.suggestedName || '').localeCompare(String(b.suggestedName || ''))
+    })
+  }
+
+  getCurrentSeriesPayload(libraryItem) {
+    return Array.isArray(libraryItem?.media?.series)
+      ? libraryItem.media.series.map((series) => ({
+          id: series.id,
+          name: series.name,
+          sequence: series.bookSeries?.sequence || null
+        }))
+      : []
+  }
+
   buildQueueRow(libraryItem, suggestions) {
     const media = libraryItem.media
+    const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion))
     return {
       libraryItemId: libraryItem.id,
       title: media?.title || libraryItem.title || '',
+      relPath: this.getQueuePath(libraryItem),
       authors: Array.isArray(media?.authors) ? media.authors.map((author) => ({ id: author.id, name: author.name })) : [],
-      currentSeries: Array.isArray(media?.series)
-        ? media.series.map((series) => ({
-            id: series.id,
-            name: series.name,
-            sequence: series.bookSeries?.sequence || null
-          }))
-        : [],
-      suggestions: suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion))
+      currentSeries: this.getCurrentSeriesPayload(libraryItem),
+      suggestions: this.sortSuggestionsForDisplay(suggestionPayloads)
     }
   }
 
@@ -260,6 +289,33 @@ class SeriesReviewManager {
     })
   }
 
+  async ensureSeriesEditTag(libraryItem) {
+    const currentTags = Array.isArray(libraryItem?.media?.tags) ? libraryItem.media.tags : []
+    if (currentTags.includes(this.SERIES_EDIT_TAG)) return false
+    const nextTags = [...currentTags, this.SERIES_EDIT_TAG]
+    const hasTagUpdates = await libraryItem.media.updateFromRequest({ tags: nextTags })
+    if (hasTagUpdates) Database.addTagsToFilterData(libraryItem.libraryId, [this.SERIES_EDIT_TAG])
+    return hasTagUpdates
+  }
+
+  async persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag = false } = {}) {
+    if (seriesUpdateData?.seriesRemoved?.length) {
+      await this.checkRemoveEmptySeries(seriesUpdateData.seriesRemoved.map((series) => series.id))
+    }
+    if (seriesUpdateData?.seriesAdded?.length) {
+      seriesUpdateData.seriesAdded.forEach((series) => {
+        Database.addSeriesToFilterData(libraryItem.libraryId, series.name, series.id)
+      })
+    }
+    if (addSeriesEditTag) {
+      await this.ensureSeriesEditTag(libraryItem)
+    }
+
+    libraryItem.changed('updatedAt', true)
+    await libraryItem.save()
+    await libraryItem.saveMetadataFile()
+  }
+
   async applySuggestion(suggestionId, userId, mode, replaceSeriesId = null) {
     const suggestion = await this.getSuggestionById(suggestionId)
     if (!suggestion || !suggestion.isActive) return null
@@ -291,18 +347,7 @@ class SeriesReviewManager {
     else nextSeries[existingSuggestedIndex] = suggestedSeriesObject
 
     const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(nextSeries, libraryItem.libraryId)
-    if (seriesUpdateData?.seriesRemoved?.length) {
-      await this.checkRemoveEmptySeries(seriesUpdateData.seriesRemoved.map((series) => series.id))
-    }
-    if (seriesUpdateData?.seriesAdded?.length) {
-      seriesUpdateData.seriesAdded.forEach((series) => {
-        Database.addSeriesToFilterData(libraryItem.libraryId, series.name, series.id)
-      })
-    }
-
-    libraryItem.changed('updatedAt', true)
-    await libraryItem.save()
-    await libraryItem.saveMetadataFile()
+    await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
 
     suggestion.state = mode === 'replace' ? 'manual_override' : 'applied'
     suggestion.decisionAction = mode
@@ -313,6 +358,30 @@ class SeriesReviewManager {
 
     return {
       suggestion,
+      libraryItem: await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    }
+  }
+
+  async removeSeriesEntry(libraryItemId, seriesId) {
+    if (!libraryItemId) return null
+    const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+    if (!libraryItem || !libraryItem.isBook) return null
+
+    const currentSeries = Array.isArray(libraryItem.media.series) ? libraryItem.media.series : []
+    const seriesToRemove = currentSeries.find((series) => series.id === seriesId)
+    if (!seriesToRemove) throw new Error('Selected series entry was not found on the book')
+
+    const nextSeries = currentSeries
+      .filter((series) => series.id !== seriesId)
+      .map((series) => ({
+        name: series.name,
+        sequence: series.bookSeries?.sequence || null
+      }))
+
+    const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(nextSeries, libraryItem.libraryId)
+    await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
+
+    return {
       libraryItem: await Database.libraryItemModel.getExpandedById(libraryItem.id)
     }
   }

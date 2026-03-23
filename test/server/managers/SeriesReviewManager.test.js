@@ -32,11 +32,11 @@ describe('SeriesReviewManager', () => {
     await Database.sequelize.sync({ force: true })
   })
 
-  async function createBookFixture({ title, currentSeries = [] }) {
-    const book = await Database.bookModel.create({ title, audioFiles: [], tags: [], narrators: [], genres: [], chapters: [] })
+  async function createBookFixture({ title, currentSeries = [], relPath = null, tags = [] }) {
+    const book = await Database.bookModel.create({ title, audioFiles: [], tags, narrators: [], genres: [], chapters: [] })
     const libraryItem = await Database.libraryItemModel.create({
       path: `/series-review/${title}`,
-      relPath: title,
+      relPath: relPath || title,
       libraryFiles: [],
       mediaId: book.id,
       mediaType: 'book',
@@ -69,7 +69,10 @@ describe('SeriesReviewManager', () => {
   }
 
   it('groups multi-source suggestions onto one actionable row', async () => {
-    const { libraryItem } = await createBookFixture({ title: 'Summer Knight' })
+    const { libraryItem } = await createBookFixture({
+      title: 'Summer Knight',
+      relPath: 'Butcher, Jim/Summer Knight'
+    })
 
     const result = await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
       {
@@ -87,6 +90,7 @@ describe('SeriesReviewManager', () => {
     const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
     expect(rows).to.have.length(1)
     expect(rows[0].suggestions).to.have.length(2)
+    expect(rows[0].relPath).to.equal('Butcher, Jim/Summer Knight/')
 
     const actionableSuggestion = rows[0].suggestions.find((suggestion) => suggestion.kind === 'series')
     expect(actionableSuggestion.suggestedName).to.equal('The Dresden Files')
@@ -96,6 +100,7 @@ describe('SeriesReviewManager', () => {
     const noSeriesSuggestion = rows[0].suggestions.find((suggestion) => suggestion.kind === 'no_series')
     expect(noSeriesSuggestion.contributions).to.have.length(1)
     expect(noSeriesSuggestion.contributions[0].source).to.equal('goodreads')
+    expect(rows[0].suggestions[0].kind).to.equal('series')
   })
 
   it('adds a suggestion alongside existing series and persists the applied decision across reimport', async () => {
@@ -119,6 +124,7 @@ describe('SeriesReviewManager', () => {
 
     const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
     expect(updatedLibraryItem.media.series.map((series) => series.name).sort()).to.deep.equal(['A Laundry File', 'Laundry Files'])
+    expect(updatedLibraryItem.media.tags).to.include('-series-edit')
 
     await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
       {
@@ -158,6 +164,7 @@ describe('SeriesReviewManager', () => {
 
     const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
     expect(updatedLibraryItem.media.series.map((series) => series.name).sort()).to.deep.equal(['Honor Harrington Universe', 'Honorverse'])
+    expect(updatedLibraryItem.media.tags).to.include('-series-edit')
 
     const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
     expect(decidedRows[0].suggestions[0].state).to.equal('manual_override')
@@ -165,7 +172,7 @@ describe('SeriesReviewManager', () => {
   })
 
   it('persists dismiss decisions so reruns do not reopen the suggestion', async () => {
-    const { libraryItem } = await createBookFixture({ title: 'Ascendant' })
+    const { libraryItem } = await createBookFixture({ title: 'Ascendant', tags: ['existing-tag'] })
 
     await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
       {
@@ -190,5 +197,28 @@ describe('SeriesReviewManager', () => {
 
     const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
     expect(pendingRows).to.have.length(0)
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.tags).to.deep.equal(['existing-tag'])
+  })
+
+  it('removes a selected current series entry and adds the temp series-edit tag', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Shards of Honor',
+      currentSeries: [
+        { name: 'Vorkosigan Saga', sequence: '1' },
+        { name: 'Cordelia', sequence: '1' }
+      ]
+    })
+    await stubExpandedLibraryItems()
+
+    const initialLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    const seriesToRemove = initialLibraryItem.media.series.find((series) => series.name === 'Cordelia')
+
+    await SeriesReviewManager.removeSeriesEntry(libraryItem.id, seriesToRemove.id)
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.series.map((series) => series.name)).to.deep.equal(['Vorkosigan Saga'])
+    expect(updatedLibraryItem.media.tags).to.include('-series-edit')
   })
 })
