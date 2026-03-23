@@ -261,6 +261,396 @@ class SeriesReviewManager {
     }
   }
 
+  cleanCatalogSource(input) {
+    const source = String(input?.source || '')
+      .trim()
+      .toLowerCase()
+    if (!source) return null
+
+    const confidenceValue = Number(input?.confidence)
+    return {
+      source,
+      label: String(input?.label || source).trim() || source,
+      confidence: Number.isFinite(confidenceValue) ? Number(confidenceValue.toFixed(3)) : null,
+      evidenceUrl: typeof input?.evidenceUrl === 'string' ? input.evidenceUrl.trim() || null : null,
+      notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null
+    }
+  }
+
+  normalizeCatalogSlotToken(value) {
+    const cleaned = String(value || '')
+      .trim()
+      .replace(/\s+/g, '')
+    return cleaned || null
+  }
+
+  expandCatalogSequenceCoverage(sequenceLabel) {
+    const normalizedLabel = String(sequenceLabel || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+    if (!normalizedLabel) return []
+
+    const slots = new Set()
+    normalizedLabel.split(',').forEach((rawPart) => {
+      const part = this.normalizeCatalogSlotToken(rawPart)
+      if (!part) return
+
+      const rangeMatch = part.match(/^(\d+)-(\d+)$/)
+      if (rangeMatch) {
+        const start = Number(rangeMatch[1])
+        const end = Number(rangeMatch[2])
+        if (Number.isInteger(start) && Number.isInteger(end) && end >= start) {
+          for (let value = start; value <= end; value++) {
+            slots.add(String(value))
+          }
+          return
+        }
+      }
+
+      slots.add(part)
+    })
+
+    return [...slots]
+  }
+
+  isIntegerCatalogSlot(slot) {
+    return /^\d+$/.test(String(slot || ''))
+  }
+
+  isDecimalCatalogSlot(slot) {
+    return /^\d+\.\d+$/.test(String(slot || ''))
+  }
+
+  buildCatalogEntryKey(entry) {
+    const titleKey = this.normalizeKeyPart(entry?.title || 'untitled')
+    const sequenceKey = this.normalizeCatalogSlotToken(entry?.sequenceLabel || '') || 'unsequenced'
+    return `${titleKey || 'untitled'}::${sequenceKey}`
+  }
+
+  normalizeCatalogEntries(entries) {
+    return (Array.isArray(entries) ? entries : [])
+      .map((entry) => {
+        const title = this.normalizeSeriesName(entry?.title || '')
+        const sequenceLabel = String(entry?.sequenceLabel || entry?.sequence || '')
+          .trim()
+          .replace(/\s+/g, ' ')
+        const explicitCoveredSlots = Array.isArray(entry?.coveredSlots)
+          ? entry.coveredSlots
+              .map((slot) => this.normalizeCatalogSlotToken(slot))
+              .filter(Boolean)
+          : []
+        const coveredSlots = explicitCoveredSlots.length ? explicitCoveredSlots : this.expandCatalogSequenceCoverage(sequenceLabel)
+        const sources = (Array.isArray(entry?.sources) ? entry.sources : [])
+          .map((source) => this.cleanCatalogSource(source))
+          .filter(Boolean)
+
+        if (!title) return null
+
+        return {
+          entryKey: this.buildCatalogEntryKey({ title, sequenceLabel }),
+          title,
+          sequenceLabel: sequenceLabel || null,
+          coveredSlots,
+          sources
+        }
+      })
+      .filter(Boolean)
+  }
+
+  buildSeriesReviewCatalogPayload(catalog) {
+    return {
+      id: catalog.id,
+      seriesName: catalog.seriesName,
+      trustStatus: catalog.trustStatus,
+      entryCount: Array.isArray(catalog.entries) ? catalog.entries.length : 0
+    }
+  }
+
+  async importCatalogForLibrary(libraryId, rows) {
+    const results = []
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const seriesName = this.normalizeSeriesName(row?.seriesName || '')
+      if (!seriesName) continue
+
+      const seriesNameNormalized = this.normalizeKeyPart(seriesName)
+      const trustStatus = row?.trustStatus === 'untrusted' ? 'untrusted' : 'trusted'
+      const entries = this.normalizeCatalogEntries(row?.entries)
+      const selectionBySlot =
+        row?.selectionBySlot && typeof row.selectionBySlot === 'object' && !Array.isArray(row.selectionBySlot)
+          ? row.selectionBySlot
+          : {}
+
+      let catalog = await Database.seriesReviewCatalogModel.findOne({
+        where: {
+          libraryId,
+          seriesNameNormalized
+        }
+      })
+
+      if (!catalog) {
+        catalog = await Database.seriesReviewCatalogModel.create({
+          libraryId,
+          seriesName,
+          seriesNameNormalized,
+          trustStatus,
+          entries,
+          selectionBySlot
+        })
+      } else {
+        catalog.seriesName = seriesName
+        catalog.trustStatus = trustStatus
+        catalog.entries = entries
+        catalog.selectionBySlot = selectionBySlot
+        await catalog.save()
+      }
+
+      results.push(this.buildSeriesReviewCatalogPayload(catalog))
+    }
+
+    return {
+      importedCount: results.length,
+      catalogs: results
+    }
+  }
+
+  async getCatalogsForLibrary(libraryId, includeUntrusted = false) {
+    const where = { libraryId }
+    if (!includeUntrusted) where.trustStatus = 'trusted'
+
+    const catalogs = await Database.seriesReviewCatalogModel.findAll({
+      where,
+      order: [['seriesName', 'ASC']]
+    })
+
+    const detailSummaries = []
+    for (const catalog of catalogs) {
+      const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id)
+      detailSummaries.push({
+        ...this.buildSeriesReviewCatalogPayload(catalog),
+        missingCount: detail.slots.filter((slot) => slot.status === 'missing').length,
+        disputedCount: detail.slots.filter((slot) => slot.status === 'disputed').length,
+        localBookCount: detail.localBooks.length,
+        unsequencedCount: detail.unsequencedBooks.length
+      })
+    }
+
+    return detailSummaries
+  }
+
+  async getMatchingSeriesRowsForCatalog(libraryId, seriesNameNormalized) {
+    const seriesRows = await Database.seriesModel.findAll({
+      where: {
+        libraryId
+      },
+      order: [['name', 'ASC']]
+    })
+    return seriesRows.filter((series) => this.normalizeKeyPart(series.name) === seriesNameNormalized)
+  }
+
+  async getLocalCatalogBooks(libraryId, seriesNameNormalized) {
+    const matchingSeries = await this.getMatchingSeriesRowsForCatalog(libraryId, seriesNameNormalized)
+    const localBooks = []
+    const seen = new Set()
+
+    for (const series of matchingSeries) {
+      const expandedSeries = await Database.seriesModel.getExpandedById(series.id)
+      for (const book of expandedSeries?.books || []) {
+        const libraryItem = book.libraryItem
+        if (!libraryItem?.id || seen.has(libraryItem.id)) continue
+        seen.add(libraryItem.id)
+
+        const sequence = this.normalizeSequence(book.bookSeries?.sequence || null)
+        localBooks.push({
+          libraryItemId: libraryItem.id,
+          title: book.title || libraryItem.title || '',
+          relPath: this.getQueuePath(libraryItem),
+          authors: Array.isArray(book.authors) ? book.authors.map((author) => ({ id: author.id, name: author.name })) : [],
+          sequence,
+          seriesName: series.name
+        })
+      }
+    }
+
+    return localBooks.sort((a, b) => {
+      const aSeq = a.sequence || 'zzzz'
+      const bSeq = b.sequence || 'zzzz'
+      if (aSeq !== bSeq) return aSeq.localeCompare(bSeq, undefined, { numeric: true })
+      return a.title.localeCompare(b.title)
+    })
+  }
+
+  ensureCatalogSlot(map, slot) {
+    const normalizedSlot = this.normalizeCatalogSlotToken(slot)
+    if (!normalizedSlot) return null
+    if (!map.has(normalizedSlot)) {
+      map.set(normalizedSlot, {
+        slot: normalizedSlot,
+        isDecimal: this.isDecimalCatalogSlot(normalizedSlot),
+        locallyCovered: false,
+        localBooks: [],
+        sourceCovered: false,
+        choices: [],
+        selectedEntryKey: null,
+        expectedTitle: null,
+        sourceSupport: [],
+        status: 'covered'
+      })
+    }
+    return map.get(normalizedSlot)
+  }
+
+  buildCatalogSourceSupport(sources) {
+    return (sources || []).map((source) => ({
+      source: source.source,
+      label: source.label,
+      confidence: source.confidence,
+      evidenceUrl: source.evidenceUrl,
+      notes: source.notes
+    }))
+  }
+
+  finalizeCatalogSlots(slotMap, selectionBySlot, localBooks) {
+    const integerSlots = []
+    for (const slot of slotMap.keys()) {
+      if (this.isIntegerCatalogSlot(slot)) integerSlots.push(Number(slot))
+    }
+
+    if (integerSlots.length) {
+      const minSlot = Math.min(...integerSlots)
+      const maxSlot = Math.max(...integerSlots)
+      for (let value = minSlot; value <= maxSlot; value++) {
+        this.ensureCatalogSlot(slotMap, String(value))
+      }
+    }
+
+    const slots = [...slotMap.values()].sort((a, b) => {
+      const aNumber = Number(a.slot)
+      const bNumber = Number(b.slot)
+      if (!Number.isNaN(aNumber) && !Number.isNaN(bNumber) && aNumber !== bNumber) return aNumber - bNumber
+      return a.slot.localeCompare(b.slot, undefined, { numeric: true })
+    })
+
+    slots.forEach((slot) => {
+      const selectedEntryKey = selectionBySlot?.[slot.slot] || null
+      const selectedChoice = slot.choices.find((choice) => choice.entryKey === selectedEntryKey) || null
+      slot.selectedEntryKey = selectedChoice?.entryKey || null
+
+      if (selectedChoice) {
+        slot.expectedTitle = selectedChoice.title
+        slot.sourceSupport = selectedChoice.sources
+      } else if (slot.choices.length === 1) {
+        slot.expectedTitle = slot.choices[0].title
+        slot.sourceSupport = slot.choices[0].sources
+      }
+
+      if (slot.choices.length > 1 && !selectedChoice) {
+        slot.status = 'disputed'
+      } else if (slot.isDecimal) {
+        slot.status = slot.locallyCovered ? 'covered' : 'decimal'
+      } else if (!slot.locallyCovered) {
+        slot.status = 'missing'
+      } else {
+        slot.status = 'covered'
+      }
+    })
+
+    const unsequencedBooks = localBooks.filter((book) => !book.sequence)
+    return {
+      slots,
+      unsequencedBooks
+    }
+  }
+
+  async getCatalogDetailForLibrary(libraryId, catalogId) {
+    const catalog = await Database.seriesReviewCatalogModel.findOne({
+      where: {
+        id: catalogId,
+        libraryId
+      }
+    })
+    if (!catalog) return null
+
+    const localBooks = await this.getLocalCatalogBooks(libraryId, catalog.seriesNameNormalized)
+    const slotMap = new Map()
+
+    localBooks.forEach((book) => {
+      const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+      if (!coveredSlots.length) return
+      coveredSlots.forEach((coveredSlot) => {
+        const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
+        if (!slot) return
+        slot.locallyCovered = true
+        slot.localBooks.push({
+          libraryItemId: book.libraryItemId,
+          title: book.title,
+          relPath: book.relPath,
+          sequence: book.sequence
+        })
+      })
+    })
+
+    const entries = this.normalizeCatalogEntries(catalog.entries)
+    entries.forEach((entry) => {
+      const coveredSlots = entry.coveredSlots.length ? entry.coveredSlots : [entry.sequenceLabel].filter(Boolean)
+      coveredSlots.forEach((coveredSlot) => {
+        const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
+        if (!slot) return
+        slot.sourceCovered = true
+        slot.choices.push({
+          entryKey: entry.entryKey,
+          title: entry.title,
+          sequenceLabel: entry.sequenceLabel,
+          sources: this.buildCatalogSourceSupport(entry.sources)
+        })
+      })
+    })
+
+    const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks)
+
+    return {
+      catalog: {
+        ...this.buildSeriesReviewCatalogPayload(catalog),
+        selectionBySlot: catalog.selectionBySlot || {}
+      },
+      localBooks,
+      unsequencedBooks: finalized.unsequencedBooks,
+      slots: finalized.slots
+    }
+  }
+
+  async chooseCatalogSlotEntry(libraryId, catalogId, slot, entryKey) {
+    const catalog = await Database.seriesReviewCatalogModel.findOne({
+      where: {
+        id: catalogId,
+        libraryId
+      }
+    })
+    if (!catalog) return null
+
+    const normalizedSlot = this.normalizeCatalogSlotToken(slot)
+    if (!normalizedSlot) {
+      throw new Error('Missing slot')
+    }
+
+    const detail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
+    const slotDetail = detail?.slots?.find((candidate) => candidate.slot === normalizedSlot)
+    if (!slotDetail) {
+      throw new Error('Slot was not found')
+    }
+    if (!slotDetail.choices.some((choice) => choice.entryKey === entryKey)) {
+      throw new Error('Selected interpretation was not found for that slot')
+    }
+
+    catalog.selectionBySlot = {
+      ...(catalog.selectionBySlot || {}),
+      [normalizedSlot]: entryKey
+    }
+    await catalog.save()
+
+    return this.getCatalogDetailForLibrary(libraryId, catalogId)
+  }
+
   async getSeriesManagementCandidatesForLibrary(libraryId) {
     const seriesRows = await Database.seriesModel.findAll({
       where: {

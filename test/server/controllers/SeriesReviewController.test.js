@@ -125,6 +125,121 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ candidates: [{ groupKey: 'g1' }], recentActions: [{ id: 'a1' }] })).to.be.true
   })
 
+  it('returns catalog summaries for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'getCatalogsForLibrary').resolves([{ id: 'catalog-1' }])
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      query: {
+        includeUntrusted: '1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.getCatalogs(req, res)
+
+    expect(SeriesReviewManager.getCatalogsForLibrary.calledOnceWithExactly('library-1', true)).to.be.true
+    expect(res.json.calledOnceWithExactly({ catalogs: [{ id: 'catalog-1' }] })).to.be.true
+  })
+
+  it('returns catalog detail for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary').resolves({ catalog: { id: 'catalog-1' }, slots: [] })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      params: {
+        catalogId: 'catalog-1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.getCatalogDetail(req, res)
+
+    expect(res.json.calledOnceWithExactly({ catalog: { id: 'catalog-1' }, slots: [] })).to.be.true
+  })
+
+  it('imports catalog rows for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'importCatalogForLibrary').resolves({ importedCount: 1 })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      body: {
+        rows: [{ seriesName: 'The Expanse', entries: [] }]
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.importCatalog(req, res)
+
+    expect(SeriesReviewManager.importCatalogForLibrary.calledOnceWithExactly('library-1', [{ seriesName: 'The Expanse', entries: [] }])).to.be.true
+    expect(res.json.calledOnceWithExactly({ importedCount: 1 })).to.be.true
+  })
+
+  it('returns 400 instead of throwing when choosing a slot interpretation fails', async () => {
+    sinon.stub(SeriesReviewManager, 'chooseCatalogSlotEntry').rejects(new Error('Selected interpretation was not found for that slot'))
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      params: {
+        catalogId: 'catalog-1'
+      },
+      body: {
+        slot: '3',
+        entryKey: 'entry-1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.chooseCatalogSlot(req, res)
+
+    expect(res.status.calledOnceWithExactly(400)).to.be.true
+    expect(res.send.calledOnceWithExactly('Selected interpretation was not found for that slot')).to.be.true
+  })
+
   it('returns 400 instead of throwing when management preview input is invalid', async () => {
     sinon.stub(SeriesReviewManager, 'previewSeriesManagementAction').rejects(new Error('Missing targetLabel'))
 

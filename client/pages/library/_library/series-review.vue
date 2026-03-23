@@ -10,7 +10,12 @@
             <input v-model="includeDecided" type="checkbox" class="rounded border-white/20 bg-black/30" @change="loadQueue" />
             <span>Show decided rows</span>
           </label>
-          <ui-btn color="bg-bg border border-white/20" small :loading="activeTab === 'queue' ? loading : managementLoading" @click="activeTab === 'queue' ? loadQueue() : loadManagementData()">
+          <ui-btn
+            color="bg-bg border border-white/20"
+            small
+            :loading="activeTab === 'queue' ? loading : activeTab === 'management' ? managementLoading : catalogLoading"
+            @click="activeTab === 'queue' ? loadQueue() : activeTab === 'management' ? loadManagementData() : loadCatalogs()"
+          >
             Refresh
           </ui-btn>
         </div>
@@ -31,6 +36,14 @@
             @click="switchTab('management')"
           >
             Series Management
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-full border text-sm transition"
+            :class="activeTab === 'catalog' ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
+            @click="switchTab('catalog')"
+          >
+            Series Detail
           </button>
         </div>
 
@@ -54,9 +67,15 @@
             <span>Pending suggestions: {{ pendingSuggestionCount }}</span>
             <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
           </div>
-          <div v-else class="flex flex-wrap gap-x-4 gap-y-1">
+          <div v-else-if="activeTab === 'management'" class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Candidate groups: {{ managementCandidates.length }}</span>
             <span>Recent actions: {{ managementRecentActions.length }}</span>
+            <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
+          </div>
+          <div v-else class="flex flex-wrap gap-x-4 gap-y-1">
+            <span>Series: {{ catalogSeries.length }}</span>
+            <span v-if="selectedCatalogDetail">Slots: {{ selectedCatalogDetail.slots.length }}</span>
+            <span v-if="selectedCatalogDetail">Missing: {{ selectedCatalogDetail.slots.filter((slot) => slot.status === 'missing').length }}</span>
             <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
           </div>
         </div>
@@ -238,7 +257,7 @@
           </div>
           </template>
 
-          <template v-else>
+          <template v-else-if="activeTab === 'management'">
             <div v-if="!managementCandidates.length && !managementLoading" class="text-base text-gray-200">
               No obvious duplicate series labels are queued for management yet.
             </div>
@@ -407,6 +426,166 @@
               </div>
             </div>
           </template>
+
+          <template v-else>
+            <div class="space-y-4">
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                  <input v-model="includeUntrustedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="loadCatalogs" />
+                  <span>Show less-trusted series</span>
+                </label>
+              </div>
+
+              <div v-if="!catalogSeries.length && !catalogLoading" class="text-base text-gray-200">
+                No series detail catalogs are stored yet.
+              </div>
+
+              <div v-else class="grid grid-cols-1 xl:grid-cols-[24rem_minmax(0,1fr)] gap-4">
+                <div class="rounded border border-white/15 bg-black/15 p-3 space-y-2">
+                  <button
+                    v-for="catalog in catalogSeries"
+                    :key="catalog.id"
+                    type="button"
+                    class="w-full rounded border px-3 py-2 text-left transition"
+                    :class="selectedCatalogId === catalog.id ? 'bg-sky-400/15 border-sky-300/35 text-sky-50' : 'bg-black/20 border-white/10 text-gray-200'"
+                    @click="selectCatalog(catalog.id)"
+                  >
+                    <div class="flex items-start gap-2">
+                      <div class="grow">
+                        <p class="font-medium">{{ catalog.seriesName }}</p>
+                        <p class="text-sm text-gray-400">
+                          {{ catalog.localBookCount }} local, {{ catalog.missingCount }} missing, {{ catalog.disputedCount }} disputed
+                        </p>
+                      </div>
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                        :class="catalog.trustStatus === 'trusted' ? 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100' : 'border-amber-300/35 bg-amber-500/10 text-amber-100'"
+                      >
+                        {{ catalog.trustStatus === 'trusted' ? 'Trusted' : 'Less trusted' }}
+                      </span>
+                    </div>
+                  </button>
+                </div>
+
+                <div v-if="selectedCatalogDetail" class="rounded border border-white/15 bg-black/15 p-4 space-y-4">
+                  <div class="flex flex-wrap items-center gap-3">
+                    <h2 class="text-xl font-semibold">{{ selectedCatalogDetail.catalog.seriesName }}</h2>
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                      :class="selectedCatalogDetail.catalog.trustStatus === 'trusted' ? 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100' : 'border-amber-300/35 bg-amber-500/10 text-amber-100'"
+                    >
+                      {{ selectedCatalogDetail.catalog.trustStatus === 'trusted' ? 'Trusted' : 'Less trusted' }}
+                    </span>
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-200">
+                    <div class="rounded border border-white/10 bg-black/20 p-3">
+                      <p class="text-gray-400">Local books</p>
+                      <p class="text-lg font-semibold">{{ selectedCatalogDetail.localBooks.length }}</p>
+                    </div>
+                    <div class="rounded border border-white/10 bg-black/20 p-3">
+                      <p class="text-gray-400">Missing slots</p>
+                      <p class="text-lg font-semibold">{{ selectedCatalogDetail.slots.filter((slot) => slot.status === 'missing').length }}</p>
+                    </div>
+                    <div class="rounded border border-white/10 bg-black/20 p-3">
+                      <p class="text-gray-400">Disputed slots</p>
+                      <p class="text-lg font-semibold">{{ selectedCatalogDetail.slots.filter((slot) => slot.status === 'disputed').length }}</p>
+                    </div>
+                  </div>
+
+                  <div class="overflow-auto border border-white/10 rounded">
+                    <table class="w-full text-sm table-fixed">
+                      <thead class="bg-black/30">
+                        <tr>
+                          <th class="text-left px-3 py-2 w-24">Slot</th>
+                          <th class="text-left px-3 py-2 w-32">Status</th>
+                          <th class="text-left px-3 py-2 w-72">Local coverage</th>
+                          <th class="text-left px-3 py-2">Expected / source support</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="slot in selectedCatalogDetail.slots" :key="slot.slot" class="border-t border-white/10 align-top">
+                          <td class="px-3 py-3 font-medium text-gray-100">{{ slot.slot }}</td>
+                          <td class="px-3 py-3">
+                            <span
+                              class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                              :class="getCatalogSlotStatusClass(slot.status)"
+                            >
+                              {{ formatCatalogSlotStatus(slot.status) }}
+                            </span>
+                          </td>
+                          <td class="px-3 py-3 text-gray-200">
+                            <div v-if="slot.localBooks.length" class="space-y-1">
+                              <p v-for="book in slot.localBooks" :key="slot.slot + ':' + book.libraryItemId">
+                                {{ book.title }}<span v-if="book.sequence" class="text-gray-400"> (#{{ book.sequence }})</span>
+                              </p>
+                            </div>
+                            <p v-else class="text-gray-400">No local book covers this slot</p>
+                          </td>
+                          <td class="px-3 py-3">
+                            <div v-if="slot.choices.length <= 1" class="space-y-2 text-gray-200">
+                              <p v-if="slot.expectedTitle">{{ slot.expectedTitle }}</p>
+                              <div v-if="slot.sourceSupport.length" class="flex flex-wrap gap-2">
+                                <span
+                                  v-for="source in slot.sourceSupport"
+                                  :key="slot.slot + ':' + source.source + ':' + (source.evidenceUrl || '')"
+                                  class="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50"
+                                >
+                                  <span>{{ source.label || source.source }}</span>
+                                  <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">{{ formatConfidence(source.confidence) }}</span>
+                                </span>
+                              </div>
+                              <p v-if="!slot.expectedTitle && !slot.sourceSupport.length" class="text-gray-400">No expected title known</p>
+                            </div>
+
+                            <div v-else class="space-y-2">
+                              <div
+                                v-for="choice in slot.choices"
+                                :key="slot.slot + ':' + choice.entryKey"
+                                class="rounded border border-white/10 bg-black/20 p-2 text-sm text-gray-200"
+                              >
+                                <div class="flex flex-wrap items-center gap-2">
+                                  <span class="font-medium">{{ choice.title }}</span>
+                                  <span v-if="choice.sequenceLabel" class="text-gray-400">{{ choice.sequenceLabel }}</span>
+                                  <ui-btn
+                                    small
+                                    :color="slot.selectedEntryKey === choice.entryKey ? 'bg-sky-400/25 border border-sky-300/35' : 'bg-bg border border-white/20'"
+                                    :loading="catalogChoiceLoadingKey === `${selectedCatalogDetail.catalog.id}:${slot.slot}:${choice.entryKey}`"
+                                    @click="chooseCatalogSlot(choice, slot)"
+                                  >
+                                    {{ slot.selectedEntryKey === choice.entryKey ? 'Selected' : 'Use this' }}
+                                  </ui-btn>
+                                </div>
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                  <span
+                                    v-for="source in choice.sources"
+                                    :key="slot.slot + ':' + choice.entryKey + ':' + source.source + ':' + (source.evidenceUrl || '')"
+                                    class="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50"
+                                  >
+                                    <span>{{ source.label || source.source }}</span>
+                                    <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">{{ formatConfidence(source.confidence) }}</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div v-if="selectedCatalogDetail.unsequencedBooks.length" class="rounded border border-white/10 bg-black/20 p-3">
+                    <h3 class="text-base font-semibold">Unsequenced local books</h3>
+                    <div class="mt-2 space-y-1 text-sm text-gray-200">
+                      <p v-for="book in selectedCatalogDetail.unsequencedBooks" :key="'unseq:' + book.libraryItemId">
+                        {{ book.title }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -453,7 +632,13 @@ export default {
       managementPreviewLoadingKey: '',
       managementActionLoadingKey: '',
       managementRevertLoadingKey: '',
-      managementActionDetailsOpen: {}
+      managementActionDetailsOpen: {},
+      catalogLoading: false,
+      catalogSeries: [],
+      selectedCatalogId: '',
+      selectedCatalogDetail: null,
+      includeUntrustedCatalogs: false,
+      catalogChoiceLoadingKey: ''
     }
   },
   computed: {
@@ -493,8 +678,10 @@ export default {
       this.errorMessage = ''
       if (tab === 'queue') {
         await this.loadQueue()
-      } else {
+      } else if (tab === 'management') {
         await this.loadManagementData()
+      } else {
+        await this.loadCatalogs()
       }
     },
     formatTime(value) {
@@ -552,6 +739,18 @@ export default {
       if (contribution.noSeries) return 'bg-red-500/10 border-red-300/35 text-red-50'
       return 'bg-sky-400/15 border-sky-300/35 text-sky-50'
     },
+    formatCatalogSlotStatus(status) {
+      if (status === 'missing') return 'Missing'
+      if (status === 'disputed') return 'Disputed'
+      if (status === 'decimal') return 'Decimal only'
+      return 'Covered'
+    },
+    getCatalogSlotStatusClass(status) {
+      if (status === 'missing') return 'border-red-300/35 bg-red-500/10 text-red-50'
+      if (status === 'disputed') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
+      if (status === 'decimal') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
+      return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
+    },
     formatSeriesList(seriesList) {
       return (seriesList || [])
         .map((series) => (series.sequence ? `${series.name} #${series.sequence}` : series.name))
@@ -591,6 +790,65 @@ export default {
         this.errorMessage = error?.response?.data || 'Failed to load series management data'
       } finally {
         this.managementLoading = false
+      }
+    },
+    async loadCatalogs() {
+      this.catalogLoading = true
+      this.errorMessage = ''
+      try {
+        const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/catalog`, {
+          params: {
+            includeUntrusted: this.includeUntrustedCatalogs ? 1 : 0
+          }
+        })
+        this.catalogSeries = response.catalogs || []
+        if (this.catalogSeries.length) {
+          const nextId = this.catalogSeries.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : this.catalogSeries[0].id
+          await this.selectCatalog(nextId)
+        } else {
+          this.selectedCatalogId = ''
+          this.selectedCatalogDetail = null
+        }
+        this.lastLoadedAt = new Date().toISOString()
+      } catch (error) {
+        this.errorMessage = error?.response?.data || 'Failed to load series detail catalogs'
+      } finally {
+        this.catalogLoading = false
+      }
+    },
+    async selectCatalog(catalogId) {
+      if (!catalogId) {
+        this.selectedCatalogId = ''
+        this.selectedCatalogDetail = null
+        return
+      }
+      this.selectedCatalogId = catalogId
+      this.catalogLoading = true
+      try {
+        this.selectedCatalogDetail = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}`)
+      } catch (error) {
+        this.errorMessage = error?.response?.data || 'Failed to load series detail'
+      } finally {
+        this.catalogLoading = false
+      }
+    },
+    async chooseCatalogSlot(choice, slot) {
+      if (!this.selectedCatalogDetail) return
+      this.catalogChoiceLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${slot.slot}:${choice.entryKey}`
+      try {
+        this.selectedCatalogDetail = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/slot-choice`,
+          {
+            slot: slot.slot,
+            entryKey: choice.entryKey
+          }
+        )
+        this.$toast.success('Preferred interpretation updated')
+        await this.loadCatalogs()
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to update slot interpretation')
+      } finally {
+        this.catalogChoiceLoadingKey = ''
       }
     },
     async previewManagementCandidate(candidate) {

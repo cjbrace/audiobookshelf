@@ -192,6 +192,11 @@ class Database {
     return this.models.seriesReviewAction
   }
 
+  /** @type {typeof import('./models/SeriesReviewCatalog')} */
+  get seriesReviewCatalogModel() {
+    return this.models.seriesReviewCatalog
+  }
+
   /**
    * Check if db file exists
    * @returns {boolean}
@@ -381,6 +386,7 @@ class Database {
     require('./models/QuickMatchDuplicateSuppression').init(this.sequelize)
     require('./models/SeriesReviewSuggestion').init(this.sequelize)
     require('./models/SeriesReviewAction').init(this.sequelize)
+    require('./models/SeriesReviewCatalog').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
   }

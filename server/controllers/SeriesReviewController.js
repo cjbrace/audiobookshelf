@@ -24,6 +24,47 @@ class SeriesReviewController {
     res.json({ candidates, recentActions })
   }
 
+  async getCatalogs(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const includeUntrusted = req.query.includeUntrusted === '1'
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(req.library.id, includeUntrusted)
+    res.json({ catalogs })
+  }
+
+  async getCatalogDetail(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
+  async importCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+    if (!Array.isArray(req.body?.rows)) return res.status(400).send('Missing rows')
+
+    const result = await SeriesReviewManager.importCatalogForLibrary(req.library.id, req.body.rows)
+    res.json(result)
+  }
+
+  async chooseCatalogSlot(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let detail
+    try {
+      detail = await SeriesReviewManager.chooseCatalogSlotEntry(req.library.id, req.params.catalogId, req.body?.slot, req.body?.entryKey)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
   async previewManagementAction(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

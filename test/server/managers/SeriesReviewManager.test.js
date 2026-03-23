@@ -387,4 +387,163 @@ describe('SeriesReviewManager', () => {
     const untouchedTargetItem = await Database.libraryItemModel.getExpandedById(targetItem.id)
     expect(untouchedTargetItem.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Skylark#3'])
   })
+
+  it('imports trusted catalog rows and summarizes missing/disputed slots', async () => {
+    await createBookFixture({
+      title: 'Leviathan Wakes',
+      currentSeries: [{ name: 'The Expanse', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Caliban\'s War',
+      currentSeries: [{ name: 'The Expanse', sequence: '2' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Expanse',
+        trustStatus: 'trusted',
+        entries: [
+          {
+            title: 'Leviathan Wakes',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          },
+          {
+            title: 'Caliban\'s War',
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.94 }]
+          },
+          {
+            title: 'Abaddon\'s Gate',
+            sequence: '3',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.93 }]
+          },
+          {
+            title: 'Persepolis Rising',
+            sequence: '7',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.88 }]
+          }
+        ]
+      }
+    ])
+
+    expect(importResult.importedCount).to.equal(1)
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id)
+    expect(catalogs).to.have.length(1)
+    expect(catalogs[0].seriesName).to.equal('The Expanse')
+    expect(catalogs[0].missingCount).to.equal(5)
+  })
+
+  it('builds catalog detail with gaps, decimal handling, disputes, and unsequenced books', async () => {
+    await createBookFixture({
+      title: 'Leviathan Wakes',
+      currentSeries: [{ name: 'The Expanse', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Caliban\'s War',
+      currentSeries: [{ name: 'The Expanse', sequence: '2' }]
+    })
+    await createBookFixture({
+      title: 'The Churn',
+      currentSeries: [{ name: 'The Expanse', sequence: '3.5' }]
+    })
+    await createBookFixture({
+      title: 'Expanse Stories',
+      currentSeries: [{ name: 'The Expanse', sequence: '' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Expanse',
+        entries: [
+          {
+            title: 'Leviathan Wakes',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          },
+          {
+            title: 'Caliban\'s War',
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.94 }]
+          },
+          {
+            title: 'Abaddon\'s Gate',
+            sequence: '3',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.93 }]
+          },
+          {
+            title: 'Cibola Burn',
+            sequence: '4',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          },
+          {
+            title: 'The Churn',
+            sequence: '3.5',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.89 }]
+          },
+          {
+            title: 'Babylon\'s Ashes',
+            sequence: '6',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.91 }]
+          },
+          {
+            title: 'Nemesis Games',
+            sequence: '5',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.9 }]
+          },
+          {
+            title: 'Nemesis Game',
+            sequence: '5',
+            sources: [{ source: 'wikidata', label: 'WD', confidence: 0.62 }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const slot3 = detail.slots.find((slot) => slot.slot === '3')
+    const slot35 = detail.slots.find((slot) => slot.slot === '3.5')
+    const slot5 = detail.slots.find((slot) => slot.slot === '5')
+
+    expect(slot3.status).to.equal('missing')
+    expect(slot3.expectedTitle).to.equal('Abaddon\'s Gate')
+    expect(slot35.status).to.equal('covered')
+    expect(slot5.status).to.equal('disputed')
+    expect(slot5.choices).to.have.length(2)
+    expect(detail.unsequencedBooks.map((book) => book.title)).to.deep.equal(['Expanse Stories'])
+  })
+
+  it('stores preferred slot interpretations for disputed catalog slots', async () => {
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Expanse',
+        entries: [
+          {
+            title: 'Nemesis Games',
+            sequence: '5',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.9 }]
+          },
+          {
+            title: 'Nemesis Game',
+            sequence: '5',
+            sources: [{ source: 'wikidata', label: 'WD', confidence: 0.62 }]
+          }
+        ]
+      }
+    ])
+
+    const initialDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(initialDetail.slots.find((slot) => slot.slot === '5').status).to.equal('disputed')
+
+    const selectedDetail = await SeriesReviewManager.chooseCatalogSlotEntry(
+      library.id,
+      importResult.catalogs[0].id,
+      '5',
+      initialDetail.slots.find((slot) => slot.slot === '5').choices[0].entryKey
+    )
+
+    expect(selectedDetail.slots.find((slot) => slot.slot === '5').selectedEntryKey).to.be.a('string')
+    expect(selectedDetail.slots.find((slot) => slot.slot === '5').status).to.equal('missing')
+  })
 })
