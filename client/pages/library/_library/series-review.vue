@@ -15,6 +15,20 @@
           </ui-btn>
         </div>
 
+        <div v-if="sourceLegendEntries.length" class="flex flex-wrap gap-2 mb-4 text-sm">
+          <a
+            v-for="entry in sourceLegendEntries"
+            :key="entry.code"
+            class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-sky-400/15 border border-sky-300/35 text-sky-50 hover:bg-sky-400/25 transition"
+            :href="entry.url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="font-semibold">{{ entry.code }}</span>
+            <span class="text-sky-100/90">{{ entry.name }}</span>
+          </a>
+        </div>
+
         <div class="bg-primary/20 rounded-lg p-3 border border-primary/40 mb-4 text-sm text-gray-200">
           <div class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Rows: {{ rows.length }}</span>
@@ -156,6 +170,14 @@
 </template>
 
 <script>
+const SOURCE_LEGEND = {
+  fictiondb: { code: 'FDB', name: 'FictionDB', url: 'https://www.fictiondb.com/' },
+  goodreads: { code: 'GR', name: 'Goodreads', url: 'https://www.goodreads.com/' },
+  wikidata: { code: 'WD', name: 'Wikidata', url: 'https://www.wikidata.org/' },
+  librarything: { code: 'LT', name: 'LibraryThing', url: 'https://www.librarything.com/' },
+  fantasticfiction: { code: 'FF', name: 'Fantastic Fiction', url: 'https://www.fantasticfiction.com/' }
+}
+
 export default {
   async asyncData({ redirect, store, params }) {
     if (!store.getters['user/getIsAdminOrUp']) {
@@ -185,6 +207,25 @@ export default {
     },
     pendingSuggestionCount() {
       return this.rows.reduce((count, row) => count + row.suggestions.filter((suggestion) => suggestion.state === 'pending').length, 0)
+    },
+    sourceLegendEntries() {
+      const sources = new Map()
+      this.rows.forEach((row) => {
+        ;(row.suggestions || []).forEach((suggestion) => {
+          ;(suggestion.contributions || []).forEach((contribution) => {
+            const sourceKey = String(contribution.source || '').toLowerCase()
+            if (!sourceKey || sources.has(sourceKey)) return
+            const knownEntry = SOURCE_LEGEND[sourceKey]
+            const fallbackCode = (contribution.label || sourceKey).toUpperCase()
+            sources.set(sourceKey, knownEntry || {
+              code: fallbackCode,
+              name: fallbackCode,
+              url: '#'
+            })
+          })
+        })
+      })
+      return [...sources.values()]
     }
   },
   mounted() {
