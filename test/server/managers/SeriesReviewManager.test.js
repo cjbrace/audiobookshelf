@@ -419,6 +419,23 @@ describe('SeriesReviewManager', () => {
     expect(candidates).to.have.length(1)
     expect(candidates[0].labels.map((label) => label.name)).to.deep.equal(['Skylark', 'Skylark (Smith)'])
     expect(candidates[0].suggestedTargetLabel).to.equal('Skylark')
+    expect(candidates[0].score).to.equal(88)
+  })
+
+  it('broadens duplicate candidates slightly for leading article variants', async () => {
+    await createBookFixture({
+      title: 'Dauntless',
+      currentSeries: [{ name: 'The Lost Fleet', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Fearless',
+      currentSeries: [{ name: 'Lost Fleet', sequence: '2' }]
+    })
+
+    const candidates = await SeriesReviewManager.getSeriesManagementCandidatesForLibrary(library.id)
+    expect(candidates).to.have.length(1)
+    expect(candidates[0].labels.map((label) => label.name)).to.deep.equal(['Lost Fleet', 'The Lost Fleet'])
+    expect(candidates[0].score).to.equal(72)
   })
 
   it('previews, applies, and reverts a safe series management action', async () => {

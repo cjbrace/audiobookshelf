@@ -276,15 +276,42 @@ class SeriesReviewManager {
 
   getManagementNameMeta(series) {
     const name = this.normalizeSeriesName(series?.name || '')
+    const exactKey = this.normalizeKeyPart(name)
+    const baseKey = this.normalizeKeyPart(this.normalizeManagementBaseName(name))
+    const articleFreeKey = this.normalizeManagementArticleKey(name)
+    const articleFreeBaseKey = this.normalizeManagementArticleKey(this.normalizeManagementBaseName(name))
     return {
       id: series.id,
       name,
-      exactKey: this.normalizeKeyPart(name),
-      baseKey: this.normalizeKeyPart(this.normalizeManagementBaseName(name)),
+      exactKey,
+      baseKey,
+      articleFreeKey,
+      articleFreeBaseKey,
       hasBracketVariant: /[\(\[\{][^\)\]\}]*[\)\]\}]/.test(name),
       punctuationCount: (name.match(/[^a-z0-9\s]/gi) || []).length,
+      tokenCount: exactKey ? exactKey.split(/\s+/).filter(Boolean).length : 0,
       bookCount: Array.isArray(series.bookSeries) ? series.bookSeries.length : 0
     }
+  }
+
+  normalizeManagementArticleKey(value) {
+    return this.normalizeKeyPart(String(value || '').replace(/^(the|a|an)\s+/i, ' '))
+  }
+
+  scoreManagementCandidateMatch(entries) {
+    if (!Array.isArray(entries) || entries.length < 2) return 0
+
+    const exactKeys = [...new Set(entries.map((entry) => entry.exactKey).filter(Boolean))]
+    if (exactKeys.length === 1) return 100
+
+    const baseKeys = [...new Set(entries.map((entry) => entry.baseKey).filter(Boolean))]
+    if (baseKeys.length === 1) return 88
+
+    const articleBaseKeys = [...new Set(entries.map((entry) => entry.articleFreeBaseKey).filter(Boolean))]
+    const minTokenCount = Math.min(...entries.map((entry) => entry.tokenCount || 0))
+    if (articleBaseKeys.length === 1 && minTokenCount >= 2) return 72
+
+    return 0
   }
 
   choosePreferredManagementTarget(entries) {
@@ -299,6 +326,7 @@ class SeriesReviewManager {
 
   buildManagementCandidatePayload(groupKey, entries) {
     const suggestedTarget = this.choosePreferredManagementTarget(entries)
+    const score = this.scoreManagementCandidateMatch(entries)
     const uniqueBookIds = new Set()
     entries.forEach((entry) => {
       ;(entry.bookSeries || []).forEach((bookSeries) => {
@@ -307,6 +335,7 @@ class SeriesReviewManager {
     })
     return {
       groupKey,
+      score,
       suggestedTargetLabel: suggestedTarget?.name || '',
       labels: entries
         .map((entry) => ({
@@ -993,10 +1022,28 @@ class SeriesReviewManager {
       candidateGroups.set(groupKey, group)
     })
 
+    const articleGroups = {}
+    seriesMeta.forEach((meta) => {
+      const key = meta.articleFreeBaseKey
+      if (!key || meta.tokenCount < 2) return
+      if (!articleGroups[key]) articleGroups[key] = []
+      articleGroups[key].push(meta)
+    })
+
+    Object.entries(articleGroups).forEach(([key, entries]) => {
+      if (entries.length < 2) return
+      if (!entries.some((entry) => entry.articleFreeBaseKey !== entry.baseKey)) return
+      const groupKey = `article:${key}`
+      const group = candidateGroups.get(groupKey) || new Map()
+      entries.forEach((entry) => group.set(entry.id, entry))
+      candidateGroups.set(groupKey, group)
+    })
+
     return [...candidateGroups.entries()]
       .map(([groupKey, seriesMap]) => this.buildManagementCandidatePayload(groupKey, [...seriesMap.values()]))
-      .filter((candidate) => candidate.labels.length > 1)
+      .filter((candidate) => candidate.labels.length > 1 && candidate.score > 0)
       .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
         if (b.labels.length !== a.labels.length) return b.labels.length - a.labels.length
         if (b.affectedBookCount !== a.affectedBookCount) return b.affectedBookCount - a.affectedBookCount
         return a.suggestedTargetLabel.localeCompare(b.suggestedTargetLabel)

@@ -334,6 +334,10 @@
           </template>
 
           <template v-else-if="activeTab === 'management'">
+            <div class="mb-4 rounded border border-white/10 bg-black/15 p-4 text-sm text-gray-200">
+              Use this section to review likely duplicate ABS series labels, choose the label to keep, preview the affected books, untick exceptions, and then apply the cleanup.
+            </div>
+
             <div v-if="!managementCandidates.length && !managementLoading" class="text-base text-gray-200">
               No obvious duplicate series labels are queued for management yet.
             </div>
@@ -346,29 +350,35 @@
               >
                 <div class="flex flex-wrap items-start gap-3">
                   <div class="grow min-w-[16rem]">
-                    <p class="text-sm text-gray-300">Possible duplicate labels</p>
+                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <p class="text-sm text-gray-300">Possible duplicate labels</p>
+                      <span class="text-xs text-gray-400">Strength {{ candidate.score }}</span>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-400">Click the label you want to keep. Nothing is selected by default.</p>
                     <div class="mt-2 flex flex-wrap gap-2">
-                      <span
+                      <button
                         v-for="label in candidate.labels"
                         :key="label.id"
-                        class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/15 bg-black/20 text-sm text-gray-100"
+                        type="button"
+                        class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border text-sm transition"
+                        :class="selectedManagementTargetId(candidate.groupKey) === label.id ? 'border-sky-300/45 bg-sky-400/20 text-sky-50' : 'border-white/15 bg-black/20 text-gray-100 hover:border-sky-300/35 hover:bg-sky-400/10'"
+                        @click="selectManagementTarget(candidate.groupKey, label.id)"
                       >
                         <span>{{ label.name }}</span>
                         <span class="text-gray-400">{{ label.bookCount }}</span>
-                      </span>
+                      </button>
                     </div>
                   </div>
-                  <div class="w-full md:w-72">
-                    <label class="block text-sm text-gray-300 mb-1">Target label</label>
-                    <input
-                      v-model="managementTargetLabels[candidate.groupKey]"
-                      type="text"
-                      class="w-full rounded border border-white/20 bg-black/20 px-3 py-2 text-gray-100"
-                    />
+                  <div class="w-full md:w-72 text-sm text-gray-300">
+                    <p class="font-medium text-gray-100">Target label</p>
+                    <p class="mt-1">
+                      {{ selectedManagementTargetLabel(candidate) || 'Choose one of the labels above to preview the change.' }}
+                    </p>
                     <div class="mt-2 flex gap-2">
                       <ui-btn
                         small
                         color="bg-bg border border-white/20"
+                        :disabled="!selectedManagementTargetLabel(candidate)"
                         :loading="managementPreviewLoadingKey === candidate.groupKey"
                         @click="previewManagementCandidate(candidate)"
                       >
@@ -776,7 +786,7 @@ export default {
       managementCandidates: [],
       managementPreviewByGroup: {},
       managementSelectionByGroup: {},
-      managementTargetLabels: {},
+      managementTargetIds: {},
       managementRecentActions: [],
       managementPreviewLoadingKey: '',
       managementActionLoadingKey: '',
@@ -943,6 +953,24 @@ export default {
       const positiveSuggestions = suggestions.filter((suggestion) => suggestion.kind === 'series')
       return positiveSuggestions.length ? positiveSuggestions : suggestions
     },
+    selectedManagementTargetId(groupKey) {
+      return this.managementTargetIds[groupKey] || ''
+    },
+    selectedManagementTargetLabel(candidate) {
+      const targetId = this.selectedManagementTargetId(candidate.groupKey)
+      return candidate.labels.find((label) => label.id === targetId)?.name || ''
+    },
+    selectManagementTarget(groupKey, labelId) {
+      if (this.managementTargetIds[groupKey] === labelId) {
+        this.$delete(this.managementTargetIds, groupKey)
+        this.$delete(this.managementPreviewByGroup, groupKey)
+        this.$delete(this.managementSelectionByGroup, groupKey)
+        return
+      }
+      this.$set(this.managementTargetIds, groupKey, labelId)
+      this.$delete(this.managementPreviewByGroup, groupKey)
+      this.$delete(this.managementSelectionByGroup, groupKey)
+    },
     getConflictContributions(row) {
       return (row?.suggestions || [])
         .filter((suggestion) => suggestion.kind !== 'series')
@@ -1068,11 +1096,6 @@ export default {
         const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/management`)
         this.managementCandidates = response.candidates || []
         this.managementRecentActions = response.recentActions || []
-        this.managementCandidates.forEach((candidate) => {
-          if (!this.managementTargetLabels[candidate.groupKey]) {
-            this.$set(this.managementTargetLabels, candidate.groupKey, candidate.suggestedTargetLabel)
-          }
-        })
         this.lastLoadedAt = new Date().toISOString()
       } catch (error) {
         this.errorMessage = error?.response?.data || 'Failed to load series management data'
@@ -1180,11 +1203,16 @@ export default {
     },
     async previewManagementCandidate(candidate) {
       const groupKey = candidate.groupKey
+      const targetLabel = this.selectedManagementTargetLabel(candidate)
+      if (!targetLabel) {
+        this.$toast.error('Choose the label to keep before previewing')
+        return
+      }
       this.managementPreviewLoadingKey = groupKey
       try {
         const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/management/preview`, {
           sourceSeriesIds: candidate.labels.map((label) => label.id),
-          targetLabel: this.managementTargetLabels[groupKey] || candidate.suggestedTargetLabel
+          targetLabel
         })
         this.$set(this.managementPreviewByGroup, groupKey, response)
         this.$set(
@@ -1209,11 +1237,16 @@ export default {
     },
     async applyManagementCandidate(candidate) {
       const groupKey = candidate.groupKey
+      const targetLabel = this.selectedManagementTargetLabel(candidate)
+      if (!targetLabel) {
+        this.$toast.error('Choose the label to keep before applying')
+        return
+      }
       this.managementActionLoadingKey = groupKey
       try {
         const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/management/apply`, {
           sourceSeriesIds: candidate.labels.map((label) => label.id),
-          targetLabel: this.managementTargetLabels[groupKey] || candidate.suggestedTargetLabel,
+          targetLabel,
           includedLibraryItemIds: this.managementSelectionByGroup[groupKey] || []
         })
         this.$toast.success(`Applied to ${response.changedCount} book${response.changedCount === 1 ? '' : 's'}`)
