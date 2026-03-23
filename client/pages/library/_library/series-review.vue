@@ -137,6 +137,11 @@
                     <p v-else class="text-gray-300">No current ABS series entries</p>
                   </td>
                   <td class="px-3 py-3">
+                    <div v-if="row.conflictSummary" class="mb-3">
+                      <span class="inline-flex items-center px-2.5 py-1 rounded-full border border-amber-300/35 bg-amber-500/10 text-sm text-amber-100">
+                        {{ row.conflictSummary }}
+                      </span>
+                    </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
                       <div
                         v-for="suggestion in getPrimarySuggestions(row)"
@@ -193,8 +198,17 @@
                             Seen {{ formatTime(suggestion.firstSeenAt) }}
                             <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt">, updated {{ formatTime(suggestion.lastSeenAt) }}</span>
                           </p>
+                          <p v-if="suggestion.evidenceSummary?.automatedAgreement" class="text-emerald-200">
+                            Cross-check agreement: FictionDB + Wikidata agree
+                          </p>
+                          <p v-else-if="suggestion.evidenceSummary?.hasPrimaryAutomatedSource && suggestion.evidenceSummary?.hasSecondaryAutomatedSource" class="text-amber-200">
+                            Automated sources both present; inspect disagreement details below
+                          </p>
                           <p v-if="suggestion.evidenceSummary?.disagreement" class="text-amber-200">
                             Source disagreement: {{ suggestion.evidenceSummary.supportCount }} positive / {{ suggestion.evidenceSummary.conflictCount }} conflicting
+                          </p>
+                          <p v-if="suggestion.evidenceSummary?.manualReferenceCount" class="text-gray-400">
+                            Manual references: {{ suggestion.evidenceSummary.manualReferenceCount }}
                           </p>
                         </div>
 
@@ -206,6 +220,7 @@
                           >
                             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                               <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
+                              <span class="text-xs text-gray-400">{{ contribution.roleLabel }}</span>
                               <span v-if="contribution.noSeries" class="text-red-200">No series evidence</span>
                               <span v-else>
                                 {{ contribution.seriesName }}

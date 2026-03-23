@@ -44,6 +44,22 @@ class SeriesReviewManager {
     return this.normalizeSeriesName(value).replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, ' ')
   }
 
+  getSourceRoleMeta(source) {
+    const normalizedSource = String(source || '')
+      .trim()
+      .toLowerCase()
+    if (normalizedSource === 'fictiondb') {
+      return { role: 'automated_primary', roleLabel: 'Primary automated', roleWeight: 6 }
+    }
+    if (normalizedSource === 'wikidata') {
+      return { role: 'automated_secondary', roleLabel: 'Secondary automated', roleWeight: 4 }
+    }
+    if (['goodreads', 'fantasticfiction', 'librarything'].includes(normalizedSource)) {
+      return { role: 'manual_reference', roleLabel: 'Manual reference', roleWeight: 1 }
+    }
+    return { role: 'other', roleLabel: 'Other source', roleWeight: 2 }
+  }
+
   buildSuggestionKey(kind, suggestedName, suggestedSequence) {
     if (kind === 'no_series') return 'no_series'
     const normalizedName = this.normalizeKeyPart(suggestedName)
@@ -63,9 +79,13 @@ class SeriesReviewManager {
     if (!noSeries && !seriesName) return null
 
     const confidenceValue = Number(input?.confidence)
+    const sourceRole = this.getSourceRoleMeta(source)
     return {
       source,
       label: String(input?.label || source).trim() || source,
+      role: sourceRole.role,
+      roleLabel: sourceRole.roleLabel,
+      roleWeight: sourceRole.roleWeight,
       noSeries,
       seriesName,
       sequence,
@@ -138,12 +158,71 @@ class SeriesReviewManager {
     const contributions = Array.isArray(suggestion?.contributions) ? suggestion.contributions : []
     const positiveSources = contributions.filter((contribution) => !contribution.noSeries)
     const negativeSources = contributions.filter((contribution) => contribution.noSeries)
+    const automatedSources = positiveSources.filter((contribution) => contribution.role === 'automated_primary' || contribution.role === 'automated_secondary')
+    const manualReferenceSources = positiveSources.filter((contribution) => contribution.role === 'manual_reference')
+    const sourceCodes = new Set(positiveSources.map((contribution) => contribution.source))
     return {
       supportCount: positiveSources.length,
       conflictCount: negativeSources.length,
       disagreement: positiveSources.length > 0 && negativeSources.length > 0,
+      automatedSupportCount: automatedSources.length,
+      manualReferenceCount: manualReferenceSources.length,
+      sourceStrength: positiveSources.reduce((total, contribution) => total + (contribution.roleWeight || 0), 0),
+      automatedAgreement: sourceCodes.has('fictiondb') && sourceCodes.has('wikidata'),
+      hasPrimaryAutomatedSource: sourceCodes.has('fictiondb'),
+      hasSecondaryAutomatedSource: sourceCodes.has('wikidata'),
       hasSourceNotes: contributions.some((contribution) => !!contribution.notes),
       hasEvidenceLinks: contributions.some((contribution) => !!contribution.evidenceUrl)
+    }
+  }
+
+  getSuggestionPriorityScore(suggestionPayload) {
+    const evidenceSummary = suggestionPayload?.evidenceSummary || {}
+    let score = 0
+    if (suggestionPayload?.kind === 'series') score += 1000
+    if (evidenceSummary.automatedAgreement) score += 200
+    score += Number(evidenceSummary.sourceStrength || 0) * 10
+    score += Number(suggestionPayload?.sourceCount || 0)
+    return score
+  }
+
+  analyzeSuggestionSet(suggestionPayloads) {
+    const positiveSuggestions = suggestionPayloads.filter((suggestion) => suggestion.kind === 'series')
+    const noSeriesSuggestions = suggestionPayloads.filter((suggestion) => suggestion.kind === 'no_series')
+    const positiveNames = [...new Set(positiveSuggestions.map((suggestion) => suggestion.suggestedName).filter(Boolean))]
+    const sequenceByName = new Map()
+
+    positiveSuggestions.forEach((suggestion) => {
+      const nameKey = suggestion.suggestedName || ''
+      if (!sequenceByName.has(nameKey)) sequenceByName.set(nameKey, new Set())
+      sequenceByName.get(nameKey).add(suggestion.suggestedSequence || '')
+    })
+
+    const hasNoSeriesConflict = positiveSuggestions.length > 0 && noSeriesSuggestions.length > 0
+    const hasOrdinalConflict = [...sequenceByName.values()].some((sequences) => [...sequences].filter(Boolean).length > 1)
+    const hasSeriesNameConflict = positiveNames.length > 1
+
+    let conflictType = null
+    let conflictSummary = ''
+    let queuePriority = 3
+    if (hasNoSeriesConflict) {
+      conflictType = 'no_series_conflict'
+      conflictSummary = 'Series vs no-series conflict'
+      queuePriority = 0
+    } else if (hasOrdinalConflict) {
+      conflictType = 'ordinal_conflict'
+      conflictSummary = 'Ordinal conflict between sources'
+      queuePriority = 1
+    } else if (hasSeriesNameConflict) {
+      conflictType = 'series_name_conflict'
+      conflictSummary = 'Series-name conflict between sources'
+      queuePriority = 2
+    }
+
+    return {
+      conflictType,
+      conflictSummary,
+      queuePriority
     }
   }
 
@@ -1181,6 +1260,7 @@ class SeriesReviewManager {
 
   buildSuggestionPayload(suggestion) {
     const contributions = Array.isArray(suggestion.contributions) ? suggestion.contributions : []
+    const evidenceSummary = this.buildSuggestionEvidenceSummary(suggestion)
     return {
       id: suggestion.id,
       kind: suggestion.kind,
@@ -1197,7 +1277,12 @@ class SeriesReviewManager {
       decidedAt: suggestion.decidedAt,
       previousDecision: this.buildPreviousDecisionPayload(suggestion),
       hasMeaningfulUpdateSinceDecision: suggestion.state === 'pending' && !!suggestion.decisionAction && !!suggestion.decidedAt,
-      evidenceSummary: this.buildSuggestionEvidenceSummary(suggestion)
+      evidenceSummary,
+      priorityScore: this.getSuggestionPriorityScore({
+        kind: suggestion.kind,
+        sourceCount: contributions.length,
+        evidenceSummary
+      })
     }
   }
 
@@ -1206,6 +1291,7 @@ class SeriesReviewManager {
       const aPriority = a.kind === 'series' ? 0 : 1
       const bPriority = b.kind === 'series' ? 0 : 1
       if (aPriority !== bPriority) return aPriority - bPriority
+      if ((b.priorityScore || 0) !== (a.priorityScore || 0)) return (b.priorityScore || 0) - (a.priorityScore || 0)
       if ((b.sourceCount || 0) !== (a.sourceCount || 0)) return (b.sourceCount || 0) - (a.sourceCount || 0)
       return String(a.suggestedName || '').localeCompare(String(b.suggestedName || ''))
     })
@@ -1214,6 +1300,7 @@ class SeriesReviewManager {
   buildQueueRow(libraryItem, suggestions) {
     const media = libraryItem.media
     const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion))
+    const suggestionAnalysis = this.analyzeSuggestionSet(suggestionPayloads)
     const currentTags = Array.isArray(media?.tags) ? media.tags : []
     return {
       libraryItemId: libraryItem.id,
@@ -1223,6 +1310,9 @@ class SeriesReviewManager {
       hasPreviousSeriesEdit: currentTags.includes(this.SERIES_EDIT_TAG),
       seriesEditTag: currentTags.includes(this.SERIES_EDIT_TAG) ? this.SERIES_EDIT_TAG : null,
       currentSeries: this.getCurrentSeriesPayload(libraryItem),
+      queuePriority: suggestionAnalysis.queuePriority,
+      conflictType: suggestionAnalysis.conflictType,
+      conflictSummary: suggestionAnalysis.conflictSummary,
       suggestions: this.sortSuggestionsForDisplay(suggestionPayloads)
     }
   }
@@ -1269,6 +1359,7 @@ class SeriesReviewManager {
       })
       .filter(Boolean)
       .sort((a, b) => {
+        if ((a.queuePriority || 0) !== (b.queuePriority || 0)) return (a.queuePriority || 0) - (b.queuePriority || 0)
         const aPriority = a.currentSeries.length ? 1 : 0
         const bPriority = b.currentSeries.length ? 1 : 0
         if (aPriority !== bPriority) return aPriority - bPriority

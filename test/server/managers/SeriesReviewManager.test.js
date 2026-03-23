@@ -109,6 +109,68 @@ describe('SeriesReviewManager', () => {
     expect(noSeriesSuggestion.contributions).to.have.length(1)
     expect(noSeriesSuggestion.contributions[0].source).to.equal('goodreads')
     expect(rows[0].suggestions[0].kind).to.equal('series')
+    expect(actionableSuggestion.evidenceSummary.automatedAgreement).to.equal(true)
+    expect(rows[0].conflictType).to.equal('no_series_conflict')
+    expect(rows[0].conflictSummary).to.equal('Series vs no-series conflict')
+  })
+
+  it('prioritizes automated agreement over manual-reference-only matches', async () => {
+    const { libraryItem } = await createBookFixture({ title: 'A Memory Called Empire' })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'goodreads', label: 'GR', seriesName: 'Teixcalaan', sequence: '1', confidence: 0.44 },
+          { source: 'librarything', label: 'LT', seriesName: 'Teixcalaan', sequence: '1', confidence: 0.39 },
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Teixcalaan', sequence: '1', confidence: 0.93 },
+          { source: 'wikidata', label: 'WD', seriesName: 'Teixcalaan', sequence: '1', confidence: 0.61 },
+          { source: 'goodreads', label: 'GR', seriesName: 'Teixcalaan Empire', sequence: '1', confidence: 0.31 }
+        ]
+      }
+    ])
+
+    const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows).to.have.length(1)
+    expect(rows[0].suggestions[0].suggestedName).to.equal('Teixcalaan')
+    expect(rows[0].suggestions[0].evidenceSummary.automatedAgreement).to.equal(true)
+    expect(rows[0].suggestions[0].evidenceSummary.manualReferenceCount).to.equal(2)
+    expect(rows[0].suggestions[1].suggestedName).to.equal('Teixcalaan Empire')
+    expect(rows[0].conflictType).to.equal('series_name_conflict')
+  })
+
+  it('orders queue rows by no-series then ordinal then series-name conflicts', async () => {
+    const { libraryItem: noSeriesItem } = await createBookFixture({ title: 'Conflict A' })
+    const { libraryItem: ordinalItem } = await createBookFixture({ title: 'Conflict B' })
+    const { libraryItem: nameItem } = await createBookFixture({ title: 'Conflict C' })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: noSeriesItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Shared Saga', sequence: '1' },
+          { source: 'goodreads', label: 'GR', noSeries: true }
+        ]
+      },
+      {
+        libraryItemId: ordinalItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Ordered Saga', sequence: '1' },
+          { source: 'wikidata', label: 'WD', seriesName: 'Ordered Saga', sequence: '2' }
+        ]
+      },
+      {
+        libraryItemId: nameItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Name Saga', sequence: '1' },
+          { source: 'wikidata', label: 'WD', seriesName: 'Alias Saga', sequence: '1' }
+        ]
+      }
+    ])
+
+    const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows.map((row) => row.title)).to.deep.equal(['Conflict A', 'Conflict B', 'Conflict C'])
+    expect(rows.map((row) => row.conflictType)).to.deep.equal(['no_series_conflict', 'ordinal_conflict', 'series_name_conflict'])
   })
 
   it('adds a suggestion alongside existing series and persists the applied decision across reimport', async () => {
