@@ -25,6 +25,15 @@ class SeriesReviewCatalog extends Model {
           allowNull: false,
           defaultValue: 'trusted'
         },
+        visibilityStatus: {
+          type: DataTypes.STRING,
+          allowNull: false,
+          defaultValue: 'visible'
+        },
+        dismissedAt: {
+          type: DataTypes.DATE,
+          allowNull: true
+        },
         entries: {
           type: DataTypes.JSON,
           allowNull: false,

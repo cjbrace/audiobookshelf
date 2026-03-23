@@ -8,6 +8,42 @@ class SeriesReviewManager {
     return '-series-edit'
   }
 
+  async ensureSeriesReviewCatalogSchema() {
+    if (this.seriesReviewCatalogSchemaReady) return
+    if (!this.seriesReviewCatalogSchemaPromise) {
+      this.seriesReviewCatalogSchemaPromise = this.ensureSeriesReviewCatalogSchemaInner()
+        .then(() => {
+          this.seriesReviewCatalogSchemaReady = true
+        })
+        .finally(() => {
+          this.seriesReviewCatalogSchemaPromise = null
+        })
+    }
+    await this.seriesReviewCatalogSchemaPromise
+  }
+
+  async ensureSeriesReviewCatalogSchemaInner() {
+    const queryInterface = Database.sequelize.getQueryInterface()
+    const tableDescription = await queryInterface.describeTable('seriesReviewCatalogs')
+    const DataTypes = queryInterface.sequelize.Sequelize.DataTypes
+
+    if (!tableDescription.visibilityStatus) {
+      await queryInterface.addColumn('seriesReviewCatalogs', 'visibilityStatus', {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: 'visible'
+      })
+      await queryInterface.sequelize.query("UPDATE seriesReviewCatalogs SET visibilityStatus = 'visible' WHERE visibilityStatus IS NULL")
+    }
+
+    if (!tableDescription.dismissedAt) {
+      await queryInterface.addColumn('seriesReviewCatalogs', 'dismissedAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      })
+    }
+  }
+
   normalizeSeriesName(value) {
     return String(value || '')
       .trim()
@@ -42,6 +78,24 @@ class SeriesReviewManager {
 
   normalizeManagementBaseName(value) {
     return this.normalizeSeriesName(value).replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, ' ')
+  }
+
+  getCatalogSortKey(seriesName) {
+    const normalized = this.normalizeSeriesName(seriesName)
+    return normalized.replace(/^the\s+/i, '').trim().toLowerCase() || normalized.toLowerCase()
+  }
+
+  getCatalogDisplayBucket({ trustStatus, visibilityStatus, localBookCount }) {
+    if (visibilityStatus === 'dismissed') return 'dismissed'
+    if (!localBookCount) return 'potential'
+    return trustStatus === 'untrusted' ? 'less_trusted' : 'trusted'
+  }
+
+  getCatalogDisplayLabel(bucket) {
+    if (bucket === 'potential') return 'Potential series'
+    if (bucket === 'less_trusted') return 'Less trusted'
+    if (bucket === 'dismissed') return 'Dismissed'
+    return 'Trusted'
   }
 
   getSourceRoleMeta(source) {
@@ -486,12 +540,15 @@ class SeriesReviewManager {
       id: catalog.id,
       seriesName: catalog.seriesName,
       trustStatus: catalog.trustStatus,
+      visibilityStatus: catalog.visibilityStatus || 'visible',
+      dismissedAt: catalog.dismissedAt || null,
       entryCount: Array.isArray(catalog.entries) ? catalog.entries.length : 0,
       action
     }
   }
 
   async importCatalogForLibrary(libraryId, rows) {
+    await this.ensureSeriesReviewCatalogSchema()
     const results = []
     let createdCount = 0
     let updatedCount = 0
@@ -522,6 +579,8 @@ class SeriesReviewManager {
           seriesName,
           seriesNameNormalized,
           trustStatus,
+          visibilityStatus: 'visible',
+          dismissedAt: null,
           entries,
           selectionBySlot
         })
@@ -547,9 +606,10 @@ class SeriesReviewManager {
     }
   }
 
-  async getCatalogsForLibrary(libraryId, includeUntrusted = false) {
+  async getCatalogsForLibrary(libraryId, includeUntrusted = false, includeDismissed = false) {
+    await this.ensureSeriesReviewCatalogSchema()
     const where = { libraryId }
-    if (!includeUntrusted) where.trustStatus = 'trusted'
+    if (!includeDismissed) where.visibilityStatus = 'visible'
 
     const catalogs = await Database.seriesReviewCatalogModel.findAll({
       where,
@@ -559,8 +619,12 @@ class SeriesReviewManager {
     const detailSummaries = []
     for (const catalog of catalogs) {
       const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id)
+      if (!detail) continue
+      const displayBucket = detail.catalog.displayBucket
+      if (!includeDismissed && displayBucket === 'dismissed') continue
+      if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'dismissed') continue
       detailSummaries.push({
-        ...this.buildSeriesReviewCatalogPayload(catalog),
+        ...detail.catalog,
         missingCount: detail.slots.filter((slot) => slot.status === 'missing').length,
         disputedCount: detail.slots.filter((slot) => slot.status === 'disputed').length,
         localBookCount: detail.localBooks.length,
@@ -568,7 +632,14 @@ class SeriesReviewManager {
       })
     }
 
-    return detailSummaries
+    return detailSummaries.sort((a, b) => {
+      const bucketOrder = { trusted: 0, less_trusted: 1, potential: 2, dismissed: 3 }
+      const bucketDelta = (bucketOrder[a.displayBucket] || 99) - (bucketOrder[b.displayBucket] || 99)
+      if (bucketDelta !== 0) return bucketDelta
+      const sortDelta = this.getCatalogSortKey(a.seriesName).localeCompare(this.getCatalogSortKey(b.seriesName))
+      if (sortDelta !== 0) return sortDelta
+      return a.seriesName.localeCompare(b.seriesName)
+    })
   }
 
   async getMatchingSeriesRowsForCatalog(libraryId, seriesNameNormalized) {
@@ -808,6 +879,7 @@ class SeriesReviewManager {
   }
 
   async getCatalogDetailForLibrary(libraryId, catalogId) {
+    await this.ensureSeriesReviewCatalogSchema()
     const catalog = await Database.seriesReviewCatalogModel.findOne({
       where: {
         id: catalogId,
@@ -853,16 +925,41 @@ class SeriesReviewManager {
     })
 
     const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks)
+    const displayBucket = this.getCatalogDisplayBucket({
+      trustStatus: catalog.trustStatus,
+      visibilityStatus: catalog.visibilityStatus,
+      localBookCount: localBooks.length
+    })
 
     return {
       catalog: {
         ...this.buildSeriesReviewCatalogPayload(catalog),
-        selectionBySlot: catalog.selectionBySlot || {}
+        selectionBySlot: catalog.selectionBySlot || {},
+        displayBucket,
+        displayLabel: this.getCatalogDisplayLabel(displayBucket)
       },
       localBooks,
       unsequencedBooks: finalized.unsequencedBooks,
       slots: finalized.slots
     }
+  }
+
+  async setCatalogVisibilityForLibrary(libraryId, catalogId, visibilityStatus) {
+    await this.ensureSeriesReviewCatalogSchema()
+    const catalog = await Database.seriesReviewCatalogModel.findOne({
+      where: {
+        id: catalogId,
+        libraryId
+      }
+    })
+    if (!catalog) return null
+
+    const nextVisibility = visibilityStatus === 'dismissed' ? 'dismissed' : 'visible'
+    catalog.visibilityStatus = nextVisibility
+    catalog.dismissedAt = nextVisibility === 'dismissed' ? new Date() : null
+    await catalog.save()
+
+    return this.getCatalogDetailForLibrary(libraryId, catalogId)
   }
 
   async chooseCatalogSlotEntry(libraryId, catalogId, slot, entryKey) {

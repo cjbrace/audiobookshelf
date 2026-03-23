@@ -522,6 +522,31 @@ describe('SeriesReviewManager', () => {
     expect(catalogs).to.have.length(1)
     expect(catalogs[0].seriesName).to.equal('The Expanse')
     expect(catalogs[0].missingCount).to.equal(5)
+    expect(catalogs[0].displayBucket).to.equal('trusted')
+  })
+
+  it('classifies source-only catalogs as potential series and hides them from the default trusted list', async () => {
+    await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Lost Fleet',
+        trustStatus: 'trusted',
+        entries: [
+          {
+            title: 'Dauntless',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          }
+        ]
+      }
+    ])
+
+    const defaultCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id)
+    expect(defaultCatalogs).to.have.length(0)
+
+    const expandedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(expandedCatalogs).to.have.length(1)
+    expect(expandedCatalogs[0].displayBucket).to.equal('potential')
+    expect(expandedCatalogs[0].displayLabel).to.equal('Potential series')
   })
 
   it('builds catalog detail with gaps, decimal handling, disputes, and unsequenced books', async () => {
@@ -709,5 +734,50 @@ describe('SeriesReviewManager', () => {
 
     const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
     expect(updatedLibraryItem.media.series).to.have.length(0)
+  })
+
+  it('dismisses and restores a catalog without letting import overwrite the hidden state', async () => {
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Lost Fleet',
+        trustStatus: 'trusted',
+        entries: [
+          {
+            title: 'Dauntless',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          }
+        ]
+      }
+    ])
+
+    const catalogId = importResult.catalogs[0].id
+    const dismissedDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, catalogId, 'dismissed')
+    expect(dismissedDetail.catalog.visibilityStatus).to.equal('dismissed')
+    expect(dismissedDetail.catalog.displayBucket).to.equal('dismissed')
+
+    const visibleCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true, false)
+    expect(visibleCatalogs).to.have.length(0)
+
+    await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Lost Fleet',
+        trustStatus: 'trusted',
+        entries: [
+          {
+            title: 'Dauntless',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const withDismissed = await SeriesReviewManager.getCatalogsForLibrary(library.id, true, true)
+    expect(withDismissed).to.have.length(1)
+    expect(withDismissed[0].visibilityStatus).to.equal('dismissed')
+
+    const restoredDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, catalogId, 'visible')
+    expect(restoredDetail.catalog.visibilityStatus).to.equal('visible')
   })
 })

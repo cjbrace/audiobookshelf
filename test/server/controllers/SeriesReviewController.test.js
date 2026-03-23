@@ -150,7 +150,7 @@ describe('SeriesReviewController', () => {
 
     await SeriesReviewController.getCatalogs(req, res)
 
-    expect(SeriesReviewManager.getCatalogsForLibrary.calledOnceWithExactly('library-1', true)).to.be.true
+    expect(SeriesReviewManager.getCatalogsForLibrary.calledOnceWithExactly('library-1', true, false)).to.be.true
     expect(res.json.calledOnceWithExactly({ catalogs: [{ id: 'catalog-1' }] })).to.be.true
   })
 
@@ -352,6 +352,48 @@ describe('SeriesReviewController', () => {
 
     expect(SeriesReviewManager.queueCatalogCandidateForReview.calledOnceWithExactly('library-1', 'catalog-1', '3', 'item-1')).to.be.true
     expect(res.json.calledOnceWithExactly({ queued: true, libraryItemId: 'item-1' })).to.be.true
+  })
+
+  it('dismisses a catalog for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'setCatalogVisibilityForLibrary').resolves({ catalog: { id: 'catalog-1', visibilityStatus: 'dismissed' } })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.dismissCatalog(req, res)
+
+    expect(SeriesReviewManager.setCatalogVisibilityForLibrary.calledOnceWithExactly('library-1', 'catalog-1', 'dismissed')).to.be.true
+    expect(res.json.calledOnceWithExactly({ catalog: { id: 'catalog-1', visibilityStatus: 'dismissed' } })).to.be.true
+  })
+
+  it('restores a dismissed catalog for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'setCatalogVisibilityForLibrary').resolves({ catalog: { id: 'catalog-1', visibilityStatus: 'visible' } })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.undismissCatalog(req, res)
+
+    expect(SeriesReviewManager.setCatalogVisibilityForLibrary.calledOnceWithExactly('library-1', 'catalog-1', 'visible')).to.be.true
+    expect(res.json.calledOnceWithExactly({ catalog: { id: 'catalog-1', visibilityStatus: 'visible' } })).to.be.true
   })
 
   it('returns 400 instead of throwing when management preview input is invalid', async () => {

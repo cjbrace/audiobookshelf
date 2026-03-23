@@ -62,7 +62,8 @@ class SeriesReviewController {
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
 
     const includeUntrusted = req.query.includeUntrusted === '1'
-    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(req.library.id, includeUntrusted)
+    const includeDismissed = req.query.includeDismissed === '1'
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(req.library.id, includeUntrusted, includeDismissed)
     res.json({ catalogs })
   }
 
@@ -124,6 +125,24 @@ class SeriesReviewController {
     }
     if (!result) return res.sendStatus(404)
     res.json(result)
+  }
+
+  async dismissCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const detail = await SeriesReviewManager.setCatalogVisibilityForLibrary(req.library.id, req.params.catalogId, 'dismissed')
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
+  async undismissCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const detail = await SeriesReviewManager.setCatalogVisibilityForLibrary(req.library.id, req.params.catalogId, 'visible')
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
   }
 
   async previewManagementAction(req, res) {
