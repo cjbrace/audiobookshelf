@@ -73,28 +73,28 @@
 
         <div v-if="activeTab === 'queue'" class="bg-black/20 rounded-lg p-3 border border-white/10 mb-4">
           <div class="flex flex-wrap items-start gap-3">
-            <div class="grow min-w-[18rem]">
-              <p class="text-sm uppercase tracking-wide text-gray-400">Trusted Source Import</p>
-              <p class="text-base text-gray-100 mt-1">{{ sourceImportStatusText }}</p>
+            <button
+              type="button"
+              class="grow min-w-[18rem] text-left"
+              @click="sourceImportExpanded = !sourceImportExpanded"
+            >
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p class="text-sm uppercase tracking-wide text-gray-400">Trusted Source Import</p>
+                <span class="text-xs text-gray-500">{{ sourceImportExpanded ? 'Hide details' : 'Show details' }}</span>
+              </div>
+              <p class="text-base text-gray-100 mt-1">{{ sourceImportStatusLine }}</p>
+              <div v-if="sourceImportSummaryLine" class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-200">
+                <span v-for="entry in sourceImportSummaryLine" :key="entry">{{ entry }}</span>
+              </div>
               <p v-if="sourceImportStatus?.recent_warning" class="text-sm text-amber-200 mt-1">{{ sourceImportStatus.recent_warning }}</p>
               <p v-if="sourceImportError" class="text-sm text-red-200 mt-1">{{ sourceImportError }}</p>
-            </div>
+            </button>
             <div v-if="sourceImportDisplayJob" class="text-sm text-gray-300">
               <div>Job: {{ sourceImportDisplayJob.job_id }}</div>
-              <div v-if="sourceImportDisplayJob.finished_at_utc">Finished: {{ formatTime(sourceImportDisplayJob.finished_at_utc) }}</div>
             </div>
           </div>
 
-          <div v-if="sourceImportSummary" class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-200 mt-3">
-            <span>Books scanned: {{ sourceImportSummary.books_scanned || 0 }} / {{ sourceImportSummary.books_total || 0 }}</span>
-            <span>Lookups: {{ sourceImportSummary.source_lookups_attempted || 0 }}</span>
-            <span>Catalogs created: {{ sourceImportSummary.series_catalogs_created || 0 }}</span>
-            <span>Catalogs updated: {{ sourceImportSummary.series_catalogs_updated || 0 }}</span>
-            <span>Ambiguous: {{ sourceImportSummary.likely_ambiguous_matches || 0 }}</span>
-            <span>Failures: {{ sourceImportSummary.failures || 0 }}</span>
-          </div>
-
-          <div v-if="sourceImportFilterButtons.length" class="flex flex-wrap gap-2 mt-3">
+          <div v-if="sourceImportExpanded && sourceImportFilterButtons.length" class="flex flex-wrap gap-2 mt-3">
             <button
               v-for="button in sourceImportFilterButtons"
               :key="button.key"
@@ -107,7 +107,7 @@
             </button>
           </div>
 
-          <div v-if="sourceImportFilteredResults.length" class="mt-3 space-y-2">
+          <div v-if="sourceImportExpanded && sourceImportFilteredResults.length" class="mt-3 space-y-2">
             <div
               v-for="entry in sourceImportFilteredResults"
               :key="sourceImportResultFilter + ':' + entry.libraryItemId + ':' + (entry.title || entry.error)"
@@ -156,7 +156,7 @@
 
           <div v-else class="overflow-auto max-h-[70vh] border border-white/15 rounded">
             <table class="w-full text-base table-fixed">
-              <thead class="bg-black/30 sticky top-0">
+              <thead class="bg-slate-950 sticky top-0">
                 <tr>
                   <th class="text-left px-3 py-2 w-72">Book</th>
                   <th class="text-left px-3 py-2 w-72">Current Series</th>
@@ -173,6 +173,11 @@
                     <div v-if="row.hasPreviousSeriesEdit" class="mt-2">
                       <span class="inline-flex items-center px-2.5 py-1 rounded-full border border-amber-300/35 bg-amber-500/10 text-sm text-amber-50">
                         Previous series edit
+                      </span>
+                    </div>
+                    <div v-if="row.conflictSummary" class="mt-2">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-amber-300/35 bg-amber-500/10 text-xs text-amber-100">
+                        {{ row.conflictSummary }}
                       </span>
                     </div>
                     <p v-if="row.relPath" class="text-sm text-gray-400 mt-2 break-all">{{ row.relPath }}</p>
@@ -203,11 +208,6 @@
                     <p v-else class="text-gray-300">No current ABS series entries</p>
                   </td>
                   <td class="px-3 py-3">
-                    <div v-if="row.conflictSummary" class="mb-3">
-                      <span class="inline-flex items-center px-2.5 py-1 rounded-full border border-amber-300/35 bg-amber-500/10 text-sm text-amber-100">
-                        {{ row.conflictSummary }}
-                      </span>
-                    </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
                       <div
                         v-for="suggestion in getPrimarySuggestions(row)"
@@ -215,21 +215,22 @@
                         class="rounded border p-3"
                         :class="getSuggestionCardClass(suggestion)"
                       >
-                        <div class="flex items-start gap-2">
+                        <div class="flex items-start gap-3">
                           <div class="grow">
-                            <div class="text-xl font-semibold text-white">
+                            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-lg font-semibold text-white">
                               <template v-if="suggestion.kind === 'no_series'">No series suggested</template>
                               <template v-else>
-                                {{ suggestion.suggestedName }}
-                                <span v-if="suggestion.suggestedSequence" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-white/10 text-sm text-gray-100 border border-white/15">#{{ suggestion.suggestedSequence }}</span>
+                                <span>{{ suggestion.suggestedName }}</span>
+                                <span v-if="suggestion.suggestedSequence" class="inline-flex items-center px-2 py-0.5 rounded-full bg-white/10 text-xs text-gray-100 border border-white/15">#{{ suggestion.suggestedSequence }}</span>
                               </template>
                             </div>
-                            <p class="text-sm text-gray-300 mt-1">
-                              {{ suggestion.state === 'pending' ? 'Pending review' : formatDecisionState(suggestion) }}
-                            </p>
                             <p v-if="suggestion.previousDecision" class="text-sm mt-1" :class="suggestion.hasMeaningfulUpdateSinceDecision ? 'text-amber-200' : 'text-gray-400'">
                               {{ formatPreviousDecision(suggestion) }}
                             </p>
+                            <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400">
+                              <span>Seen {{ formatTime(suggestion.firstSeenAt) }}</span>
+                              <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt">Updated {{ formatTime(suggestion.lastSeenAt) }}</span>
+                            </div>
                           </div>
                           <div class="text-xs text-gray-400 whitespace-nowrap">{{ suggestion.sourceCount }} source<span v-if="suggestion.sourceCount !== 1">s</span></div>
                         </div>
@@ -260,10 +261,6 @@
                         </div>
 
                         <div class="mt-3 text-sm text-gray-300 space-y-1">
-                          <p>
-                            Seen {{ formatTime(suggestion.firstSeenAt) }}
-                            <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt">, updated {{ formatTime(suggestion.lastSeenAt) }}</span>
-                          </p>
                           <p v-if="suggestion.evidenceSummary?.automatedAgreement" class="text-emerald-200">
                             Cross-check agreement: FictionDB + Wikidata agree
                           </p>
@@ -284,16 +281,15 @@
                             :key="suggestion.id + ':detail:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
                             class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
                           >
-                            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
-                              <span class="text-xs text-gray-400">{{ contribution.roleLabel }}</span>
+                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <span class="font-medium text-white">{{ getSourceDisplayName(contribution.source) }}</span>
                               <span v-if="contribution.noSeries" class="text-red-200">No series evidence</span>
                               <span v-else>
                                 {{ contribution.seriesName }}
                                 <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
                               </span>
                               <span v-if="contribution.confidence !== null && contribution.confidence !== undefined" class="text-gray-400">
-                                confidence {{ formatConfidence(contribution.confidence) }}
+                                conf: {{ formatConfidence(contribution.confidence) }}
                               </span>
                             </div>
                             <p v-if="contribution.notes" class="mt-1 text-gray-300">{{ contribution.notes }}</p>
@@ -800,7 +796,8 @@ export default {
       sourceImportError: '',
       sourceImportStarting: false,
       sourceImportResultFilter: '',
-      sourceImportPollHandle: null
+      sourceImportPollHandle: null,
+      sourceImportExpanded: false
     }
   },
   computed: {
@@ -841,6 +838,32 @@ export default {
       if (this.sourceImportDisplayJob?.status_label) return `Last run: ${this.sourceImportDisplayJob.status_label}`
       return 'No trusted source import has run for this library yet.'
     },
+    sourceImportStatusLine() {
+      const baseText = this.sourceImportStatusText
+      const finishedAt = this.sourceImportDisplayJob?.finished_at_utc
+      if (!finishedAt || this.sourceImportStatus?.has_active_run) return baseText
+      return `${baseText} ${this.formatTime(finishedAt)}`
+    },
+    sourceImportSummaryLine() {
+      const summary = this.sourceImportSummary
+      if (!summary) return []
+      const counts = this.sourceImportExpanded
+        ? [
+            `Scanned: ${summary.books_scanned || 0} / ${summary.books_total || 0}`,
+            `Lookups: ${summary.source_lookups_attempted || 0}`,
+            `Cats created: ${summary.series_catalogs_created || 0}`,
+            `Cats updated: ${summary.series_catalogs_updated || 0}`,
+            `Ambiguous: ${summary.likely_ambiguous_matches || 0}`,
+            `Failures: ${summary.failures || 0}`
+          ]
+        : [
+            `Scanned: ${summary.books_scanned || 0} / ${summary.books_total || 0}`,
+            `Lookups: ${summary.source_lookups_attempted || 0}`,
+            `Conflicts: ${summary.new_conflicts_count || 0}`,
+            `Failures: ${summary.failures || 0}`
+          ]
+      return counts
+    },
     sourceImportFilterButtons() {
       const summary = this.sourceImportSummary
       if (!summary) return []
@@ -876,10 +899,18 @@ export default {
       }
     },
     formatTime(value) {
-      return value ? new Date(value).toLocaleString() : '-'
+      if (!value) return '-'
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return '-'
+      const pad = (part) => String(part).padStart(2, '0')
+      return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${pad(date.getFullYear() % 100)} ${pad(date.getHours())}:${pad(date.getMinutes())}`
     },
     formatConfidence(value) {
       return Number(value).toFixed(2)
+    },
+    getSourceDisplayName(source) {
+      const key = String(source || '').toLowerCase()
+      return SOURCE_LEGEND[key]?.name || source || 'Unknown source'
     },
     formatAuthors(authors) {
       return (authors || []).map((author) => author.name).join(', ') || '-'
