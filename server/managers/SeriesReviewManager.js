@@ -537,6 +537,10 @@ class SeriesReviewManager {
       .filter(Boolean)
   }
 
+  getCatalogEntryTitleKey(value) {
+    return this.normalizeKeyPart(value || '')
+  }
+
   buildSeriesReviewCatalogPayload(catalog, action = null) {
     return {
       id: catalog.id,
@@ -826,7 +830,7 @@ class SeriesReviewManager {
     }
   }
 
-  finalizeCatalogSlots(slotMap, selectionBySlot, localBooks) {
+  finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = []) {
     const integerSlots = []
     for (const slot of slotMap.keys()) {
       if (this.isIntegerCatalogSlot(slot)) integerSlots.push(Number(slot))
@@ -876,9 +880,39 @@ class SeriesReviewManager {
     })
 
     const unsequencedBooks = localBooks.filter((book) => !book.sequence)
+    const coveredTitleKeys = new Set()
+    localBooks
+      .filter((book) => !!book.sequence)
+      .forEach((book) => {
+        const key = this.getCatalogEntryTitleKey(book.title)
+        if (key) coveredTitleKeys.add(key)
+      })
+    slots.forEach((slot) => {
+      ;(slot.choices || []).forEach((choice) => {
+        const key = this.getCatalogEntryTitleKey(choice.title)
+        if (key) coveredTitleKeys.add(key)
+      })
+    })
+
+    const unsequencedSourceEntries = entries
+      .filter((entry) => !entry.coveredSlots.length)
+      .filter((entry) => {
+        const key = this.getCatalogEntryTitleKey(entry.title)
+        return key && !coveredTitleKeys.has(key)
+      })
+      .map((entry) => ({
+        entryKey: entry.entryKey,
+        title: entry.title,
+        authors: entry.authors || [],
+        publishedDate: entry.publishedDate || null,
+        sequenceLabel: entry.sequenceLabel || null,
+        sourceSupport: this.buildCatalogSourceSupport(entry.sources)
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title))
     return {
       slots,
-      unsequencedBooks
+      unsequencedBooks,
+      unsequencedSourceEntries
     }
   }
 
@@ -929,7 +963,7 @@ class SeriesReviewManager {
       })
     })
 
-    const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks)
+    const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks, entries)
     const displayBucket = this.getCatalogDisplayBucket({
       trustStatus: catalog.trustStatus,
       visibilityStatus: catalog.visibilityStatus,
@@ -945,6 +979,7 @@ class SeriesReviewManager {
       },
       localBooks,
       unsequencedBooks: finalized.unsequencedBooks,
+      unsequencedSourceEntries: finalized.unsequencedSourceEntries,
       slots: finalized.slots
     }
   }

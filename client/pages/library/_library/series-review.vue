@@ -803,6 +803,33 @@
                       </p>
                     </div>
                   </div>
+
+                  <div v-if="selectedCatalogDetail.unsequencedSourceEntries?.length" class="rounded border border-white/10 bg-black/20 p-3">
+                    <h3 class="text-base font-semibold">Unsequenced source entries</h3>
+                    <div class="mt-2 space-y-2">
+                      <div
+                        v-for="entry in selectedCatalogDetail.unsequencedSourceEntries"
+                        :key="'unseq-source:' + entry.entryKey"
+                        class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
+                      >
+                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <span class="text-base font-semibold text-white">{{ entry.title }}</span>
+                          <span v-if="entry.publishedDate" class="text-sm text-gray-400">{{ entry.publishedDate }}</span>
+                        </div>
+                        <p v-if="formatAuthors(entry.authors)" class="text-sm text-gray-300 mt-1">{{ formatAuthors(entry.authors) }}</p>
+                        <div v-if="entry.sourceSupport?.length" class="mt-2 flex flex-wrap gap-2">
+                          <span
+                            v-for="source in entry.sourceSupport"
+                            :key="entry.entryKey + ':source:' + source.source + ':' + (source.evidenceUrl || '')"
+                            class="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50"
+                          >
+                            <span>{{ source.label || source.source }}</span>
+                            <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">{{ formatConfidence(source.confidence) }}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

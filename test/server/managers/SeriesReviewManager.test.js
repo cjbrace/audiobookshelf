@@ -629,6 +629,51 @@ describe('SeriesReviewManager', () => {
     expect(detail.unsequencedBooks.map((book) => book.title)).to.deep.equal(['Expanse Stories'])
   })
 
+  it('keeps source-only unsequenced continuation entries visible in catalog detail', async () => {
+    await createBookFixture({
+      title: 'Dune',
+      currentSeries: [{ name: 'Dune', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Dune Messiah',
+      currentSeries: [{ name: 'Dune', sequence: '2' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Dune',
+        entries: [
+          {
+            title: 'Dune',
+            authors: ['Frank Herbert'],
+            sequence: '',
+            publishedDate: '1965',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          },
+          {
+            title: 'Dune Messiah',
+            authors: ['Frank Herbert'],
+            sequence: '',
+            publishedDate: '1970',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          },
+          {
+            title: 'House Atreides',
+            authors: ['Brian Herbert; Anderson, Kevin J.'],
+            sequence: '',
+            publishedDate: 'Oct-1999',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(detail.slots.map((slot) => slot.slot)).to.deep.equal(['1', '2'])
+    expect(detail.unsequencedSourceEntries.map((entry) => entry.title)).to.deep.equal(['House Atreides'])
+    expect(detail.unsequencedSourceEntries[0].authors).to.deep.equal(['Brian Herbert; Anderson, Kevin J.'])
+  })
+
   it('stores preferred slot interpretations for disputed catalog slots', async () => {
     const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {
