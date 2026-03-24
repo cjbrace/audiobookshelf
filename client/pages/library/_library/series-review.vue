@@ -849,7 +849,7 @@
                               <div class="rounded border border-white/10 bg-black/20 p-3 space-y-3">
                                 <div class="flex flex-wrap items-center gap-3">
                                   <div class="text-sm text-gray-300">
-                                    {{ catalogCandidateResultsBySlot[getCatalogRowKey(row)].results.length }} plausible candidate<span v-if="catalogCandidateResultsBySlot[getCatalogRowKey(row)].results.length !== 1">s</span>
+                                    {{ getVisibleCatalogCandidates(getCatalogRowKey(row)).length }} of {{ catalogCandidateResultsBySlot[getCatalogRowKey(row)].results.length }} plausible candidate<span v-if="catalogCandidateResultsBySlot[getCatalogRowKey(row)].results.length !== 1">s</span>
                                   </div>
                                   <div class="grow" />
                                   <ui-btn
@@ -860,7 +860,20 @@
                                     Close
                                   </ui-btn>
                                 </div>
+                                <label class="block text-sm text-gray-300">
+                                  <span class="mb-1 block text-xs uppercase tracking-wide text-gray-500">Filter candidates</span>
+                                  <input
+                                    :value="getCatalogCandidateFilter(getCatalogRowKey(row))"
+                                    type="text"
+                                    class="w-full rounded border border-white/15 bg-black/25 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:border-sky-300/40 focus:outline-none"
+                                    placeholder="Filter by candidate title or author"
+                                    @input="setCatalogCandidateFilter(getCatalogRowKey(row), $event.target.value)"
+                                  />
+                                </label>
                                 <div class="max-h-[26rem] overflow-y-auto space-y-3 pr-1">
+                                  <div v-if="!getVisibleCatalogCandidates(getCatalogRowKey(row)).length" class="rounded border border-white/10 bg-black/15 px-3 py-4 text-sm text-gray-400">
+                                    No plausible candidates match the current filter.
+                                  </div>
                                   <div
                                     v-for="candidate in getVisibleCatalogCandidates(getCatalogRowKey(row))"
                                     :key="getCatalogRowKey(row) + ':' + candidate.libraryItemId"
@@ -996,6 +1009,7 @@ export default {
       catalogCandidateQueueLoadingKey: '',
       catalogVisibilityLoadingKey: '',
       catalogCandidateResultsBySlot: {},
+      catalogCandidateFilterBySlot: {},
       catalogListCache: {},
       catalogDetailCache: {},
       sourceImportStatus: null,
@@ -1437,11 +1451,30 @@ export default {
     getCatalogLocalCoverageEmptyText(row) {
       return row?.rowType === 'unsequenced' ? 'No local book matches this entry' : 'No local book covers this slot'
     },
+    getCatalogCandidateFilter(rowKey) {
+      return this.catalogCandidateFilterBySlot[rowKey] || ''
+    },
+    setCatalogCandidateFilter(rowKey, value) {
+      const normalized = String(value || '').trimStart()
+      if (!normalized) {
+        this.$delete(this.catalogCandidateFilterBySlot, rowKey)
+        return
+      }
+      this.$set(this.catalogCandidateFilterBySlot, rowKey, normalized)
+    },
     getVisibleCatalogCandidates(rowKey) {
-      return this.catalogCandidateResultsBySlot[rowKey]?.results || []
+      const results = this.catalogCandidateResultsBySlot[rowKey]?.results || []
+      const query = String(this.getCatalogCandidateFilter(rowKey) || '').trim().toLowerCase()
+      if (!query) return results
+      return results.filter((candidate) => {
+        const authorText = Array.isArray(candidate?.authors) ? candidate.authors.map((author) => author?.name || '').join(' ') : ''
+        const haystack = `${candidate?.title || ''} ${authorText}`.toLowerCase()
+        return haystack.includes(query)
+      })
     },
     closeCatalogCandidates(rowKey) {
       this.$delete(this.catalogCandidateResultsBySlot, rowKey)
+      this.$delete(this.catalogCandidateFilterBySlot, rowKey)
     },
     formatSeriesList(seriesList) {
       return (seriesList || [])
@@ -1601,6 +1634,7 @@ export default {
       }
       this.selectedCatalogId = catalogId
       this.catalogCandidateResultsBySlot = {}
+      this.catalogCandidateFilterBySlot = {}
       if (preferCache && this.catalogDetailCache[catalogId]) {
         if (updateView) this.selectedCatalogDetail = this.catalogDetailCache[catalogId]
       }
@@ -1671,6 +1705,7 @@ export default {
         )
         this.$toast.success(`Queued ${response.title} for review`)
         this.$delete(this.catalogCandidateResultsBySlot, rowKey)
+        this.$delete(this.catalogCandidateFilterBySlot, rowKey)
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to queue candidate for review')
       } finally {
