@@ -517,11 +517,11 @@
             <div class="space-y-4">
               <div class="flex flex-wrap items-center gap-3">
                 <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                  <input v-model="includeUntrustedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="loadCatalogs" />
+                  <input v-model="includeUntrustedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="handleCatalogFilterChange" />
                   <span>Show less-trusted series</span>
                 </label>
                 <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                  <input v-model="includeDismissedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="loadCatalogs" />
+                  <input v-model="includeDismissedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="handleCatalogFilterChange" />
                   <span>Show dismissed series</span>
                 </label>
               </div>
@@ -530,7 +530,7 @@
                 No series detail catalogs are stored yet.
               </div>
 
-              <div v-else class="grid grid-cols-1 xl:grid-cols-[24rem_minmax(0,1fr)] gap-4">
+              <div v-else class="grid grid-cols-1 xl:grid-cols-[26rem_minmax(0,1fr)] gap-4">
                 <div class="rounded border border-white/15 bg-black/15 p-3 max-h-[72vh] overflow-y-auto self-start space-y-4">
                   <div
                     v-for="section in catalogBucketSections"
@@ -557,7 +557,7 @@
                           </p>
                         </div>
                         <span
-                          class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none"
                           :class="getCatalogBucketPillClass(catalog.displayBucket)"
                         >
                           {{ catalog.displayLabel }}
@@ -615,37 +615,20 @@
                   </div>
 
                   <div class="overflow-auto border border-white/10 rounded">
-                    <table class="w-full text-sm table-fixed">
+                    <table class="w-full min-w-[74rem] text-sm">
                       <thead class="bg-black/30">
                         <tr>
-                          <th class="text-left px-3 py-2 w-28">Action</th>
-                          <th class="text-left px-3 py-2 w-28 font-semibold">Series No</th>
-                          <th class="text-left px-3 py-2 w-32">Status</th>
+                          <th class="text-left px-3 py-2 w-24 font-semibold">Series No</th>
+                          <th class="text-left px-3 py-2 w-28">Status</th>
                           <th class="text-left px-3 py-2 w-40">Sources</th>
                           <th class="text-left px-3 py-2">Expected title</th>
-                          <th class="text-left px-3 py-2 w-80">Local coverage</th>
+                          <th class="text-left px-3 py-2 min-w-[22rem]">Local coverage</th>
+                          <th class="text-right px-3 py-2 w-44">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         <template v-for="slot in selectedCatalogDetail.slots">
                           <tr :key="slot.slot" class="border-t border-white/10 align-top">
-                            <td class="px-3 py-3">
-                              <div class="space-y-2">
-                                <ui-btn
-                                  v-if="slot.status === 'missing' || slot.status === 'disputed'"
-                                  small
-                                  color="bg-bg border border-white/20"
-                                  :disabled="slot.status === 'disputed' && !slot.selectedEntryKey"
-                                  :loading="catalogCandidateSearchLoadingKey === `${selectedCatalogDetail.catalog.id}:${slot.slot}`"
-                                  @click="findCatalogCandidates(slot)"
-                                >
-                                  Find candidates
-                                </ui-btn>
-                                <p v-if="slot.status === 'disputed' && !slot.selectedEntryKey" class="text-xs text-amber-200">
-                                  Choose a preferred match first
-                                </p>
-                              </div>
-                            </td>
                             <td class="px-3 py-3 font-semibold text-base text-gray-100">{{ slot.slot }}</td>
                             <td class="px-3 py-3">
                               <span
@@ -670,8 +653,11 @@
                             </td>
                             <td class="px-3 py-3">
                               <div v-if="slot.choices.length <= 1" class="space-y-1 text-gray-200">
-                                <p v-if="slot.expectedTitle" class="text-base font-semibold text-white">{{ slot.expectedTitle }}</p>
-                                <p v-if="slot.expectedAuthors && slot.expectedAuthors.length" class="text-sm text-gray-400">{{ slot.expectedAuthors.join(', ') }}</p>
+                                <div v-if="slot.expectedTitle" class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                  <span class="text-lg font-semibold text-white">{{ getCatalogExpectedDisplay(slot).title }}</span>
+                                  <span v-if="getCatalogExpectedDisplay(slot).dateLabel" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(slot).dateLabel }}</span>
+                                </div>
+                                <p v-if="getCatalogExpectedDisplay(slot).subtitle" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(slot).subtitle }}</p>
                                 <p v-if="!slot.expectedTitle" class="text-sm text-gray-500">No expected title known</p>
                               </div>
 
@@ -683,8 +669,11 @@
                                 >
                                   <div class="flex flex-wrap items-start gap-2">
                                     <div class="grow">
-                                      <p class="text-base font-semibold text-white">{{ choice.title }}</p>
-                                      <p v-if="choice.authors && choice.authors.length" class="text-sm text-gray-400 mt-1">{{ choice.authors.join(', ') }}</p>
+                                      <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                        <p class="text-base font-semibold text-white">{{ getCatalogExpectedDisplay(choice).title }}</p>
+                                        <p v-if="getCatalogExpectedDisplay(choice).dateLabel" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(choice).dateLabel }}</p>
+                                      </div>
+                                      <p v-if="getCatalogExpectedDisplay(choice).subtitle" class="text-sm text-gray-400 mt-1">{{ getCatalogExpectedDisplay(choice).subtitle }}</p>
                                     </div>
                                     <span v-if="choice.sequenceLabel" class="text-xs text-gray-400 mt-1">{{ choice.sequenceLabel }}</span>
                                     <ui-btn
@@ -706,12 +695,32 @@
                                   :key="slot.slot + ':' + book.libraryItemId"
                                   class="rounded border border-white/10 bg-black/15 px-3 py-2"
                                 >
-                                  <p class="font-medium text-white">{{ book.title }}</p>
-                                  <p v-if="book.sequence" class="text-xs text-gray-400 mt-1">Series no: {{ book.sequence }}</p>
+                                  <nuxt-link :to="`/item/${book.libraryItemId}`" target="_blank" class="block font-semibold text-white hover:underline">
+                                    {{ book.title }}
+                                  </nuxt-link>
+                                  <p v-if="formatCatalogLocalSeries(book)" class="text-sm text-gray-300 mt-1">{{ formatCatalogLocalSeries(book) }}</p>
                                   <p v-if="book.relPath" class="text-xs text-gray-500 mt-1 break-all">{{ book.relPath }}</p>
                                 </div>
                               </div>
                               <p v-else class="text-gray-500">No local book covers this slot</p>
+                            </td>
+                            <td class="px-3 py-3">
+                              <div class="flex flex-col items-end gap-2">
+                                <ui-btn
+                                  v-if="slot.status === 'missing' || slot.status === 'disputed'"
+                                  small
+                                  color="bg-bg border border-white/20"
+                                  class="w-36 justify-center text-center"
+                                  :disabled="slot.status === 'disputed' && !slot.selectedEntryKey"
+                                  :loading="catalogCandidateSearchLoadingKey === `${selectedCatalogDetail.catalog.id}:${slot.slot}`"
+                                  @click="findCatalogCandidates(slot)"
+                                >
+                                  Find candidates
+                                </ui-btn>
+                                <p v-if="slot.status === 'disputed' && !slot.selectedEntryKey" class="max-w-[11rem] text-right text-xs text-amber-200">
+                                  Choose a preferred match first
+                                </p>
+                              </div>
                             </td>
                           </tr>
                           <tr v-if="catalogCandidateResultsBySlot[slot.slot]" :key="slot.slot + ':candidates'" class="border-t border-white/5 bg-black/10">
@@ -813,6 +822,9 @@ const SOURCE_LEGEND = {
   fantasticfiction: { code: 'FF', name: 'Fantastic Fiction', url: 'https://www.fantasticfiction.com/' }
 }
 
+const CATALOG_LIST_CACHE_PREFIX = 'series-review:catalog-list:'
+const CATALOG_DETAIL_CACHE_KEY = 'series-review:catalog-detail-cache'
+
 export default {
   async asyncData({ redirect, store, params }) {
     if (!store.getters['user/getIsAdminOrUp']) {
@@ -856,6 +868,7 @@ export default {
       catalogCandidateQueueLoadingKey: '',
       catalogVisibilityLoadingKey: '',
       catalogCandidateResultsBySlot: {},
+      catalogListCache: {},
       catalogDetailCache: {},
       sourceImportStatus: null,
       sourceImportError: '',
@@ -972,7 +985,9 @@ export default {
     }
   },
   mounted() {
+    this.hydrateCatalogCaches()
     this.loadQueue()
+    this.prefetchCatalogData()
   },
   beforeDestroy() {
     this.stopSourceImportPolling()
@@ -1095,6 +1110,78 @@ export default {
       if (bucket === 'dismissed') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
+    catalogListCacheKey(includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
+      return `${CATALOG_LIST_CACHE_PREFIX}${includeUntrusted ? 1 : 0}:${includeDismissed ? 1 : 0}`
+    },
+    persistCatalogCaches() {
+      if (!process.client) return
+      try {
+        Object.entries(this.catalogListCache || {}).forEach(([key, value]) => {
+          window.sessionStorage.setItem(key, JSON.stringify(value || []))
+        })
+        window.sessionStorage.setItem(CATALOG_DETAIL_CACHE_KEY, JSON.stringify(this.catalogDetailCache || {}))
+      } catch {}
+    },
+    hydrateCatalogCaches() {
+      if (!process.client) return
+      try {
+        const catalogListCache = {}
+        Object.keys(window.sessionStorage)
+          .filter((key) => key.startsWith(CATALOG_LIST_CACHE_PREFIX))
+          .forEach((key) => {
+            const parsed = JSON.parse(window.sessionStorage.getItem(key) || '[]')
+            if (Array.isArray(parsed)) catalogListCache[key] = parsed
+          })
+        this.catalogListCache = catalogListCache
+
+        const detailCacheRaw = window.sessionStorage.getItem(CATALOG_DETAIL_CACHE_KEY)
+        if (detailCacheRaw) {
+          const parsed = JSON.parse(detailCacheRaw)
+          if (parsed && typeof parsed === 'object') this.catalogDetailCache = parsed
+        }
+      } catch {}
+    },
+    setCatalogListCache(catalogs, includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
+      const key = this.catalogListCacheKey(includeUntrusted, includeDismissed)
+      this.$set(this.catalogListCache, key, catalogs || [])
+      this.persistCatalogCaches()
+    },
+    getCatalogListCache(includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
+      return this.catalogListCache[this.catalogListCacheKey(includeUntrusted, includeDismissed)] || []
+    },
+    applyCatalogSeries(catalogs) {
+      this.catalogSeries = catalogs || []
+      if (this.catalogSeries.length) {
+        const nextId = this.catalogSeries.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : this.catalogSeries[0].id
+        this.selectCatalog(nextId, { preferCache: true })
+      } else {
+        this.selectedCatalogId = ''
+        this.selectedCatalogDetail = null
+      }
+    },
+    getCatalogExpectedDisplay(slotOrChoice) {
+      const title = String(slotOrChoice?.expectedTitle || slotOrChoice?.title || '').trim()
+      const subtitleItems = Array.isArray(slotOrChoice?.expectedAuthors) ? slotOrChoice.expectedAuthors : Array.isArray(slotOrChoice?.authors) ? slotOrChoice.authors : []
+      const publishedDate = String(slotOrChoice?.expectedPublishedDate || slotOrChoice?.publishedDate || '').trim()
+      const dateLikeTitle = /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[-/\s]?\d{2,4}$/i.test(title) || /^\d{4}(?:-\d{2}(?:-\d{2})?)?$/.test(title)
+      const subtitle = subtitleItems.filter(Boolean).join(', ')
+      if (dateLikeTitle && subtitleItems.length === 1) {
+        return {
+          title: subtitleItems[0],
+          dateLabel: title,
+          subtitle: ''
+        }
+      }
+      return {
+        title,
+        dateLabel: publishedDate,
+        subtitle
+      }
+    },
+    formatCatalogLocalSeries(book) {
+      if (!book?.seriesName) return ''
+      return book.sequence ? `${book.seriesName} #${book.sequence}` : book.seriesName
+    },
     getCatalogAuthorLine(detail) {
       if (!detail) return ''
       const authors = new Set()
@@ -1159,6 +1246,13 @@ export default {
       if (!this.sourceImportPollHandle) return
       clearInterval(this.sourceImportPollHandle)
       this.sourceImportPollHandle = null
+    },
+    async prefetchCatalogData() {
+      await this.fetchCatalogList({ includeUntrusted: false, includeDismissed: false, updateView: this.activeTab === 'catalog', prefetchOnly: this.activeTab !== 'catalog' })
+      await this.fetchCatalogList({ includeUntrusted: true, includeDismissed: true, updateView: false, prefetchOnly: true })
+    },
+    async handleCatalogFilterChange() {
+      await this.loadCatalogs({ preferCache: true })
     },
     async loadSourceImportStatus({ silent = false } = {}) {
       try {
@@ -1229,51 +1323,61 @@ export default {
         this.managementLoading = false
       }
     },
-    async loadCatalogs() {
-      this.catalogLoading = true
-      this.errorMessage = ''
-      try {
-        const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/catalog`, {
-          params: {
-            includeUntrusted: this.includeUntrustedCatalogs ? 1 : 0,
-            includeDismissed: this.includeDismissedCatalogs ? 1 : 0
-          }
-        })
-        this.catalogSeries = response.catalogs || []
-        if (this.catalogSeries.length) {
-          const nextId = this.catalogSeries.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : this.catalogSeries[0].id
-          await this.selectCatalog(nextId, { preferCache: true })
-        } else {
-          this.selectedCatalogId = ''
-          this.selectedCatalogDetail = null
+    async fetchCatalogList({ includeUntrusted, includeDismissed, updateView = false, prefetchOnly = false } = {}) {
+      const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/catalog`, {
+        params: {
+          includeUntrusted: includeUntrusted ? 1 : 0,
+          includeDismissed: includeDismissed ? 1 : 0
         }
-        this.lastLoadedAt = new Date().toISOString()
+      })
+      const catalogs = response.catalogs || []
+      this.setCatalogListCache(catalogs, includeUntrusted, includeDismissed)
+      if (catalogs.length && !this.catalogDetailCache[catalogs[0].id]) {
+        await this.selectCatalog(catalogs[0].id, { preferCache: true, skipLoading: true, updateView })
+      }
+      if (updateView) this.applyCatalogSeries(catalogs)
+      if (!prefetchOnly) this.lastLoadedAt = new Date().toISOString()
+      return catalogs
+    },
+    async loadCatalogs({ preferCache = true } = {}) {
+      this.errorMessage = ''
+      const cachedCatalogs = preferCache ? this.getCatalogListCache() : []
+      const shouldShowLoading = !cachedCatalogs.length && !this.catalogSeries.length
+      if (cachedCatalogs.length) this.applyCatalogSeries(cachedCatalogs)
+      this.catalogLoading = shouldShowLoading
+      try {
+        await this.fetchCatalogList({
+          includeUntrusted: this.includeUntrustedCatalogs,
+          includeDismissed: this.includeDismissedCatalogs,
+          updateView: true
+        })
       } catch (error) {
         this.errorMessage = error?.response?.data || 'Failed to load series detail catalogs'
       } finally {
         this.catalogLoading = false
       }
     },
-    async selectCatalog(catalogId, { preferCache = false } = {}) {
+    async selectCatalog(catalogId, { preferCache = false, skipLoading = false, updateView = true } = {}) {
       if (!catalogId) {
         this.selectedCatalogId = ''
         this.selectedCatalogDetail = null
         return
       }
       this.selectedCatalogId = catalogId
+      this.catalogCandidateResultsBySlot = {}
       if (preferCache && this.catalogDetailCache[catalogId]) {
-        this.selectedCatalogDetail = this.catalogDetailCache[catalogId]
+        if (updateView) this.selectedCatalogDetail = this.catalogDetailCache[catalogId]
       }
-      this.catalogLoading = true
+      if (!skipLoading && !(preferCache && this.catalogDetailCache[catalogId])) this.catalogLoading = true
       try {
         const detail = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}`)
         this.$set(this.catalogDetailCache, catalogId, detail)
-        if (this.selectedCatalogId === catalogId) this.selectedCatalogDetail = detail
-        this.catalogCandidateResultsBySlot = {}
+        this.persistCatalogCaches()
+        if (updateView && this.selectedCatalogId === catalogId) this.selectedCatalogDetail = detail
       } catch (error) {
         this.errorMessage = error?.response?.data || 'Failed to load series detail'
       } finally {
-        this.catalogLoading = false
+        if (!skipLoading || !this.catalogDetailCache[catalogId]) this.catalogLoading = false
       }
     },
     async chooseCatalogSlot(choice, slot) {
@@ -1288,9 +1392,10 @@ export default {
           }
         )
         this.$set(this.catalogDetailCache, this.selectedCatalogDetail.catalog.id, this.selectedCatalogDetail)
+        this.persistCatalogCaches()
         this.$delete(this.catalogCandidateResultsBySlot, slot.slot)
         this.$toast.success('Preferred interpretation updated')
-        await this.loadCatalogs()
+        await this.loadCatalogs({ preferCache: true })
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to update slot interpretation')
       } finally {
@@ -1339,8 +1444,9 @@ export default {
       try {
         const detail = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalog.id}/dismiss`)
         this.$set(this.catalogDetailCache, catalog.id, detail)
+        this.persistCatalogCaches()
         this.$toast.success('Series hidden from future scans and default detail view')
-        await this.loadCatalogs()
+        await this.loadCatalogs({ preferCache: true })
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to dismiss series')
       } finally {
@@ -1352,8 +1458,9 @@ export default {
       try {
         const detail = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalog.id}/undismiss`)
         this.$set(this.catalogDetailCache, catalog.id, detail)
+        this.persistCatalogCaches()
         this.$toast.success('Series restored')
-        await this.loadCatalogs()
+        await this.loadCatalogs({ preferCache: true })
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to restore series')
       } finally {

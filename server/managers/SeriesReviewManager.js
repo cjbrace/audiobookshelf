@@ -511,6 +511,7 @@ class SeriesReviewManager {
         const sequenceLabel = String(entry?.sequenceLabel || entry?.sequence || '')
           .trim()
           .replace(/\s+/g, ' ')
+        const publishedDate = this.normalizeSeriesName(entry?.publishedDate || entry?.releaseDate || '')
         const explicitCoveredSlots = Array.isArray(entry?.coveredSlots)
           ? entry.coveredSlots
               .map((slot) => this.normalizeCatalogSlotToken(slot))
@@ -527,6 +528,7 @@ class SeriesReviewManager {
           entryKey: this.buildCatalogEntryKey({ title, sequenceLabel }),
           title,
           authors,
+          publishedDate: publishedDate || null,
           sequenceLabel: sequenceLabel || null,
           coveredSlots,
           sources
@@ -853,10 +855,12 @@ class SeriesReviewManager {
       if (selectedChoice) {
         slot.expectedTitle = selectedChoice.title
         slot.expectedAuthors = selectedChoice.authors || []
+        slot.expectedPublishedDate = selectedChoice.publishedDate || null
         slot.sourceSupport = selectedChoice.sources
       } else if (slot.choices.length === 1) {
         slot.expectedTitle = slot.choices[0].title
         slot.expectedAuthors = slot.choices[0].authors || []
+        slot.expectedPublishedDate = slot.choices[0].publishedDate || null
         slot.sourceSupport = slot.choices[0].sources
       }
 
@@ -918,6 +922,7 @@ class SeriesReviewManager {
           entryKey: entry.entryKey,
           title: entry.title,
           authors: entry.authors,
+          publishedDate: entry.publishedDate || null,
           sequenceLabel: entry.sequenceLabel,
           sources: this.buildCatalogSourceSupport(entry.sources)
         })

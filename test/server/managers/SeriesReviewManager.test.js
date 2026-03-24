@@ -493,6 +493,7 @@ describe('SeriesReviewManager', () => {
           {
             title: 'Leviathan Wakes',
             sequence: '1',
+            publishedDate: 'Jun-2011',
             sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
           },
           {
