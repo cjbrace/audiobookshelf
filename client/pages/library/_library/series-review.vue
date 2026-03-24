@@ -1091,15 +1091,14 @@ export default {
     },
     catalogCategoryOptions() {
       const bucketOrder = ['trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
+      const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
       const bucketCounts = new Map()
-      ;(this.catalogSeries || []).forEach((catalog) => {
+      ;(countCatalogs || []).forEach((catalog) => {
         const bucket = String(catalog?.displayBucket || '').trim()
         if (!bucket) return
         bucketCounts.set(bucket, (bucketCounts.get(bucket) || 0) + 1)
       })
-      return bucketOrder
-        .filter((bucket) => bucketCounts.has(bucket))
-        .map((bucket) => ({
+      return bucketOrder.map((bucket) => ({
           bucket,
           label: this.getCatalogBucketLabel(bucket),
           count: bucketCounts.get(bucket) || 0
@@ -1278,8 +1277,20 @@ export default {
       if (bucket === 'dismissed') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
-    setCatalogCategoryFilter(bucket) {
-      this.catalogCategoryFilter = this.catalogCategoryFilter === bucket ? '' : bucket
+    async setCatalogCategoryFilter(bucket) {
+      const nextBucket = this.catalogCategoryFilter === bucket ? '' : bucket
+      const nextIncludeUntrusted =
+        nextBucket === 'potential' || nextBucket === 'less_trusted' ? true : this.includeUntrustedCatalogs
+      const nextIncludeDismissed = nextBucket === 'dismissed' ? true : this.includeDismissedCatalogs
+
+      this.catalogCategoryFilter = nextBucket
+      if (nextIncludeUntrusted !== this.includeUntrustedCatalogs || nextIncludeDismissed !== this.includeDismissedCatalogs) {
+        this.includeUntrustedCatalogs = nextIncludeUntrusted
+        this.includeDismissedCatalogs = nextIncludeDismissed
+        await this.loadCatalogs({ preferCache: true })
+        return
+      }
+
       const visibleCatalogs = this.filteredCatalogSeries
       if (!visibleCatalogs.length) {
         this.selectedCatalogId = ''
@@ -1471,6 +1482,12 @@ export default {
       await this.fetchCatalogList({ includeUntrusted: true, includeDismissed: true, updateView: false, prefetchOnly: true })
     },
     async handleCatalogFilterChange() {
+      if (!this.includeUntrustedCatalogs && (this.catalogCategoryFilter === 'potential' || this.catalogCategoryFilter === 'less_trusted')) {
+        this.catalogCategoryFilter = ''
+      }
+      if (!this.includeDismissedCatalogs && this.catalogCategoryFilter === 'dismissed') {
+        this.catalogCategoryFilter = ''
+      }
       await this.loadCatalogs({ preferCache: true })
     },
     async loadSourceImportStatus({ silent = false } = {}) {
