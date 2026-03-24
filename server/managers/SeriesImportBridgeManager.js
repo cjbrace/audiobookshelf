@@ -18,9 +18,20 @@ class SeriesImportBridgeManager {
       .filter(Boolean)
     configured.push(...envMany)
 
-    const defaults = ['http://192.168.0.108:8011', 'http://cjbuntu:8011', 'http://host.docker.internal:8011', 'http://127.0.0.1:8011']
+    // Localhost should only ever be used when explicitly configured. Inside the
+    // disposable ABS runtime it is commonly a dead end and creates a misleading
+    // operator-facing ECONNREFUSED.
+    const defaults = ['http://192.168.0.108:8011', 'http://cjbuntu:8011', 'http://host.docker.internal:8011']
     const urls = [...configured, ...defaults].map((value) => value.replace(/\/+$/, ''))
     return [...new Set(urls)]
+  }
+
+  getUnavailableMessage(candidateBaseUrls) {
+    const configuredCount = candidateBaseUrls.filter((url) => !['http://192.168.0.108:8011', 'http://cjbuntu:8011', 'http://host.docker.internal:8011'].includes(url)).length
+    if (configuredCount > 0) {
+      return 'Series import service is unavailable at the configured bridge URL. Check SERIES_IMPORT_TOOL_URL / SERIES_IMPORT_TOOL_URLS.'
+    }
+    return 'Series import service is unavailable. Configure SERIES_IMPORT_TOOL_URL to a reachable companion service.'
   }
 
   shouldUseCachedBaseUrl() {
@@ -32,7 +43,8 @@ class SeriesImportBridgeManager {
   }
 
   async request(method, path, payload = {}) {
-    const orderedBaseUrls = this.shouldUseCachedBaseUrl() ? [this.cachedBaseUrl, ...this.getCandidateBaseUrls().filter((url) => url !== this.cachedBaseUrl)] : this.getCandidateBaseUrls()
+    const candidateBaseUrls = this.getCandidateBaseUrls()
+    const orderedBaseUrls = this.shouldUseCachedBaseUrl() ? [this.cachedBaseUrl, ...candidateBaseUrls.filter((url) => url !== this.cachedBaseUrl)] : candidateBaseUrls
     let lastNetworkError = null
 
     for (const baseUrl of orderedBaseUrls) {
@@ -64,9 +76,10 @@ class SeriesImportBridgeManager {
       }
     }
 
-    const message = String(lastNetworkError?.message || 'Series import service is unavailable').trim() || 'Series import service is unavailable'
+    const message = this.getUnavailableMessage(candidateBaseUrls)
     const error = new Error(message)
     error.statusCode = 503
+    error.cause = lastNetworkError || undefined
     throw error
   }
 
