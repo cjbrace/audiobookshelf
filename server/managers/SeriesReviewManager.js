@@ -262,7 +262,62 @@ class SeriesReviewManager {
     return 'Trusted'
   }
 
-  buildCatalogAuthorMeta(localBooks = [], entryOrRows = []) {
+  normalizeSeriesUrlSlug(value) {
+    return this.normalizeSeriesName(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+  }
+
+  formatSlugDisplayName(value) {
+    return String(value || '')
+      .split('-')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+  }
+
+  extractCatalogAuthorFromEvidenceUrl(seriesName, evidenceUrl) {
+    if (!seriesName || !evidenceUrl) return ''
+    let url
+    try {
+      url = new URL(evidenceUrl)
+    } catch {
+      return ''
+    }
+
+    const pathParts = String(url.pathname || '').split('/').filter(Boolean)
+    if (!pathParts.length || pathParts[0] !== 'series') return ''
+    const slugWithId = pathParts[pathParts.length - 1].replace(/\.html?$/i, '')
+    const slug = slugWithId.replace(/~.*$/, '')
+    const seriesSlug = this.normalizeSeriesUrlSlug(seriesName)
+    if (!slug || !seriesSlug || !slug.startsWith(`${seriesSlug}-`)) return ''
+    return this.normalizeSeriesName(this.formatSlugDisplayName(slug.slice(seriesSlug.length + 1)))
+  }
+
+  buildCatalogSourceAuthorMeta(seriesName, entryOrRows = []) {
+    const authors = []
+    const seen = new Set()
+    const addAuthor = (value) => {
+      const authorName = this.normalizeSeriesName(value)
+      const authorKey = this.normalizeKeyPart(authorName)
+      if (!authorName || !authorKey || seen.has(authorKey)) return
+      seen.add(authorKey)
+      authors.push(authorName)
+    }
+
+    ;(Array.isArray(entryOrRows) ? entryOrRows : []).forEach((entry) => {
+      ;(entry?.sources || []).forEach((source) => addAuthor(this.extractCatalogAuthorFromEvidenceUrl(seriesName, source?.evidenceUrl)))
+    })
+
+    return {
+      authorLine: authors.slice(0, 3).join(', '),
+      authorSearchText: authors.join(' ')
+    }
+  }
+
+  buildCatalogAuthorMeta(seriesName, localBooks = [], entryOrRows = []) {
     const authors = []
     const seen = new Set()
     const addAuthor = (value) => {
@@ -279,6 +334,11 @@ class SeriesReviewManager {
     ;(Array.isArray(entryOrRows) ? entryOrRows : []).forEach((entry) => {
       ;(entry?.expectedAuthors || entry?.authors || []).forEach((author) => addAuthor(author?.name || author))
     })
+
+    if (!(Array.isArray(localBooks) ? localBooks : []).length) {
+      const sourceAuthorMeta = this.buildCatalogSourceAuthorMeta(seriesName, entryOrRows)
+      if (sourceAuthorMeta.authorLine) return sourceAuthorMeta
+    }
 
     return {
       authorLine: authors.slice(0, 3).join(', '),
@@ -328,7 +388,7 @@ class SeriesReviewManager {
         visibilityStatus,
         localBookCount: Array.isArray(localBooks) ? localBooks.length : 0
       })
-    const authorMeta = this.buildCatalogAuthorMeta(localBooks, normalizedEntries)
+    const authorMeta = this.buildCatalogAuthorMeta(seriesName, localBooks, normalizedEntries)
 
     return {
       id,

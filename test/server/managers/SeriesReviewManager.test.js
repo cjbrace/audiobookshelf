@@ -890,6 +890,37 @@ describe('SeriesReviewManager', () => {
     expect(expandedCatalogs[0].displayLabel).to.equal('Potential series')
   })
 
+  it('prefers source-series author names over title fragments for source-only potential catalogs', async () => {
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Coldfire Project',
+        trustStatus: 'untrusted',
+        entries: [
+          {
+            title: 'Sep-2006',
+            author: 'Shatter Zone',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/the-coldfire-project-james-axler~15594.htm' }]
+          },
+          {
+            title: 'Dec-2006',
+            author: 'Perdition Valley',
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/the-coldfire-project-james-axler~15594.htm' }]
+          }
+        ]
+      }
+    ])
+
+    const expandedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(expandedCatalogs).to.have.length(1)
+    expect(expandedCatalogs[0].displayBucket).to.equal('potential')
+    expect(expandedCatalogs[0].authorLine).to.equal('James Axler')
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(detail.catalog.authorLine).to.equal('James Axler')
+  })
+
   it('builds catalog detail with gaps, decimal handling, disputes, and unsequenced books', async () => {
     await createBookFixture({
       title: 'Leviathan Wakes',
