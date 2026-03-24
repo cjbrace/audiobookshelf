@@ -921,6 +921,57 @@ describe('SeriesReviewManager', () => {
     expect(detail.catalog.authorLine).to.equal('James Axler')
   })
 
+  it('repairs legacy fictiondb date-title-author swaps into unsequenced source entries', async () => {
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Journey to Star Wars: The Force Awakens',
+        trustStatus: 'untrusted',
+        entries: [
+          {
+            title: 'Sep-2015',
+            authors: ['Moving Target: A Princess Leia Adventure'],
+            sequenceLabel: 'Castellucci, Cecil',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/journey-to-star-wars-the-force-awakens~41289.htm' }]
+          },
+          {
+            title: 'Sep-2015',
+            authors: ['The Weapon of a Jedi: A Luke Skywalker Adventure'],
+            sequenceLabel: 'Fry, Jason',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/journey-to-star-wars-the-force-awakens~41289.htm' }]
+          },
+          {
+            title: 'Sep-2015',
+            authors: ["Smuggler's Run: A Han Solo Adventure"],
+            sequenceLabel: 'Rucka, Greg',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/journey-to-star-wars-the-force-awakens~41289.htm' }]
+          }
+        ]
+      }
+    ])
+
+    const expandedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(expandedCatalogs).to.have.length(1)
+    expect(expandedCatalogs[0].authorLine).to.equal('Castellucci, Cecil, Fry, Jason, Rucka, Greg')
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(detail.slots).to.deep.equal([])
+    expect(detail.unsequencedSourceEntries.map((entry) => entry.title)).to.deep.equal([
+      'Moving Target: A Princess Leia Adventure',
+      "Smuggler's Run: A Han Solo Adventure",
+      'The Weapon of a Jedi: A Luke Skywalker Adventure'
+    ])
+    expect(detail.unsequencedSourceEntries.map((entry) => entry.publishedDate)).to.deep.equal([
+      'Sep-2015',
+      'Sep-2015',
+      'Sep-2015'
+    ])
+    expect(detail.unsequencedSourceEntries.map((entry) => entry.expectedAuthors[0])).to.deep.equal([
+      'Castellucci, Cecil',
+      'Rucka, Greg',
+      'Fry, Jason'
+    ])
+  })
+
   it('builds catalog detail with gaps, decimal handling, disputes, and unsequenced books', async () => {
     await createBookFixture({
       title: 'Leviathan Wakes',

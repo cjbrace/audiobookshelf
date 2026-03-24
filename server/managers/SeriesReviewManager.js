@@ -795,6 +795,37 @@ class SeriesReviewManager {
     return cleaned || null
   }
 
+  isMonthYearCatalogDate(value) {
+    return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)-\d{4}$/i.test(String(value || '').trim())
+  }
+
+  looksLikeLegacyFictionDbCatalogSwap({ title, authors, sequenceLabel, publishedDate, sources }) {
+    if (publishedDate || !title || !sequenceLabel || !Array.isArray(authors) || !authors.length) return false
+    const hasFictionDbSource = (Array.isArray(sources) ? sources : []).some((source) => String(source?.source || '').trim().toLowerCase() === 'fictiondb')
+    if (!hasFictionDbSource || !this.isMonthYearCatalogDate(title)) return false
+    if (/\d/.test(sequenceLabel)) return false
+    return true
+  }
+
+  repairLegacyFictionDbCatalogEntry({ title, authors, sequenceLabel, publishedDate, sources }) {
+    if (!this.looksLikeLegacyFictionDbCatalogSwap({ title, authors, sequenceLabel, publishedDate, sources })) {
+      return { title, authors, sequenceLabel, publishedDate }
+    }
+
+    const repairedTitle = this.normalizeSeriesName(authors[0] || '')
+    const repairedAuthor = this.normalizeSeriesName(sequenceLabel)
+    if (!repairedTitle || !repairedAuthor) {
+      return { title, authors, sequenceLabel, publishedDate }
+    }
+
+    return {
+      title: repairedTitle,
+      authors: [repairedAuthor],
+      sequenceLabel: '',
+      publishedDate: title
+    }
+  }
+
   expandCatalogSequenceCoverage(sequenceLabel) {
     const normalizedLabel = String(sequenceLabel || '')
       .trim()
@@ -841,23 +872,30 @@ class SeriesReviewManager {
   normalizeCatalogEntries(entries) {
     return (Array.isArray(entries) ? entries : [])
       .map((entry) => {
-        const title = this.normalizeSeriesName(entry?.title || '')
-        const authors = (Array.isArray(entry?.authors) ? entry.authors : [entry?.author])
+        let title = this.normalizeSeriesName(entry?.title || '')
+        let authors = (Array.isArray(entry?.authors) ? entry.authors : [entry?.author])
           .map((author) => this.normalizeSeriesName(author || ''))
           .filter(Boolean)
-        const sequenceLabel = String(entry?.sequenceLabel || entry?.sequence || '')
+        let sequenceLabel = String(entry?.sequenceLabel || entry?.sequence || '')
           .trim()
           .replace(/\s+/g, ' ')
-        const publishedDate = this.normalizeSeriesName(entry?.publishedDate || entry?.releaseDate || '')
+        let publishedDate = this.normalizeSeriesName(entry?.publishedDate || entry?.releaseDate || '')
+        const sources = (Array.isArray(entry?.sources) ? entry.sources : [])
+          .map((source) => this.cleanCatalogSource(source))
+          .filter(Boolean)
+        ;({ title, authors, sequenceLabel, publishedDate } = this.repairLegacyFictionDbCatalogEntry({
+          title,
+          authors,
+          sequenceLabel,
+          publishedDate,
+          sources
+        }))
         const explicitCoveredSlots = Array.isArray(entry?.coveredSlots)
           ? entry.coveredSlots
               .map((slot) => this.normalizeCatalogSlotToken(slot))
               .filter(Boolean)
           : []
         const coveredSlots = explicitCoveredSlots.length ? explicitCoveredSlots : this.expandCatalogSequenceCoverage(sequenceLabel)
-        const sources = (Array.isArray(entry?.sources) ? entry.sources : [])
-          .map((source) => this.cleanCatalogSource(source))
-          .filter(Boolean)
 
         if (!title) return null
 
