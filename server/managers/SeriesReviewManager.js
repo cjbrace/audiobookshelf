@@ -144,13 +144,31 @@ class SeriesReviewManager {
       }
     })
 
-    const canonicalizeName = (value) => {
+    const resolveCanonicalStep = (value) => {
       const normalized = this.normalizeSeriesName(value)
       if (!normalized) return ''
       const exactKey = this.normalizeKeyPart(normalized)
-      if (exactMap.has(exactKey)) return exactMap.get(exactKey).canonicalName
+      if (exactMap.has(exactKey)) return this.normalizeSeriesName(exactMap.get(exactKey).canonicalName)
       const decisionKey = this.normalizeDecisionKey(normalized)
-      return decisionMap.get(decisionKey) || normalized
+      return this.normalizeSeriesName(decisionMap.get(decisionKey) || normalized)
+    }
+
+    const canonicalizeName = (value) => {
+      let normalized = this.normalizeSeriesName(value)
+      if (!normalized) return ''
+
+      const seen = new Set()
+      while (normalized) {
+        const key = this.normalizeKeyPart(normalized)
+        if (!key || seen.has(key)) break
+        seen.add(key)
+
+        const nextValue = resolveCanonicalStep(normalized)
+        if (!nextValue || nextValue === normalized) break
+        normalized = nextValue
+      }
+
+      return normalized
     }
 
     return {
@@ -162,7 +180,7 @@ class SeriesReviewManager {
         const normalizedNames = [...new Set((Array.isArray(names) ? names : []).map((name) => this.normalizeSeriesName(name)).filter(Boolean))]
         if (!normalizedNames.length) return ''
         const mappedNames = [...new Set(normalizedNames.map((name) => this.normalizeSeriesName(canonicalizeName(name))).filter(Boolean))]
-        if (mappedNames.length === 1 && mappedNames[0] !== normalizedNames[0]) {
+        if (mappedNames.length === 1) {
           return mappedNames[0]
         }
         return this.choosePreferredSeriesLabel(normalizedNames)

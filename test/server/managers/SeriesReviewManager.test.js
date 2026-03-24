@@ -363,6 +363,39 @@ describe('SeriesReviewManager', () => {
     expect(updatedDetail.catalog.seriesName).to.equal('Rain Wilds Chronicles')
   })
 
+  it('keeps an aliased surviving suggestion under the renamed canonical label', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Wyrd Sisters'
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Discworld - Witches', sequence: '2' },
+          { source: 'wikidata', label: 'WD', seriesName: 'Witches', sequence: '2' }
+        ]
+      }
+    ])
+
+    let rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const primarySuggestion = rows[0].suggestions.find((suggestion) => suggestion.suggestedName === 'Witches')
+    const aliasSuggestion = rows[0].suggestions.find((suggestion) => suggestion.suggestedName === 'Discworld - Witches')
+
+    await SeriesReviewManager.aliasSuggestion(aliasSuggestion.id, primarySuggestion.id, user.id)
+
+    rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows[0].suggestions).to.have.length(1)
+
+    await SeriesReviewManager.renameSuggestion(rows[0].suggestions[0].id, 'The Witches Arc', user.id)
+
+    rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows).to.have.length(1)
+    expect(rows[0].suggestions).to.have.length(1)
+    expect(rows[0].suggestions[0].suggestedName).to.equal('The Witches Arc')
+    expect(rows[0].suggestions[0].contributions.map((contribution) => contribution.seriesName)).to.deep.equal(['Discworld - Witches', 'Witches'])
+  })
+
   it('blocks rename auto-merge when the target label would create conflicting local coverage', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Problem Book',
