@@ -638,6 +638,10 @@ describe('SeriesReviewManager', () => {
       title: 'Dune Messiah',
       currentSeries: [{ name: 'Dune', sequence: '2' }]
     })
+    await createBookFixture({
+      title: 'House Atreides',
+      currentSeries: [{ name: 'Dune', sequence: '' }]
+    })
 
     const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {
@@ -669,9 +673,65 @@ describe('SeriesReviewManager', () => {
     ])
 
     const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
-    expect(detail.slots.map((slot) => slot.slot)).to.deep.equal(['1', '2'])
+    expect(detail.rows.map((row) => row.rowType || 'slot')).to.deep.equal(['slot', 'slot', 'unsequenced'])
+    expect(detail.rows[2].title).to.equal('House Atreides')
+    expect(detail.rows[2].rowKey).to.match(/^unsequenced:/)
     expect(detail.unsequencedSourceEntries.map((entry) => entry.title)).to.deep.equal(['House Atreides'])
     expect(detail.unsequencedSourceEntries[0].authors).to.deep.equal(['Brian Herbert; Anderson, Kevin J.'])
+  })
+
+  it('keeps unsequenced source rows actionable with local coverage and candidate search', async () => {
+    await createBookFixture({
+      title: 'House Atreides',
+      currentSeries: [{ name: 'Dune', sequence: '' }]
+    })
+    await createBookFixture({
+      title: 'House Atreides: Prelude',
+      relPath: 'Herbert, Brian/House Atreides Prelude',
+      authors: ['Brian Herbert', 'Kevin J. Anderson']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Dune',
+        entries: [
+          {
+            title: 'House Atreides',
+            authors: ['Brian Herbert; Anderson, Kevin J.'],
+            sequence: '',
+            publishedDate: 'Oct-1999',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92 }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const unsequencedRow = detail.rows.find((row) => row.rowType === 'unsequenced')
+
+    expect(unsequencedRow).to.exist
+    expect(unsequencedRow.localBooks).to.have.length(1)
+    expect(unsequencedRow.localBooks[0].title).to.equal('House Atreides')
+
+    const candidates = await SeriesReviewManager.findCatalogSlotCandidates(library.id, importResult.catalogs[0].id, unsequencedRow.slot)
+    expect(candidates.expectedTitle).to.equal('House Atreides')
+    expect(candidates.rowType).to.equal('unsequenced')
+    expect(candidates.results.length).to.be.greaterThan(0)
+
+    const queued = await SeriesReviewManager.queueCatalogCandidateForReview(
+      library.id,
+      importResult.catalogs[0].id,
+      unsequencedRow.slot,
+      candidates.results[0].libraryItemId
+    )
+
+    expect(queued.queued).to.equal(true)
+    expect(queued.rowType).to.equal('unsequenced')
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].suggestions[0].suggestedName).to.equal('Dune')
+    expect(pendingRows[0].suggestions[0].suggestedSequence).to.equal(null)
   })
 
   it('stores preferred slot interpretations for disputed catalog slots', async () => {

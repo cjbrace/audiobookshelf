@@ -140,6 +140,7 @@
           </div>
           <div v-else class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Series: {{ catalogSeries.length }}</span>
+            <span v-if="selectedCatalogDetail">Rows: {{ selectedCatalogRows.length }}</span>
             <span v-if="selectedCatalogDetail">Slots: {{ selectedCatalogDetail.slots.length }}</span>
             <span v-if="selectedCatalogDetail">Missing: {{ selectedCatalogDetail.slots.filter((slot) => slot.status === 'missing').length }}</span>
             <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
@@ -627,22 +628,22 @@
                         </tr>
                       </thead>
                       <tbody>
-                        <template v-for="slot in selectedCatalogDetail.slots">
-                          <tr :key="slot.slot" class="border-t border-white/10 align-top">
-                            <td class="px-3 py-3 font-semibold text-base text-gray-100">{{ slot.slot }}</td>
+                        <template v-for="row in selectedCatalogRows">
+                          <tr :key="getCatalogRowKey(row)" class="border-t border-white/10 align-top">
+                            <td class="px-3 py-3 font-semibold text-base text-gray-100">{{ getCatalogRowLabel(row) }}</td>
                             <td class="px-3 py-3">
                               <span
                                 class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
-                                :class="getCatalogSlotStatusClass(slot.status)"
+                                :class="getCatalogSlotStatusClass(row.status)"
                               >
-                                {{ formatCatalogSlotStatus(slot.status) }}
+                                {{ formatCatalogSlotStatus(row.status) }}
                               </span>
                             </td>
                             <td class="px-3 py-3">
-                              <div v-if="getCatalogSlotSourceSupport(slot).length" class="flex flex-wrap gap-2">
+                              <div v-if="getCatalogRowSourceSupport(row).length" class="flex flex-wrap gap-2">
                                 <span
-                                  v-for="source in getCatalogSlotSourceSupport(slot)"
-                                  :key="slot.slot + ':support:' + source.source + ':' + (source.evidenceUrl || '')"
+                                  v-for="source in getCatalogRowSourceSupport(row)"
+                                  :key="getCatalogRowKey(row) + ':support:' + source.source + ':' + (source.evidenceUrl || '')"
                                   class="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50"
                                 >
                                   <span>{{ source.label || source.source }}</span>
@@ -652,19 +653,19 @@
                               <p v-else class="text-xs text-gray-500">No source support</p>
                             </td>
                             <td class="px-3 py-3">
-                              <div v-if="slot.choices.length <= 1" class="space-y-1 text-gray-200">
-                                <div v-if="slot.expectedTitle" class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                                  <span class="text-lg font-semibold text-white">{{ getCatalogExpectedDisplay(slot).title }}</span>
-                                  <span v-if="getCatalogExpectedDisplay(slot).dateLabel" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(slot).dateLabel }}</span>
+                              <div v-if="row.choices.length <= 1" class="space-y-1 text-gray-200">
+                                <div v-if="getCatalogExpectedDisplay(row).title" class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                  <span class="text-lg font-semibold text-white">{{ getCatalogExpectedDisplay(row).title }}</span>
+                                  <span v-if="getCatalogExpectedDisplay(row).dateLabel" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(row).dateLabel }}</span>
                                 </div>
-                                <p v-if="getCatalogExpectedDisplay(slot).subtitle" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(slot).subtitle }}</p>
-                                <p v-if="!slot.expectedTitle" class="text-sm text-gray-500">No expected title known</p>
+                                <p v-if="getCatalogExpectedDisplay(row).subtitle" class="text-sm text-gray-400">{{ getCatalogExpectedDisplay(row).subtitle }}</p>
+                                <p v-if="!getCatalogExpectedDisplay(row).title" class="text-sm text-gray-500">No expected title known</p>
                               </div>
 
                               <div v-else class="space-y-2">
                                 <div
-                                  v-for="choice in slot.choices"
-                                  :key="slot.slot + ':' + choice.entryKey"
+                                  v-for="choice in row.choices"
+                                  :key="getCatalogRowKey(row) + ':' + choice.entryKey"
                                   class="rounded border border-white/10 bg-black/20 p-2 text-sm text-gray-200"
                                 >
                                   <div class="flex flex-wrap items-start gap-2">
@@ -678,21 +679,21 @@
                                     <span v-if="choice.sequenceLabel" class="text-xs text-gray-400 mt-1">{{ choice.sequenceLabel }}</span>
                                     <ui-btn
                                       small
-                                      :color="slot.selectedEntryKey === choice.entryKey ? 'bg-sky-400/25 border border-sky-300/35' : 'bg-bg border border-white/20'"
-                                      :loading="catalogChoiceLoadingKey === `${selectedCatalogDetail.catalog.id}:${slot.slot}:${choice.entryKey}`"
-                                      @click="chooseCatalogSlot(choice, slot)"
+                                      :color="row.selectedEntryKey === choice.entryKey ? 'bg-sky-400/25 border border-sky-300/35' : 'bg-bg border border-white/20'"
+                                      :loading="catalogChoiceLoadingKey === `${selectedCatalogDetail.catalog.id}:${getCatalogRowKey(row)}:${choice.entryKey}`"
+                                      @click="chooseCatalogSlot(choice, row)"
                                     >
-                                      {{ slot.selectedEntryKey === choice.entryKey ? 'Selected' : 'Use this' }}
+                                      {{ row.selectedEntryKey === choice.entryKey ? 'Selected' : 'Use this' }}
                                     </ui-btn>
                                   </div>
                                 </div>
                               </div>
                             </td>
                             <td class="px-3 py-3 text-gray-200">
-                              <div v-if="slot.localBooks.length" class="space-y-2">
+                              <div v-if="row.localBooks.length" class="space-y-2">
                                 <div
-                                  v-for="book in slot.localBooks"
-                                  :key="slot.slot + ':' + book.libraryItemId"
+                                  v-for="book in row.localBooks"
+                                  :key="getCatalogRowKey(row) + ':' + book.libraryItemId"
                                   class="rounded border border-white/10 bg-black/15 px-3 py-2"
                                 >
                                   <nuxt-link :to="`/item/${book.libraryItemId}`" target="_blank" class="block font-semibold text-white hover:underline">
@@ -702,47 +703,47 @@
                                   <p v-if="book.relPath" class="text-xs text-gray-500 mt-1 break-all">{{ book.relPath }}</p>
                                 </div>
                               </div>
-                              <p v-else class="text-gray-500">No local book covers this slot</p>
+                              <p v-else class="text-gray-500">{{ getCatalogLocalCoverageEmptyText(row) }}</p>
                             </td>
                             <td class="px-3 py-3">
                               <div class="flex flex-col items-end gap-2">
                                 <ui-btn
-                                  v-if="slot.status === 'missing' || slot.status === 'disputed'"
+                                  v-if="row.rowType === 'unsequenced' || row.status === 'missing' || row.status === 'disputed'"
                                   small
                                   color="bg-bg border border-white/20"
                                   class="w-36 justify-center text-center"
-                                  :disabled="slot.status === 'disputed' && !slot.selectedEntryKey"
-                                  :loading="catalogCandidateSearchLoadingKey === `${selectedCatalogDetail.catalog.id}:${slot.slot}`"
-                                  @click="findCatalogCandidates(slot)"
+                                  :disabled="row.status === 'disputed' && !row.selectedEntryKey"
+                                  :loading="catalogCandidateSearchLoadingKey === `${selectedCatalogDetail.catalog.id}:${getCatalogRowKey(row)}`"
+                                  @click="findCatalogCandidates(row)"
                                 >
                                   Find candidates
                                 </ui-btn>
-                                <p v-if="slot.status === 'disputed' && !slot.selectedEntryKey" class="max-w-[11rem] text-right text-xs text-amber-200">
+                                <p v-if="row.status === 'disputed' && !row.selectedEntryKey" class="max-w-[11rem] text-right text-xs text-amber-200">
                                   Choose a preferred match first
                                 </p>
                               </div>
                             </td>
                           </tr>
-                          <tr v-if="catalogCandidateResultsBySlot[slot.slot]" :key="slot.slot + ':candidates'" class="border-t border-white/5 bg-black/10">
+                          <tr v-if="catalogCandidateResultsBySlot[getCatalogRowKey(row)]" :key="getCatalogRowKey(row) + ':candidates'" class="border-t border-white/5 bg-black/10">
                             <td colspan="6" class="px-3 py-3">
                               <div class="rounded border border-white/10 bg-black/20 p-3 space-y-3">
                                 <div class="flex flex-wrap items-center gap-3">
                                   <div class="text-sm text-gray-300">
-                                    {{ catalogCandidateResultsBySlot[slot.slot].results.length }} plausible candidate<span v-if="catalogCandidateResultsBySlot[slot.slot].results.length !== 1">s</span>
+                                    {{ catalogCandidateResultsBySlot[getCatalogRowKey(row)].results.length }} plausible candidate<span v-if="catalogCandidateResultsBySlot[getCatalogRowKey(row)].results.length !== 1">s</span>
                                   </div>
                                   <div class="grow" />
                                   <ui-btn
                                     small
                                     color="bg-bg border border-white/20"
-                                    @click="closeCatalogCandidates(slot.slot)"
+                                    @click="closeCatalogCandidates(getCatalogRowKey(row))"
                                   >
                                     Close
                                   </ui-btn>
                                 </div>
                                 <div class="max-h-[26rem] overflow-y-auto space-y-3 pr-1">
                                   <div
-                                    v-for="candidate in getVisibleCatalogCandidates(slot.slot)"
-                                    :key="slot.slot + ':' + candidate.libraryItemId"
+                                    v-for="candidate in getVisibleCatalogCandidates(getCatalogRowKey(row))"
+                                    :key="getCatalogRowKey(row) + ':' + candidate.libraryItemId"
                                     class="rounded border border-white/10 bg-black/15 p-3 space-y-2"
                                   >
                                     <div class="flex flex-wrap items-start gap-3">
@@ -765,7 +766,7 @@
                                     <div class="flex flex-wrap gap-2">
                                       <span
                                         v-for="reason in candidate.reasons"
-                                        :key="slot.slot + ':' + candidate.libraryItemId + ':' + reason.key"
+                                        :key="getCatalogRowKey(row) + ':' + candidate.libraryItemId + ':' + reason.key"
                                         class="inline-flex items-center px-2 py-0.5 rounded-full border border-white/15 bg-black/20 text-xs text-gray-200"
                                       >
                                         {{ reason.text }}
@@ -779,8 +780,8 @@
                                       <ui-btn
                                         small
                                         color="bg-success/80"
-                                        :loading="catalogCandidateQueueLoadingKey === `${slot.slot}:${candidate.libraryItemId}`"
-                                        @click="queueCatalogCandidate(slot, candidate)"
+                                        :loading="catalogCandidateQueueLoadingKey === `${getCatalogRowKey(row)}:${candidate.libraryItemId}`"
+                                        @click="queueCatalogCandidate(row, candidate)"
                                       >
                                         Queue in Review
                                       </ui-btn>
@@ -804,32 +805,6 @@
                     </div>
                   </div>
 
-                  <div v-if="selectedCatalogDetail.unsequencedSourceEntries?.length" class="rounded border border-white/10 bg-black/20 p-3">
-                    <h3 class="text-base font-semibold">Unsequenced source entries</h3>
-                    <div class="mt-2 space-y-2">
-                      <div
-                        v-for="entry in selectedCatalogDetail.unsequencedSourceEntries"
-                        :key="'unseq-source:' + entry.entryKey"
-                        class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
-                      >
-                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                          <span class="text-base font-semibold text-white">{{ entry.title }}</span>
-                          <span v-if="entry.publishedDate" class="text-sm text-gray-400">{{ entry.publishedDate }}</span>
-                        </div>
-                        <p v-if="formatAuthors(entry.authors)" class="text-sm text-gray-300 mt-1">{{ formatAuthors(entry.authors) }}</p>
-                        <div v-if="entry.sourceSupport?.length" class="mt-2 flex flex-wrap gap-2">
-                          <span
-                            v-for="source in entry.sourceSupport"
-                            :key="entry.entryKey + ':source:' + source.source + ':' + (source.evidenceUrl || '')"
-                            class="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50"
-                          >
-                            <span>{{ source.label || source.source }}</span>
-                            <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">{{ formatConfidence(source.confidence) }}</span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -1002,6 +977,9 @@ export default {
     selectedCatalogAuthorLine() {
       return this.getCatalogAuthorLine(this.selectedCatalogDetail)
     },
+    selectedCatalogRows() {
+      return this.selectedCatalogDetail?.rows || this.selectedCatalogDetail?.slots || []
+    },
     selectedCatalogHeading() {
       if (!this.selectedCatalogDetail?.catalog) return ''
       const authorLine = this.selectedCatalogAuthorLine
@@ -1117,12 +1095,14 @@ export default {
       if (status === 'missing') return 'Missing'
       if (status === 'disputed') return 'Disputed'
       if (status === 'decimal') return 'Decimal only'
+      if (status === 'unsequenced') return 'Unsequenced'
       return 'Covered'
     },
     getCatalogSlotStatusClass(status) {
       if (status === 'missing') return 'border-red-300/35 bg-red-500/10 text-red-50'
       if (status === 'disputed') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
       if (status === 'decimal') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
+      if (status === 'unsequenced') return 'border-violet-300/35 bg-violet-500/10 text-violet-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
     getCatalogBucketLabel(bucket) {
@@ -1217,28 +1197,39 @@ export default {
           if (author?.name) authors.add(author.name)
         })
       })
-      ;(detail.slots || []).forEach((slot) => {
-        ;(slot.expectedAuthors || []).forEach((author) => {
+      ;((detail.rows || detail.slots) || []).forEach((row) => {
+        ;(row.expectedAuthors || []).forEach((author) => {
           if (author) authors.add(author)
         })
       })
       return [...authors].slice(0, 3).join(', ')
     },
-    getCatalogSlotSourceSupport(slot) {
-      if (slot.selectedEntryKey) {
-        return slot.choices.find((choice) => choice.entryKey === slot.selectedEntryKey)?.sources || []
+    getCatalogRowKey(row) {
+      return String(row?.rowKey || row?.slot || '').trim()
+    },
+    getCatalogRowLabel(row) {
+      if (row?.rowType === 'unsequenced') return 'Unsequenced'
+      return String(row?.slot || '').trim()
+    },
+    getCatalogRowSourceSupport(row) {
+      const choices = Array.isArray(row?.choices) ? row.choices : []
+      if (row?.selectedEntryKey) {
+        return choices.find((choice) => choice.entryKey === row.selectedEntryKey)?.sources || []
       }
-      if (slot.sourceSupport?.length) return slot.sourceSupport
-      return (slot.choices || []).flatMap((choice) => choice.sources || []).filter((source, index, list) => {
+      if (row?.sourceSupport?.length) return row.sourceSupport
+      return choices.flatMap((choice) => choice.sources || []).filter((source, index, list) => {
         const key = `${source.source}:${source.evidenceUrl || ''}:${source.label || ''}`
         return list.findIndex((candidate) => `${candidate.source}:${candidate.evidenceUrl || ''}:${candidate.label || ''}` === key) === index
       })
     },
-    getVisibleCatalogCandidates(slotKey) {
-      return this.catalogCandidateResultsBySlot[slotKey]?.results || []
+    getCatalogLocalCoverageEmptyText(row) {
+      return row?.rowType === 'unsequenced' ? 'No local book matches this entry' : 'No local book covers this slot'
     },
-    closeCatalogCandidates(slotKey) {
-      this.$delete(this.catalogCandidateResultsBySlot, slotKey)
+    getVisibleCatalogCandidates(rowKey) {
+      return this.catalogCandidateResultsBySlot[rowKey]?.results || []
+    },
+    closeCatalogCandidates(rowKey) {
+      this.$delete(this.catalogCandidateResultsBySlot, rowKey)
     },
     formatSeriesList(seriesList) {
       return (seriesList || [])
@@ -1407,20 +1398,21 @@ export default {
         if (!skipLoading || !this.catalogDetailCache[catalogId]) this.catalogLoading = false
       }
     },
-    async chooseCatalogSlot(choice, slot) {
+    async chooseCatalogSlot(choice, row) {
       if (!this.selectedCatalogDetail) return
-      this.catalogChoiceLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${slot.slot}:${choice.entryKey}`
+      const rowKey = this.getCatalogRowKey(row)
+      this.catalogChoiceLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${rowKey}:${choice.entryKey}`
       try {
         this.selectedCatalogDetail = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/slot-choice`,
           {
-            slot: slot.slot,
+            slot: rowKey,
             entryKey: choice.entryKey
           }
         )
         this.$set(this.catalogDetailCache, this.selectedCatalogDetail.catalog.id, this.selectedCatalogDetail)
         this.persistCatalogCaches()
-        this.$delete(this.catalogCandidateResultsBySlot, slot.slot)
+        this.$delete(this.catalogCandidateResultsBySlot, rowKey)
         this.$toast.success('Preferred interpretation updated')
         await this.loadCatalogs({ preferCache: true })
       } catch (error) {
@@ -1429,31 +1421,33 @@ export default {
         this.catalogChoiceLoadingKey = ''
       }
     },
-    async findCatalogCandidates(slot) {
+    async findCatalogCandidates(row) {
       if (!this.selectedCatalogDetail) return
-      this.catalogCandidateSearchLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${slot.slot}`
+      const rowKey = this.getCatalogRowKey(row)
+      this.catalogCandidateSearchLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${rowKey}`
       try {
         const response = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/find-candidates`,
           {
-            slot: slot.slot
+            slot: rowKey
           }
         )
-        this.$set(this.catalogCandidateResultsBySlot, slot.slot, response)
+        this.$set(this.catalogCandidateResultsBySlot, rowKey, response)
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to find candidates')
       } finally {
         this.catalogCandidateSearchLoadingKey = ''
       }
     },
-    async queueCatalogCandidate(slot, candidate) {
+    async queueCatalogCandidate(row, candidate) {
       if (!this.selectedCatalogDetail) return
-      this.catalogCandidateQueueLoadingKey = `${slot.slot}:${candidate.libraryItemId}`
+      const rowKey = this.getCatalogRowKey(row)
+      this.catalogCandidateQueueLoadingKey = `${rowKey}:${candidate.libraryItemId}`
       try {
         const response = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/queue-candidate`,
           {
-            slot: slot.slot,
+            slot: rowKey,
             libraryItemId: candidate.libraryItemId
           }
         )

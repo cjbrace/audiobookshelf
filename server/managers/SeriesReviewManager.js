@@ -811,22 +811,35 @@ class SeriesReviewManager {
   }
 
   buildCatalogCandidateContext(catalog, slotDetail) {
-    const selectedChoice = slotDetail.selectedEntryKey ? slotDetail.choices.find((choice) => choice.entryKey === slotDetail.selectedEntryKey) || null : null
-    const primaryChoice = selectedChoice || (slotDetail.choices.length === 1 ? slotDetail.choices[0] : null)
-    if (!primaryChoice?.title) return null
+    const choices = Array.isArray(slotDetail?.choices) ? slotDetail.choices : []
+    const selectedChoice = slotDetail?.selectedEntryKey ? choices.find((choice) => choice.entryKey === slotDetail.selectedEntryKey) || null : null
+    const primaryChoice = selectedChoice || (choices.length === 1 ? choices[0] : null)
+    const expectedTitle = String(slotDetail?.expectedTitle || primaryChoice?.title || slotDetail?.title || '').trim()
+    if (!expectedTitle) return null
 
-    const authors = Array.isArray(primaryChoice.authors) ? primaryChoice.authors : []
+    const authors = Array.isArray(slotDetail?.expectedAuthors) && slotDetail.expectedAuthors.length
+      ? slotDetail.expectedAuthors
+      : Array.isArray(primaryChoice?.authors)
+        ? primaryChoice.authors
+        : []
+    const rowKey = String(slotDetail?.rowKey || slotDetail?.slot || '').trim()
     return {
       seriesName: catalog.seriesName,
       seriesNameNormalized: this.normalizeKeyPart(catalog.seriesName),
-      expectedTitle: primaryChoice.title,
-      expectedTitleNormalized: this.normalizeSearchText(primaryChoice.title),
-      expectedTitleTokens: this.tokenizeSearchText(primaryChoice.title),
+      expectedTitle,
+      expectedTitleNormalized: this.normalizeSearchText(expectedTitle),
+      expectedTitleTokens: this.tokenizeSearchText(expectedTitle),
       expectedAuthorNormalized: authors.map((author) => this.normalizeSearchText(author)).filter(Boolean),
       expectedAuthorTokens: this.tokenizeSearchText(authors.join(' ')),
       expectedSeriesTokens: this.tokenizeSearchText(catalog.seriesName),
-      slot: slotDetail.slot,
-      choice: primaryChoice
+      slot: rowKey,
+      rowType: slotDetail?.rowType || 'slot',
+      choice: primaryChoice || {
+        title: expectedTitle,
+        authors,
+        publishedDate: slotDetail?.expectedPublishedDate || null,
+        sources: Array.isArray(slotDetail?.sourceSupport) ? slotDetail.sourceSupport : []
+      }
     }
   }
 
@@ -880,6 +893,18 @@ class SeriesReviewManager {
     })
 
     const unsequencedBooks = localBooks.filter((book) => !book.sequence)
+    const unsequencedLocalBooksByTitle = new Map()
+    unsequencedBooks.forEach((book) => {
+      const key = this.getCatalogEntryTitleKey(book.title)
+      if (!key) return
+      if (!unsequencedLocalBooksByTitle.has(key)) unsequencedLocalBooksByTitle.set(key, [])
+      unsequencedLocalBooksByTitle.get(key).push({
+        libraryItemId: book.libraryItemId,
+        title: book.title,
+        relPath: book.relPath,
+        sequence: book.sequence
+      })
+    })
     const coveredTitleKeys = new Set()
     localBooks
       .filter((book) => !!book.sequence)
@@ -901,18 +926,29 @@ class SeriesReviewManager {
         return key && !coveredTitleKeys.has(key)
       })
       .map((entry) => ({
+        rowKey: `unsequenced:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
+        rowType: 'unsequenced',
+        slot: `unsequenced:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
         entryKey: entry.entryKey,
         title: entry.title,
+        expectedTitle: entry.title,
+        expectedAuthors: entry.authors || [],
+        expectedPublishedDate: entry.publishedDate || null,
         authors: entry.authors || [],
         publishedDate: entry.publishedDate || null,
         sequenceLabel: entry.sequenceLabel || null,
-        sourceSupport: this.buildCatalogSourceSupport(entry.sources)
+        sourceSupport: this.buildCatalogSourceSupport(entry.sources),
+        localBooks: unsequencedLocalBooksByTitle.get(this.getCatalogEntryTitleKey(entry.title)) || [],
+        choices: [],
+        selectedEntryKey: null,
+        status: 'unsequenced'
       }))
       .sort((a, b) => a.title.localeCompare(b.title))
     return {
       slots,
       unsequencedBooks,
-      unsequencedSourceEntries
+      unsequencedSourceEntries,
+      rows: [...slots, ...unsequencedSourceEntries]
     }
   }
 
@@ -980,7 +1016,8 @@ class SeriesReviewManager {
       localBooks,
       unsequencedBooks: finalized.unsequencedBooks,
       unsequencedSourceEntries: finalized.unsequencedSourceEntries,
-      slots: finalized.slots
+      slots: finalized.slots,
+      rows: finalized.rows
     }
   }
 
@@ -1017,11 +1054,14 @@ class SeriesReviewManager {
     }
 
     const detail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
-    const slotDetail = detail?.slots?.find((candidate) => candidate.slot === normalizedSlot)
-    if (!slotDetail) {
+    const rowDetail = (detail?.rows || detail?.slots || []).find((candidate) => candidate.slot === normalizedSlot || candidate.rowKey === normalizedSlot)
+    if (!rowDetail) {
       throw new Error('Slot was not found')
     }
-    if (!slotDetail.choices.some((choice) => choice.entryKey === entryKey)) {
+    if ((rowDetail.rowType || 'slot') === 'unsequenced') {
+      throw new Error('Selected interpretation was not found for that slot')
+    }
+    if (!rowDetail.choices.some((choice) => choice.entryKey === entryKey)) {
       throw new Error('Selected interpretation was not found for that slot')
     }
 
@@ -1041,7 +1081,7 @@ class SeriesReviewManager {
     const normalizedSlot = this.normalizeCatalogSlotToken(slot)
     if (!normalizedSlot) throw new Error('Missing slot')
 
-    const slotDetail = detail.slots.find((candidate) => candidate.slot === normalizedSlot)
+    const slotDetail = (detail.rows || detail.slots).find((candidate) => candidate.slot === normalizedSlot || candidate.rowKey === normalizedSlot)
     if (!slotDetail) throw new Error('Slot was not found')
 
     const context = this.buildCatalogCandidateContext(detail.catalog, slotDetail)
@@ -1054,7 +1094,7 @@ class SeriesReviewManager {
       mediaType: 'book'
     })
 
-    const localCoveredIds = new Set(slotDetail.localBooks.map((book) => book.libraryItemId))
+    const localCoveredIds = new Set((slotDetail.localBooks || []).map((book) => book.libraryItemId))
     const results = libraryItems
       .filter((libraryItem) => !localCoveredIds.has(libraryItem.id))
       .map((libraryItem) => this.computeCatalogCandidateMatch(context, libraryItem))
@@ -1067,6 +1107,7 @@ class SeriesReviewManager {
     return {
       catalog: detail.catalog,
       slot: normalizedSlot,
+      rowType: slotDetail.rowType || 'slot',
       expectedTitle: context.expectedTitle,
       expectedAuthors: context.choice.authors || [],
       expectedSeriesName: detail.catalog.seriesName,
@@ -1092,9 +1133,9 @@ class SeriesReviewManager {
             source: 'catalog',
             label: 'CAT',
             seriesName: searchResult.expectedSeriesName,
-            sequence: searchResult.slot,
+            sequence: searchResult.rowType === 'unsequenced' ? null : searchResult.slot,
             confidence: Number(Math.min(candidate.score / 20, 0.99).toFixed(2)),
-            notes: `Task 5 candidate for slot ${searchResult.slot}: ${searchResult.expectedTitle} (${strongestReason})`
+            notes: `Task 5 candidate for ${searchResult.rowType === 'unsequenced' ? 'unsequenced entry' : `slot ${searchResult.slot}`}: ${searchResult.expectedTitle} (${strongestReason})`
           }
         ]
       }
@@ -1106,6 +1147,7 @@ class SeriesReviewManager {
       libraryItemId: candidate.libraryItemId,
       title: candidate.title,
       slot: searchResult.slot,
+      rowType: searchResult.rowType || 'slot',
       expectedTitle: searchResult.expectedTitle,
       targetSeriesName: searchResult.expectedSeriesName
     }
