@@ -24,9 +24,9 @@
             color="bg-bg border border-white/20"
             small
             :loading="activeTab === 'queue' ? loading : activeTab === 'management' ? managementLoading : catalogLoading"
-            @click="activeTab === 'queue' ? loadQueue() : activeTab === 'management' ? loadManagementData() : loadCatalogs()"
+            @click="refreshActiveTab"
           >
-            Refresh
+            {{ refreshButtonLabel }}
           </ui-btn>
         </div>
 
@@ -1061,6 +1061,11 @@ export default {
       if (!summary || !this.sourceImportResultFilter) return []
       return summary.filtered_results?.[this.sourceImportResultFilter] || []
     },
+    refreshButtonLabel() {
+      if (this.activeTab === 'queue') return 'Refresh Queue'
+      if (this.activeTab === 'management') return 'Refresh Management'
+      return 'Refresh Detail'
+    },
     filteredCatalogSeries() {
       const query = String(this.catalogSearchQuery || '').trim().toLowerCase()
       if (!query) return this.catalogSeries
@@ -1090,17 +1095,20 @@ export default {
     this.stopSourceImportPolling()
   },
   methods: {
-    async switchTab(tab) {
-      if (this.activeTab === tab) return
-      this.activeTab = tab
-      this.errorMessage = ''
-      if (tab === 'queue') {
+    async refreshActiveTab() {
+      if (this.activeTab === 'queue') {
         await this.loadQueue()
-      } else if (tab === 'management') {
+      } else if (this.activeTab === 'management') {
         await this.loadManagementData()
       } else {
         await this.loadCatalogs()
       }
+    },
+    async switchTab(tab) {
+      if (this.activeTab === tab) return
+      this.activeTab = tab
+      this.errorMessage = ''
+      await this.refreshActiveTab()
     },
     formatTime(value) {
       if (!value) return '-'
