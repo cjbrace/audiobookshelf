@@ -140,6 +140,7 @@
           </div>
           <div v-else class="flex flex-wrap gap-x-4 gap-y-1">
             <span>Series: {{ catalogSeries.length }}</span>
+            <span>Visible: {{ filteredCatalogSeries.length }}</span>
             <span v-if="selectedCatalogDetail">Rows: {{ selectedCatalogRows.length }}</span>
             <span v-if="selectedCatalogDetail">Slots: {{ selectedCatalogDetail.slots.length }}</span>
             <span v-if="selectedCatalogDetail">Missing: {{ selectedCatalogDetail.slots.filter((slot) => slot.status === 'missing').length }}</span>
@@ -598,6 +599,27 @@
                 </label>
               </div>
 
+              <div v-if="catalogCategoryOptions.length" class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-full border text-sm transition"
+                  :class="!catalogCategoryFilter ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
+                  @click="setCatalogCategoryFilter('')"
+                >
+                  All categories ({{ catalogSeries.length }})
+                </button>
+                <button
+                  v-for="option in catalogCategoryOptions"
+                  :key="'catalog-category:' + option.bucket"
+                  type="button"
+                  class="px-3 py-1.5 rounded-full border text-sm transition"
+                  :class="catalogCategoryFilter === option.bucket ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
+                  @click="setCatalogCategoryFilter(option.bucket)"
+                >
+                  {{ option.label }} ({{ option.count }})
+                </button>
+              </div>
+
               <div v-if="!catalogSeries.length && !catalogLoading" class="text-base text-gray-200">
                 No series detail catalogs are stored yet.
               </div>
@@ -964,6 +986,7 @@ export default {
       catalogLoading: false,
       catalogSeries: [],
       catalogSearchQuery: '',
+      catalogCategoryFilter: '',
       selectedCatalogId: '',
       selectedCatalogDetail: null,
       includeUntrustedCatalogs: false,
@@ -1066,10 +1089,27 @@ export default {
       if (this.activeTab === 'management') return 'Refresh Management'
       return 'Refresh Detail'
     },
+    catalogCategoryOptions() {
+      const bucketOrder = ['trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
+      const bucketCounts = new Map()
+      ;(this.catalogSeries || []).forEach((catalog) => {
+        const bucket = String(catalog?.displayBucket || '').trim()
+        if (!bucket) return
+        bucketCounts.set(bucket, (bucketCounts.get(bucket) || 0) + 1)
+      })
+      return bucketOrder
+        .filter((bucket) => bucketCounts.has(bucket))
+        .map((bucket) => ({
+          bucket,
+          label: this.getCatalogBucketLabel(bucket),
+          count: bucketCounts.get(bucket) || 0
+        }))
+    },
     filteredCatalogSeries() {
       const query = String(this.catalogSearchQuery || '').trim().toLowerCase()
-      if (!query) return this.catalogSeries
       return (this.catalogSeries || []).filter((catalog) => {
+        if (this.catalogCategoryFilter && catalog.displayBucket !== this.catalogCategoryFilter) return false
+        if (!query) return true
         const haystack = `${catalog.seriesName || ''} ${catalog.authorSearchText || catalog.authorLine || ''}`.toLowerCase()
         return haystack.includes(query)
       })
@@ -1238,6 +1278,17 @@ export default {
       if (bucket === 'dismissed') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
+    setCatalogCategoryFilter(bucket) {
+      this.catalogCategoryFilter = this.catalogCategoryFilter === bucket ? '' : bucket
+      const visibleCatalogs = this.filteredCatalogSeries
+      if (!visibleCatalogs.length) {
+        this.selectedCatalogId = ''
+        this.selectedCatalogDetail = null
+        return
+      }
+      if (visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId)) return
+      this.selectCatalog(visibleCatalogs[0].id, { preferCache: true })
+    },
     openCatalogEvidence(link) {
       if (!process.client || !link?.url) return
       window.open(link.url, '_blank', 'noopener')
@@ -1298,13 +1349,22 @@ export default {
     },
     applyCatalogSeries(catalogs) {
       this.catalogSeries = catalogs || []
-      if (this.catalogSeries.length) {
-        const nextId = this.catalogSeries.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : this.catalogSeries[0].id
-        this.selectCatalog(nextId, { preferCache: true })
-      } else {
+      if (!this.catalogSeries.length) {
         this.selectedCatalogId = ''
         this.selectedCatalogDetail = null
+        return
       }
+      if (this.catalogCategoryFilter && !this.catalogSeries.some((catalog) => catalog.displayBucket === this.catalogCategoryFilter)) {
+        this.catalogCategoryFilter = ''
+      }
+      const visibleCatalogs = this.filteredCatalogSeries
+      if (!visibleCatalogs.length) {
+        this.selectedCatalogId = ''
+        this.selectedCatalogDetail = null
+        return
+      }
+      const nextId = visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : visibleCatalogs[0].id
+      this.selectCatalog(nextId, { preferCache: true })
     },
     getCatalogExpectedDisplay(slotOrChoice) {
       const title = String(slotOrChoice?.expectedTitle || slotOrChoice?.title || '').trim()
@@ -1593,8 +1653,7 @@ export default {
           }
         )
         this.$toast.success(`Queued ${response.title} for review`)
-        this.activeTab = 'queue'
-        await this.loadQueue()
+        this.$delete(this.catalogCandidateResultsBySlot, rowKey)
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to queue candidate for review')
       } finally {
