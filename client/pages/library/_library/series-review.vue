@@ -181,6 +181,11 @@
                         {{ row.conflictSummary }}
                       </span>
                     </div>
+                    <div v-if="row.queueGroupName" class="mt-2">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-500/10 text-xs text-sky-100">
+                        Group: {{ row.queueGroupName }}
+                      </span>
+                    </div>
                     <p v-if="row.relPath" class="text-sm text-gray-400 mt-2 break-all">{{ row.relPath }}</p>
                   </td>
                   <td class="px-3 py-3">
@@ -274,6 +279,9 @@
                           <p v-if="suggestion.evidenceSummary?.manualReferenceCount" class="text-gray-400">
                             Manual references: {{ suggestion.evidenceSummary.manualReferenceCount }}
                           </p>
+                          <p v-if="suggestion.evidenceSummary?.automatedSecondarySupportCount" class="text-sky-200">
+                            Supplemental automated support: {{ suggestion.evidenceSummary.automatedSecondarySupportCount }}
+                          </p>
                         </div>
 
                         <div class="mt-3 space-y-2">
@@ -302,6 +310,9 @@
                             >
                               Evidence link
                             </a>
+                            <p v-if="contribution.sourceRef" class="mt-1 text-xs text-gray-500 break-all">
+                              ref: {{ contribution.sourceRef }}
+                            </p>
                           </div>
                         </div>
 
@@ -324,6 +335,57 @@
                           >
                             Dismiss
                           </ui-btn>
+                        </div>
+
+                        <div v-if="suggestion.kind === 'series'" class="mt-3 space-y-3">
+                          <div v-if="getPrimarySuggestions(row).length > 1" class="flex flex-wrap items-center gap-2">
+                            <ui-btn
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="actionKey === `${suggestion.id}:primary`"
+                              @click="toggleAliasPrimary(row, suggestion)"
+                            >
+                              {{ selectedAliasPrimaryByRow[row.libraryItemId] === suggestion.id ? 'Primary selected' : 'Set primary' }}
+                            </ui-btn>
+                            <ui-btn
+                              v-if="selectedAliasPrimaryByRow[row.libraryItemId] && selectedAliasPrimaryByRow[row.libraryItemId] !== suggestion.id"
+                              small
+                              color="bg-sky-500/70"
+                              :loading="actionKey === `${suggestion.id}:alias`"
+                              @click="aliasSuggestion(row, suggestion)"
+                            >
+                              Alias to {{ getAliasPrimaryLabel(row) }}
+                            </ui-btn>
+                          </div>
+
+                          <div class="flex flex-wrap items-center gap-2">
+                            <input
+                              :value="getRenameDraft(suggestion)"
+                              type="text"
+                              class="min-w-[14rem] rounded border border-white/15 bg-black/20 px-3 py-1.5 text-sm text-white"
+                              :placeholder="suggestion.suggestedName || 'Canonical series name'"
+                              @input="setRenameDraft(suggestion.id, $event.target.value)"
+                            />
+                            <ui-btn
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="actionKey === `${suggestion.id}:rename`"
+                              @click="renameSuggestion(row, suggestion)"
+                            >
+                              Rename
+                            </ui-btn>
+                          </div>
+
+                          <div v-if="suggestion.canUnlink" class="flex flex-wrap gap-2">
+                            <ui-btn
+                              small
+                              color="bg-red-500/70"
+                              :loading="actionKey === `${suggestion.id}:unlink`"
+                              @click="unlinkSuggestion(row, suggestion)"
+                            >
+                              Unlink
+                            </ui-btn>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -517,6 +579,15 @@
           <template v-else>
             <div class="space-y-4">
               <div class="flex flex-wrap items-center gap-3">
+                <label class="min-w-[18rem] grow text-sm text-gray-300">
+                  <span class="mb-1 block text-xs uppercase tracking-wide text-gray-500">Search series</span>
+                  <input
+                    v-model.trim="catalogSearchQuery"
+                    type="text"
+                    class="w-full rounded border border-white/15 bg-black/25 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:border-sky-300/40 focus:outline-none"
+                    placeholder="Filter by series or author"
+                  />
+                </label>
                 <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                   <input v-model="includeUntrustedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="handleCatalogFilterChange" />
                   <span>Show less-trusted series</span>
@@ -532,47 +603,40 @@
               </div>
 
               <div v-else class="grid grid-cols-1 xl:grid-cols-[26rem_minmax(0,1fr)] gap-4">
-                <div class="rounded border border-white/15 bg-black/15 p-3 max-h-[72vh] overflow-y-auto self-start space-y-4">
-                  <div
-                    v-for="section in catalogBucketSections"
-                    :key="section.bucket"
-                    class="space-y-2"
-                  >
-                    <div class="flex items-center gap-2 px-1">
-                      <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">{{ section.label }}</h3>
-                      <span class="text-xs text-gray-500">{{ section.catalogs.length }}</span>
-                    </div>
-                    <button
-                      v-for="catalog in section.catalogs"
-                      :key="catalog.id"
-                      type="button"
-                      class="w-full rounded border px-3 py-2 text-left transition"
-                      :class="selectedCatalogId === catalog.id ? 'bg-sky-400/15 border-sky-300/35 text-sky-50' : 'bg-black/20 border-white/10 text-gray-200'"
-                      @click="selectCatalog(catalog.id, { preferCache: true })"
-                    >
-                      <div class="flex items-start gap-2">
-                        <div class="grow">
-                          <p class="font-medium">{{ catalog.seriesName }}</p>
-                          <p class="text-sm text-gray-400">
-                            {{ catalog.localBookCount }} local, {{ catalog.missingCount }} missing, {{ catalog.disputedCount }} disputed
-                          </p>
-                        </div>
-                        <span
-                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none"
-                          :class="getCatalogBucketPillClass(catalog.displayBucket)"
-                        >
-                          {{ catalog.displayLabel }}
-                        </span>
-                      </div>
-                    </button>
+                <div class="rounded border border-white/15 bg-black/15 p-3 max-h-[72vh] overflow-y-auto self-start space-y-3">
+                  <div v-if="!filteredCatalogSeries.length" class="rounded border border-white/10 bg-black/20 px-3 py-4 text-sm text-gray-400">
+                    No series match the current filter.
                   </div>
+                  <button
+                    v-for="catalog in filteredCatalogSeries"
+                    :key="catalog.id"
+                    type="button"
+                    class="w-full rounded border px-3 py-2 text-left transition"
+                    :class="selectedCatalogId === catalog.id ? 'bg-sky-400/15 border-sky-300/35 text-sky-50' : 'bg-black/20 border-white/10 text-gray-200'"
+                    @click="selectCatalog(catalog.id, { preferCache: true })"
+                  >
+                    <div class="flex items-start gap-2">
+                      <div class="grow min-w-0">
+                        <p class="font-medium">{{ catalog.seriesName }}</p>
+                        <p v-if="catalog.authorLine" class="text-sm text-gray-500 mt-0.5">{{ catalog.authorLine }}</p>
+                        <p class="text-sm text-gray-400 mt-1">
+                          {{ catalog.localBookCount }} local, {{ catalog.missingCount }} missing, {{ catalog.disputedCount }} disputed
+                        </p>
+                      </div>
+                      <span
+                        class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none"
+                        :class="getCatalogBucketPillClass(catalog.displayBucket)"
+                      >
+                        {{ catalog.displayLabel }}
+                      </span>
+                    </div>
+                  </button>
                 </div>
 
                 <div v-if="selectedCatalogDetail" class="rounded border border-white/15 bg-black/15 p-4 space-y-4">
                   <div class="flex flex-wrap items-start gap-3">
                     <div class="grow min-w-[18rem]">
                       <h2 class="text-2xl font-semibold">{{ selectedCatalogHeading }}</h2>
-                      <p v-if="selectedCatalogAuthorLine" class="text-sm text-gray-400 mt-1">{{ selectedCatalogAuthorLine }}</p>
                     </div>
                     <span
                       class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
@@ -581,7 +645,16 @@
                       {{ selectedCatalogDetail.catalog.displayLabel }}
                     </span>
                     <ui-btn
-                      v-if="selectedCatalogDetail.catalog.visibilityStatus !== 'dismissed'"
+                      v-for="link in selectedCatalogDetail.catalog.evidenceLinks || []"
+                      :key="selectedCatalogDetail.catalog.id + ':evidence:' + link.source"
+                      small
+                      color="bg-bg border border-white/20"
+                      @click="openCatalogEvidence(link)"
+                    >
+                      {{ link.label }} Evidence
+                    </ui-btn>
+                    <ui-btn
+                      v-if="selectedCatalogDetail.catalog.canDismiss && selectedCatalogDetail.catalog.visibilityStatus !== 'dismissed'"
                       small
                       color="bg-bg border border-white/20"
                       :loading="catalogVisibilityLoadingKey === selectedCatalogDetail.catalog.id"
@@ -590,7 +663,7 @@
                       Dismiss
                     </ui-btn>
                     <ui-btn
-                      v-else
+                      v-else-if="selectedCatalogDetail.catalog.canDismiss"
                       small
                       color="bg-success/80"
                       :loading="catalogVisibilityLoadingKey === selectedCatalogDetail.catalog.id"
@@ -598,6 +671,16 @@
                     >
                       Restore
                     </ui-btn>
+                  </div>
+
+                  <div class="rounded border border-white/10 bg-black/20 p-3">
+                    <p class="text-sm text-gray-200">Series name controls stay aligned with Review Queue alias/rename and Series Management merge behavior.</p>
+                    <p v-if="selectedCatalogDetail.catalog.displayBucket === 'local_only'" class="mt-1 text-xs text-gray-400">
+                      Local-only series stay visible here until they are linked or merged into a sourced series, and they cannot be dismissed.
+                    </p>
+                    <p v-else class="mt-1 text-xs text-gray-400">
+                      Use Review Queue alias/rename or Series Management merge when this series needs canonical-name cleanup.
+                    </p>
                   </div>
 
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-200">
@@ -641,14 +724,29 @@
                             </td>
                             <td class="px-3 py-3">
                               <div v-if="getCatalogRowSourceSupport(row).length" class="flex flex-wrap gap-2">
-                                <span
+                                <div
                                   v-for="source in getCatalogRowSourceSupport(row)"
                                   :key="getCatalogRowKey(row) + ':support:' + source.source + ':' + (source.evidenceUrl || '')"
-                                  class="inline-flex items-center gap-2 px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50"
+                                  class="rounded border border-sky-300/35 bg-sky-400/10 px-2 py-1 text-xs text-sky-50"
                                 >
-                                  <span>{{ source.label || source.source }}</span>
-                                  <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">{{ formatConfidence(source.confidence) }}</span>
-                                </span>
+                                  <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span class="font-medium uppercase tracking-wide">{{ source.label || source.source }}</span>
+                                    <span class="text-sky-100/90">{{ getSourceDisplayName(source.source) }}</span>
+                                    <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">conf: {{ formatConfidence(source.confidence) }}</span>
+                                  </div>
+                                  <a
+                                    v-if="source.evidenceUrl"
+                                    class="mt-1 inline-flex text-sky-200 hover:underline break-all"
+                                    :href="source.evidenceUrl"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Evidence link
+                                  </a>
+                                  <p v-if="source.sourceRef" class="mt-1 text-[11px] text-sky-100/75 break-all">
+                                    ref: {{ source.sourceRef }}
+                                  </p>
+                                </div>
                               </div>
                               <p v-else class="text-xs text-gray-500">No source support</p>
                             </td>
@@ -820,6 +918,8 @@ const SOURCE_LEGEND = {
   fictiondb: { code: 'FDB', name: 'FictionDB', url: 'https://www.fictiondb.com/' },
   goodreads: { code: 'GR', name: 'Goodreads', url: 'https://www.goodreads.com/' },
   wikidata: { code: 'WD', name: 'Wikidata', url: 'https://www.wikidata.org/' },
+  audible: { code: 'AUD', name: 'Audible', url: 'https://www.audible.com/' },
+  audnexus: { code: 'ANX', name: 'Audnexus', url: 'https://api.audnex.us/' },
   librarything: { code: 'LT', name: 'LibraryThing', url: 'https://www.librarything.com/' },
   fantasticfiction: { code: 'FF', name: 'Fantastic Fiction', url: 'https://www.fantasticfiction.com/' }
 }
@@ -849,6 +949,8 @@ export default {
       errorMessage: '',
       lastLoadedAt: null,
       selectedReplaceTarget: {},
+      selectedAliasPrimaryByRow: {},
+      renameTargetBySuggestion: {},
       actionKey: '',
       managementCandidates: [],
       managementPreviewByGroup: {},
@@ -861,6 +963,7 @@ export default {
       managementActionDetailsOpen: {},
       catalogLoading: false,
       catalogSeries: [],
+      catalogSearchQuery: '',
       selectedCatalogId: '',
       selectedCatalogDetail: null,
       includeUntrustedCatalogs: false,
@@ -958,21 +1061,13 @@ export default {
       if (!summary || !this.sourceImportResultFilter) return []
       return summary.filtered_results?.[this.sourceImportResultFilter] || []
     },
-    catalogBucketSections() {
-      const buckets = new Map()
-      ;(this.catalogSeries || []).forEach((catalog) => {
-        const bucket = catalog.displayBucket || 'trusted'
-        if (!buckets.has(bucket)) {
-          buckets.set(bucket, {
-            bucket,
-            label: catalog.displayLabel || this.getCatalogBucketLabel(bucket),
-            catalogs: []
-          })
-        }
-        buckets.get(bucket).catalogs.push(catalog)
+    filteredCatalogSeries() {
+      const query = String(this.catalogSearchQuery || '').trim().toLowerCase()
+      if (!query) return this.catalogSeries
+      return (this.catalogSeries || []).filter((catalog) => {
+        const haystack = `${catalog.seriesName || ''} ${catalog.authorSearchText || catalog.authorLine || ''}`.toLowerCase()
+        return haystack.includes(query)
       })
-      const bucketOrder = { trusted: 0, less_trusted: 1, potential: 2, dismissed: 3 }
-      return [...buckets.values()].sort((a, b) => (bucketOrder[a.bucket] || 99) - (bucketOrder[b.bucket] || 99))
     },
     selectedCatalogAuthorLine() {
       return this.getCatalogAuthorLine(this.selectedCatalogDetail)
@@ -983,10 +1078,7 @@ export default {
     selectedCatalogHeading() {
       if (!this.selectedCatalogDetail?.catalog) return ''
       const authorLine = this.selectedCatalogAuthorLine
-      const label = this.selectedCatalogDetail.catalog.displayLabel || 'Trusted'
-      return authorLine
-        ? `${this.selectedCatalogDetail.catalog.seriesName} - ${authorLine} (${label})`
-        : `${this.selectedCatalogDetail.catalog.seriesName} (${label})`
+      return authorLine ? `${this.selectedCatalogDetail.catalog.seriesName} - ${authorLine}` : `${this.selectedCatalogDetail.catalog.seriesName}`
     }
   },
   mounted() {
@@ -1028,6 +1120,7 @@ export default {
       return (authors || []).map((author) => author.name).join(', ') || '-'
     },
     formatDecisionState(suggestion) {
+      if (suggestion.state === 'linked') return 'Already linked'
       if (suggestion.state === 'dismissed') return 'Dismissed'
       if (suggestion.state === 'manual_override') return 'Applied by replace'
       if (suggestion.state === 'applied') return 'Applied by add'
@@ -1038,7 +1131,8 @@ export default {
       const actionMap = {
         dismiss: 'Previously dismissed',
         add: 'Previously applied by add',
-        replace: 'Previously applied by replace'
+        replace: 'Previously applied by replace',
+        assumed_link: 'Auto-linked'
       }
       const baseLabel = actionMap[suggestion.previousDecision.action] || 'Previously decided'
       if (!suggestion.hasMeaningfulUpdateSinceDecision) return `${baseLabel} on ${this.formatTime(suggestion.previousDecision.decidedAt)}`
@@ -1055,6 +1149,23 @@ export default {
       const suggestions = row?.suggestions || []
       const positiveSuggestions = suggestions.filter((suggestion) => suggestion.kind === 'series')
       return positiveSuggestions.length ? positiveSuggestions : suggestions
+    },
+    toggleAliasPrimary(row, suggestion) {
+      if (this.selectedAliasPrimaryByRow[row.libraryItemId] === suggestion.id) {
+        this.$delete(this.selectedAliasPrimaryByRow, row.libraryItemId)
+        return
+      }
+      this.$set(this.selectedAliasPrimaryByRow, row.libraryItemId, suggestion.id)
+    },
+    getAliasPrimaryLabel(row) {
+      const primarySuggestionId = this.selectedAliasPrimaryByRow[row.libraryItemId]
+      return (row?.suggestions || []).find((suggestion) => suggestion.id === primarySuggestionId)?.suggestedName || 'selected primary'
+    },
+    getRenameDraft(suggestion) {
+      return this.renameTargetBySuggestion[suggestion.id] ?? suggestion.suggestedName ?? ''
+    },
+    setRenameDraft(suggestionId, value) {
+      this.$set(this.renameTargetBySuggestion, suggestionId, value)
     },
     selectedManagementTargetId(groupKey) {
       return this.managementTargetIds[groupKey] || ''
@@ -1106,16 +1217,22 @@ export default {
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
     getCatalogBucketLabel(bucket) {
+      if (bucket === 'local_only') return 'Local series'
       if (bucket === 'less_trusted') return 'Less trusted'
       if (bucket === 'potential') return 'Potential series'
       if (bucket === 'dismissed') return 'Dismissed'
       return 'Trusted'
     },
     getCatalogBucketPillClass(bucket) {
+      if (bucket === 'local_only') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100'
       if (bucket === 'less_trusted') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
       if (bucket === 'potential') return 'border-violet-300/35 bg-violet-500/10 text-violet-100'
       if (bucket === 'dismissed') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
+    },
+    openCatalogEvidence(link) {
+      if (!process.client || !link?.url) return
+      window.open(link.url, '_blank', 'noopener')
     },
     catalogListCacheKey(includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
       return `${CATALOG_LIST_CACHE_PREFIX}${includeUntrusted ? 1 : 0}:${includeDismissed ? 1 : 0}`
@@ -1152,6 +1269,21 @@ export default {
       const key = this.catalogListCacheKey(includeUntrusted, includeDismissed)
       this.$set(this.catalogListCache, key, catalogs || [])
       this.persistCatalogCaches()
+    },
+    invalidateSeriesReviewCaches() {
+      this.catalogSeries = []
+      this.selectedCatalogId = ''
+      this.selectedCatalogDetail = null
+      this.catalogCandidateResultsBySlot = {}
+      this.catalogListCache = {}
+      this.catalogDetailCache = {}
+      if (process.client) {
+        try {
+          Object.keys(window.sessionStorage)
+            .filter((key) => key.startsWith(CATALOG_LIST_CACHE_PREFIX) || key === CATALOG_DETAIL_CACHE_KEY)
+            .forEach((key) => window.sessionStorage.removeItem(key))
+        } catch {}
+      }
     },
     getCatalogListCache(includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
       return this.catalogListCache[this.catalogListCacheKey(includeUntrusted, includeDismissed)] || []
@@ -1191,6 +1323,7 @@ export default {
     },
     getCatalogAuthorLine(detail) {
       if (!detail) return ''
+      if (detail?.catalog?.authorLine) return detail.catalog.authorLine
       const authors = new Set()
       ;(detail.localBooks || []).forEach((book) => {
         ;(book.authors || []).forEach((author) => {
@@ -1603,6 +1736,50 @@ export default {
         this.actionKey = ''
       }
     },
+    async aliasSuggestion(row, suggestion) {
+      const primarySuggestionId = this.selectedAliasPrimaryByRow[row.libraryItemId]
+      if (!primarySuggestionId || primarySuggestionId === suggestion.id) {
+        this.$toast.error('Select a different primary suggestion first')
+        return
+      }
+
+      this.actionKey = `${suggestion.id}:alias`
+      try {
+        await this.$axios.$post(`/api/series-review/suggestions/${suggestion.id}/alias`, {
+          primarySuggestionId
+        })
+        this.$delete(this.selectedAliasPrimaryByRow, row.libraryItemId)
+        this.invalidateSeriesReviewCaches()
+        await this.loadQueue()
+        this.$toast.success('Alias saved')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to save series alias')
+      } finally {
+        this.actionKey = ''
+      }
+    },
+    async renameSuggestion(row, suggestion) {
+      const targetLabel = String(this.getRenameDraft(suggestion) || '').trim()
+      if (!targetLabel) {
+        this.$toast.error('Enter the canonical series name first')
+        return
+      }
+
+      this.actionKey = `${suggestion.id}:rename`
+      try {
+        await this.$axios.$post(`/api/series-review/suggestions/${suggestion.id}/rename`, {
+          targetLabel
+        })
+        this.$set(this.renameTargetBySuggestion, suggestion.id, targetLabel)
+        this.invalidateSeriesReviewCaches()
+        await this.loadQueue()
+        this.$toast.success('Series name updated')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to rename the series')
+      } finally {
+        this.actionKey = ''
+      }
+    },
     async removeCurrentSeries(row, series) {
       this.actionKey = `${row.libraryItemId}:remove:${series.id}`
       try {
@@ -1614,6 +1791,19 @@ export default {
         this.$toast.success('Series removed')
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to remove series')
+      } finally {
+        this.actionKey = ''
+      }
+    },
+    async unlinkSuggestion(row, suggestion) {
+      this.actionKey = `${suggestion.id}:unlink`
+      try {
+        const response = await this.$axios.$post(`/api/series-review/suggestions/${suggestion.id}/unlink`)
+        this.updateRowCurrentSeries(row, response.currentSeries)
+        this.updateSuggestionState(row, suggestion.id, response.suggestion)
+        this.$toast.success('Series unlinked')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to unlink series')
       } finally {
         this.actionKey = ''
       }

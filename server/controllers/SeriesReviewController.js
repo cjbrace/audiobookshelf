@@ -238,12 +238,58 @@ class SeriesReviewController {
     })
   }
 
+  async aliasSuggestion(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    const primarySuggestionId = typeof req.body?.primarySuggestionId === 'string' ? req.body.primarySuggestionId : ''
+    if (!primarySuggestionId) return res.status(400).send('Missing primarySuggestionId')
+
+    let result
+    try {
+      result = await SeriesReviewManager.aliasSuggestion(req.params.suggestionId, primarySuggestionId, req.user.id)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
+  }
+
+  async renameSuggestion(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    const targetLabel = typeof req.body?.targetLabel === 'string' ? req.body.targetLabel : ''
+    if (!targetLabel.trim()) return res.status(400).send('Missing targetLabel')
+
+    let result
+    try {
+      result = await SeriesReviewManager.renameSuggestion(req.params.suggestionId, targetLabel, req.user.id)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
+  }
+
   async dismissSuggestion(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     const suggestion = await SeriesReviewManager.dismissSuggestion(req.params.suggestionId, req.user.id)
     if (!suggestion) return res.sendStatus(404)
     res.json({
       suggestion: SeriesReviewManager.buildSuggestionPayload(suggestion)
+    })
+  }
+
+  async unlinkSuggestion(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+
+    let result
+    try {
+      result = await SeriesReviewManager.unlinkSuggestion(req.params.suggestionId, req.user.id)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json({
+      suggestion: SeriesReviewManager.buildSuggestionPayload(result.suggestion),
+      currentSeries: SeriesReviewManager.getCurrentSeriesPayload(result.libraryItem)
     })
   }
 

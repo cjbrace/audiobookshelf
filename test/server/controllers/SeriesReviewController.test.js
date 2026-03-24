@@ -70,6 +70,62 @@ describe('SeriesReviewController', () => {
     expect(res.json.notCalled).to.be.true
   })
 
+  it('creates an alias relationship between two suggestions on the same row', async () => {
+    sinon.stub(SeriesReviewManager, 'aliasSuggestion').resolves({ canonicalName: 'Witches' })
+
+    const req = {
+      user: {
+        id: 'admin-user',
+        isAdminOrUp: true
+      },
+      params: {
+        suggestionId: 'alias-suggestion'
+      },
+      body: {
+        primarySuggestionId: 'primary-suggestion'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.aliasSuggestion(req, res)
+
+    expect(SeriesReviewManager.aliasSuggestion.calledOnceWithExactly('alias-suggestion', 'primary-suggestion', 'admin-user')).to.be.true
+    expect(res.json.calledOnceWithExactly({ canonicalName: 'Witches' })).to.be.true
+  })
+
+  it('renames a suggestion to the chosen canonical label', async () => {
+    sinon.stub(SeriesReviewManager, 'renameSuggestion').resolves({ canonicalName: 'Rain Wilds Chronicles', renameResult: { changedCount: 2, conflictCount: 0 } })
+
+    const req = {
+      user: {
+        id: 'admin-user',
+        isAdminOrUp: true
+      },
+      params: {
+        suggestionId: 'rename-suggestion'
+      },
+      body: {
+        targetLabel: 'Rain Wilds Chronicles'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.renameSuggestion(req, res)
+
+    expect(SeriesReviewManager.renameSuggestion.calledOnceWithExactly('rename-suggestion', 'Rain Wilds Chronicles', 'admin-user')).to.be.true
+    expect(res.json.calledOnceWithExactly({ canonicalName: 'Rain Wilds Chronicles', renameResult: { changedCount: 2, conflictCount: 0 } })).to.be.true
+  })
+
   it('resets suggestions for explicit library item ids', async () => {
     sinon.stub(SeriesReviewManager, 'resetSuggestionsForLibrary').resolves({ deletedCount: 3 })
 
@@ -422,5 +478,39 @@ describe('SeriesReviewController', () => {
 
     expect(res.status.calledOnceWithExactly(400)).to.be.true
     expect(res.send.calledOnceWithExactly('Missing targetLabel')).to.be.true
+  })
+
+  it('unlinks a previously linked series suggestion from the book', async () => {
+    sinon.stub(SeriesReviewManager, 'unlinkSuggestion').resolves({
+      suggestion: { id: 'suggestion-1', kind: 'series', state: 'pending', contributions: [] },
+      libraryItem: {
+        media: {
+          series: []
+        }
+      }
+    })
+    sinon.stub(SeriesReviewManager, 'buildSuggestionPayload').returns({ id: 'suggestion-1', kind: 'series', state: 'pending', contributions: [] })
+    sinon.stub(SeriesReviewManager, 'getCurrentSeriesPayload').returns([])
+
+    const req = {
+      user: {
+        id: 'admin-user',
+        isAdminOrUp: true
+      },
+      params: {
+        suggestionId: 'suggestion-1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.unlinkSuggestion(req, res)
+
+    expect(SeriesReviewManager.unlinkSuggestion.calledOnceWithExactly('suggestion-1', 'admin-user')).to.be.true
+    expect(res.json.calledOnceWithExactly({ suggestion: { id: 'suggestion-1', kind: 'series', state: 'pending', contributions: [] }, currentSeries: [] })).to.be.true
   })
 })

@@ -80,22 +80,253 @@ class SeriesReviewManager {
     return this.normalizeSeriesName(value).replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, ' ')
   }
 
-  getCatalogSortKey(seriesName) {
-    const normalized = this.normalizeSeriesName(seriesName)
-    return normalized.replace(/^the\s+/i, '').trim().toLowerCase() || normalized.toLowerCase()
+  normalizeDecisionSeriesName(value) {
+    return this.normalizeSeriesName(value)
+      .replace(/^the\s+/i, '')
+      .replace(/\s+series$/i, '')
+      .trim()
   }
 
-  getCatalogDisplayBucket({ trustStatus, visibilityStatus, localBookCount }) {
+  normalizeDecisionKey(value) {
+    return this.normalizeKeyPart(this.normalizeDecisionSeriesName(value))
+  }
+
+  getPreferredSeriesLabelScore(value) {
+    const normalized = this.normalizeSeriesName(value)
+    return [
+      /^the\s+/i.test(normalized) ? 1 : 0,
+      /\s+series$/i.test(normalized) ? 1 : 0,
+      (normalized.match(/[^a-z0-9\s]/gi) || []).length,
+      normalized.length,
+      normalized.toLowerCase()
+    ]
+  }
+
+  choosePreferredSeriesLabel(names) {
+    const candidates = [...new Set((Array.isArray(names) ? names : []).map((name) => this.normalizeSeriesName(name)).filter(Boolean))]
+    if (!candidates.length) return ''
+    return candidates.sort((a, b) => {
+      const aScore = this.getPreferredSeriesLabelScore(a)
+      const bScore = this.getPreferredSeriesLabelScore(b)
+      for (let index = 0; index < aScore.length; index++) {
+        if (aScore[index] < bScore[index]) return -1
+        if (aScore[index] > bScore[index]) return 1
+      }
+      return 0
+    })[0]
+  }
+
+  async getSeriesNameControlsForLibrary(libraryId) {
+    return Database.seriesReviewNameControlModel.findAll({
+      where: {
+        libraryId
+      },
+      order: [['createdAt', 'ASC']]
+    })
+  }
+
+  buildSeriesNameControlResolver(controls) {
+    const exactMap = new Map()
+    const decisionBuckets = new Map()
+
+    ;(Array.isArray(controls) ? controls : []).forEach((control) => {
+      if (control?.aliasNameNormalized) exactMap.set(control.aliasNameNormalized, control)
+      const decisionKey = control?.canonicalDecisionKey || ''
+      if (!decisionKey) return
+      if (!decisionBuckets.has(decisionKey)) decisionBuckets.set(decisionKey, new Map())
+      decisionBuckets.get(decisionKey).set(control.canonicalNameNormalized, control.canonicalName)
+    })
+
+    const decisionMap = new Map()
+    decisionBuckets.forEach((bucket, key) => {
+      if (bucket.size === 1) {
+        decisionMap.set(key, [...bucket.values()][0])
+      }
+    })
+
+    const canonicalizeName = (value) => {
+      const normalized = this.normalizeSeriesName(value)
+      if (!normalized) return ''
+      const exactKey = this.normalizeKeyPart(normalized)
+      if (exactMap.has(exactKey)) return exactMap.get(exactKey).canonicalName
+      const decisionKey = this.normalizeDecisionKey(normalized)
+      return decisionMap.get(decisionKey) || normalized
+    }
+
+    return {
+      canonicalizeName,
+      getDecisionKey: (value) => {
+        return this.normalizeDecisionKey(canonicalizeName(value) || value)
+      },
+      chooseDisplayName: (names) => {
+        const normalizedNames = [...new Set((Array.isArray(names) ? names : []).map((name) => this.normalizeSeriesName(name)).filter(Boolean))]
+        if (!normalizedNames.length) return ''
+        const mappedNames = [...new Set(normalizedNames.map((name) => this.normalizeSeriesName(canonicalizeName(name))).filter(Boolean))]
+        if (mappedNames.length === 1 && mappedNames[0] !== normalizedNames[0]) {
+          return mappedNames[0]
+        }
+        return this.choosePreferredSeriesLabel(normalizedNames)
+      }
+    }
+  }
+
+  async getSeriesNameControlResolverForLibrary(libraryId) {
+    return this.buildSeriesNameControlResolver(await this.getSeriesNameControlsForLibrary(libraryId))
+  }
+
+  async upsertSeriesNameControlForLibrary(libraryId, userId, aliasName, canonicalName, controlType = 'alias') {
+    const normalizedAliasName = this.normalizeSeriesName(aliasName)
+    const normalizedCanonicalName = this.normalizeSeriesName(canonicalName)
+    if (!normalizedAliasName || !normalizedCanonicalName) {
+      throw new Error('Both alias and canonical names are required')
+    }
+
+    const aliasNameNormalized = this.normalizeKeyPart(normalizedAliasName)
+    const canonicalNameNormalized = this.normalizeKeyPart(normalizedCanonicalName)
+    const payload = {
+      controlType,
+      aliasName: normalizedAliasName,
+      aliasNameNormalized,
+      aliasDecisionKey: this.normalizeDecisionKey(normalizedAliasName),
+      canonicalName: normalizedCanonicalName,
+      canonicalNameNormalized,
+      canonicalDecisionKey: this.normalizeDecisionKey(normalizedCanonicalName),
+      createdByUserId: userId || null
+    }
+
+    const existing = await Database.seriesReviewNameControlModel.findOne({
+      where: {
+        libraryId,
+        aliasNameNormalized
+      }
+    })
+
+    if (existing) {
+      Object.assign(existing, payload)
+      await existing.save()
+      return existing
+    }
+
+    return Database.seriesReviewNameControlModel.create({
+      libraryId,
+      ...payload
+    })
+  }
+
+  getCatalogSortKey(seriesName) {
+    const normalized = this.normalizeSeriesName(seriesName)
+    const decisionName = this.normalizeDecisionSeriesName(normalized)
+    return decisionName.toLowerCase() || normalized.toLowerCase()
+  }
+
+  buildLocalOnlyCatalogId(decisionKey) {
+    return `local-series:${encodeURIComponent(decisionKey || '')}`
+  }
+
+  parseLocalOnlyCatalogId(catalogId) {
+    const rawId = String(catalogId || '')
+    if (!rawId.startsWith('local-series:')) return null
+    return decodeURIComponent(rawId.slice('local-series:'.length))
+  }
+
+  getCatalogDisplayBucket({ trustStatus, visibilityStatus, localBookCount, isLocalOnly = false }) {
     if (visibilityStatus === 'dismissed') return 'dismissed'
+    if (isLocalOnly) return 'local_only'
     if (!localBookCount) return 'potential'
     return trustStatus === 'untrusted' ? 'less_trusted' : 'trusted'
   }
 
   getCatalogDisplayLabel(bucket) {
+    if (bucket === 'local_only') return 'Local series'
     if (bucket === 'potential') return 'Potential series'
     if (bucket === 'less_trusted') return 'Less trusted'
     if (bucket === 'dismissed') return 'Dismissed'
     return 'Trusted'
+  }
+
+  buildCatalogAuthorMeta(localBooks = [], entryOrRows = []) {
+    const authors = []
+    const seen = new Set()
+    const addAuthor = (value) => {
+      const authorName = this.normalizeSeriesName(value)
+      const authorKey = this.normalizeKeyPart(authorName)
+      if (!authorName || !authorKey || seen.has(authorKey)) return
+      seen.add(authorKey)
+      authors.push(authorName)
+    }
+
+    ;(Array.isArray(localBooks) ? localBooks : []).forEach((book) => {
+      ;(book?.authors || []).forEach((author) => addAuthor(author?.name || author))
+    })
+    ;(Array.isArray(entryOrRows) ? entryOrRows : []).forEach((entry) => {
+      ;(entry?.expectedAuthors || entry?.authors || []).forEach((author) => addAuthor(author?.name || author))
+    })
+
+    return {
+      authorLine: authors.slice(0, 3).join(', '),
+      authorSearchText: authors.join(' ')
+    }
+  }
+
+  buildCatalogEvidenceLinks(entries = []) {
+    const evidenceBySource = new Map()
+    this.normalizeCatalogEntries(entries).forEach((entry) => {
+      ;(entry.sources || []).forEach((source) => {
+        if (!source?.evidenceUrl) return
+        const sourceKey = String(source.source || '').toLowerCase()
+        if (!sourceKey || evidenceBySource.has(sourceKey)) return
+        evidenceBySource.set(sourceKey, {
+          source: sourceKey,
+          label: source.label || sourceKey.toUpperCase(),
+          url: source.evidenceUrl
+        })
+      })
+    })
+
+    return [...evidenceBySource.values()].sort((a, b) => {
+      const roleDelta = (this.getSourceRoleMeta(a.source).roleWeight || 0) - (this.getSourceRoleMeta(b.source).roleWeight || 0)
+      if (roleDelta !== 0) return roleDelta * -1
+      return a.label.localeCompare(b.label)
+    })
+  }
+
+  buildCatalogViewPayload({
+    id,
+    seriesName,
+    trustStatus,
+    visibilityStatus,
+    dismissedAt = null,
+    entries = [],
+    action = null,
+    localBooks = [],
+    displayBucket = null,
+    canDismiss = true
+  }) {
+    const normalizedEntries = this.normalizeCatalogEntries(entries)
+    const bucket =
+      displayBucket ||
+      this.getCatalogDisplayBucket({
+        trustStatus,
+        visibilityStatus,
+        localBookCount: Array.isArray(localBooks) ? localBooks.length : 0
+      })
+    const authorMeta = this.buildCatalogAuthorMeta(localBooks, normalizedEntries)
+
+    return {
+      id,
+      seriesName,
+      trustStatus,
+      visibilityStatus: visibilityStatus || 'visible',
+      dismissedAt: dismissedAt || null,
+      entryCount: normalizedEntries.length,
+      action,
+      displayBucket: bucket,
+      displayLabel: this.getCatalogDisplayLabel(bucket),
+      authorLine: authorMeta.authorLine,
+      authorSearchText: authorMeta.authorSearchText,
+      evidenceLinks: this.buildCatalogEvidenceLinks(normalizedEntries),
+      canDismiss
+    }
   }
 
   getSourceRoleMeta(source) {
@@ -108,6 +339,9 @@ class SeriesReviewManager {
     if (normalizedSource === 'wikidata') {
       return { role: 'automated_secondary', roleLabel: 'Secondary automated', roleWeight: 4 }
     }
+    if (normalizedSource === 'audible' || normalizedSource === 'audnexus') {
+      return { role: 'automated_support', roleLabel: 'Automated support', roleWeight: 2 }
+    }
     if (['goodreads', 'fantasticfiction', 'librarything'].includes(normalizedSource)) {
       return { role: 'manual_reference', roleLabel: 'Manual reference', roleWeight: 1 }
     }
@@ -116,7 +350,7 @@ class SeriesReviewManager {
 
   buildSuggestionKey(kind, suggestedName, suggestedSequence) {
     if (kind === 'no_series') return 'no_series'
-    const normalizedName = this.normalizeKeyPart(suggestedName)
+    const normalizedName = this.normalizeDecisionKey(suggestedName)
     const normalizedSequence = this.normalizeSequence(suggestedSequence) || 'none'
     return `${normalizedName || 'unnamed'}::${normalizedSequence}`
   }
@@ -134,6 +368,9 @@ class SeriesReviewManager {
 
     const confidenceValue = Number(input?.confidence)
     const sourceRole = this.getSourceRoleMeta(source)
+    const sourceRef = typeof input?.sourceRef === 'string' ? input.sourceRef.trim() || null : null
+    const providerMeta = input?.providerMeta && typeof input.providerMeta === 'object' && !Array.isArray(input.providerMeta) ? input.providerMeta : null
+    const rawEvidence = input?.rawEvidence && typeof input.rawEvidence === 'object' && !Array.isArray(input.rawEvidence) ? input.rawEvidence : null
     return {
       source,
       label: String(input?.label || source).trim() || source,
@@ -145,33 +382,45 @@ class SeriesReviewManager {
       sequence,
       confidence: Number.isFinite(confidenceValue) ? Number(confidenceValue.toFixed(3)) : null,
       evidenceUrl: typeof input?.evidenceUrl === 'string' ? input.evidenceUrl.trim() || null : null,
-      notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null
+      notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null,
+      sourceRef,
+      providerMeta,
+      rawEvidence
     }
   }
 
-  groupContributions(sourceSuggestions) {
+  groupContributions(sourceSuggestions, resolver = this.buildSeriesNameControlResolver([])) {
     const groups = {}
     for (const rawContribution of Array.isArray(sourceSuggestions) ? sourceSuggestions : []) {
       const contribution = this.cleanContribution(rawContribution)
       if (!contribution) continue
       const kind = contribution.noSeries ? 'no_series' : 'series'
-      const suggestionKey = this.buildSuggestionKey(kind, contribution.seriesName, contribution.sequence)
+      const canonicalSeriesName = contribution.noSeries ? null : resolver.canonicalizeName(contribution.seriesName)
+      const suggestionKey = this.buildSuggestionKey(kind, canonicalSeriesName || contribution.seriesName, contribution.sequence)
       if (!groups[suggestionKey]) {
         groups[suggestionKey] = {
           kind,
           suggestionKey,
-          suggestedName: contribution.seriesName,
-          suggestedNameNormalized: contribution.seriesName ? this.normalizeKeyPart(contribution.seriesName) : null,
+          suggestedName: canonicalSeriesName || contribution.seriesName,
+          suggestedNameNormalized: canonicalSeriesName ? this.normalizeKeyPart(canonicalSeriesName) : contribution.seriesName ? this.normalizeKeyPart(contribution.seriesName) : null,
+          seriesDecisionKey: canonicalSeriesName ? resolver.getDecisionKey(canonicalSeriesName) : contribution.seriesName ? resolver.getDecisionKey(contribution.seriesName) : null,
           suggestedSequence: contribution.sequence,
           contributions: []
         }
       }
       groups[suggestionKey].contributions.push(contribution)
     }
-    return Object.values(groups).map((group) => ({
-      ...group,
-      contributions: group.contributions.sort((a, b) => a.source.localeCompare(b.source))
-    }))
+    return Object.values(groups).map((group) => {
+      const names = group.contributions.filter((contribution) => !contribution.noSeries).map((contribution) => contribution.seriesName)
+      const suggestedName = group.kind === 'series' ? resolver.chooseDisplayName([group.suggestedName, ...names].filter(Boolean)) : group.suggestedName
+      return {
+        ...group,
+        suggestedName,
+        suggestedNameNormalized: suggestedName ? this.normalizeKeyPart(suggestedName) : null,
+        seriesDecisionKey: suggestedName ? resolver.getDecisionKey(suggestedName) : null,
+        contributions: group.contributions.sort((a, b) => a.source.localeCompare(b.source))
+      }
+    })
   }
 
   buildSuggestionFingerprint(groupedSuggestion) {
@@ -188,7 +437,9 @@ class SeriesReviewManager {
         sequence: contribution.sequence || null,
         confidence: contribution.confidence ?? null,
         evidenceUrl: contribution.evidenceUrl || null,
-        notes: contribution.notes || null
+        notes: contribution.notes || null,
+        sourceRef: contribution.sourceRef || null,
+        providerMeta: contribution.providerMeta || null
       }))
     })
   }
@@ -213,6 +464,7 @@ class SeriesReviewManager {
     const positiveSources = contributions.filter((contribution) => !contribution.noSeries)
     const negativeSources = contributions.filter((contribution) => contribution.noSeries)
     const automatedSources = positiveSources.filter((contribution) => contribution.role === 'automated_primary' || contribution.role === 'automated_secondary')
+    const automatedSupportSources = positiveSources.filter((contribution) => contribution.role === 'automated_support')
     const manualReferenceSources = positiveSources.filter((contribution) => contribution.role === 'manual_reference')
     const sourceCodes = new Set(positiveSources.map((contribution) => contribution.source))
     return {
@@ -220,6 +472,7 @@ class SeriesReviewManager {
       conflictCount: negativeSources.length,
       disagreement: positiveSources.length > 0 && negativeSources.length > 0,
       automatedSupportCount: automatedSources.length,
+      automatedSecondarySupportCount: automatedSupportSources.length,
       manualReferenceCount: manualReferenceSources.length,
       sourceStrength: positiveSources.reduce((total, contribution) => total + (contribution.roleWeight || 0), 0),
       automatedAgreement: sourceCodes.has('fictiondb') && sourceCodes.has('wikidata'),
@@ -243,11 +496,11 @@ class SeriesReviewManager {
   analyzeSuggestionSet(suggestionPayloads) {
     const positiveSuggestions = suggestionPayloads.filter((suggestion) => suggestion.kind === 'series')
     const noSeriesSuggestions = suggestionPayloads.filter((suggestion) => suggestion.kind === 'no_series')
-    const positiveNames = [...new Set(positiveSuggestions.map((suggestion) => suggestion.suggestedName).filter(Boolean))]
+    const positiveNames = [...new Set(positiveSuggestions.map((suggestion) => suggestion.seriesDecisionKey || suggestion.suggestedName).filter(Boolean))]
     const sequenceByName = new Map()
 
     positiveSuggestions.forEach((suggestion) => {
-      const nameKey = suggestion.suggestedName || ''
+      const nameKey = suggestion.seriesDecisionKey || suggestion.suggestedName || ''
       if (!sequenceByName.has(nameKey)) sequenceByName.set(nameKey, new Set())
       sequenceByName.get(nameKey).add(suggestion.suggestedSequence || '')
     })
@@ -442,12 +695,18 @@ class SeriesReviewManager {
     if (!source) return null
 
     const confidenceValue = Number(input?.confidence)
+    const sourceRef = typeof input?.sourceRef === 'string' ? input.sourceRef.trim() || null : null
+    const providerMeta = input?.providerMeta && typeof input.providerMeta === 'object' && !Array.isArray(input.providerMeta) ? input.providerMeta : null
+    const rawEvidence = input?.rawEvidence && typeof input.rawEvidence === 'object' && !Array.isArray(input.rawEvidence) ? input.rawEvidence : null
     return {
       source,
       label: String(input?.label || source).trim() || source,
       confidence: Number.isFinite(confidenceValue) ? Number(confidenceValue.toFixed(3)) : null,
       evidenceUrl: typeof input?.evidenceUrl === 'string' ? input.evidenceUrl.trim() || null : null,
-      notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null
+      notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null,
+      sourceRef,
+      providerMeta,
+      rawEvidence
     }
   }
 
@@ -553,19 +812,39 @@ class SeriesReviewManager {
     }
   }
 
-  async importCatalogForLibrary(libraryId, rows) {
+  mergeCatalogEntryPayloads(entries) {
+    const mergedEntries = new Map()
+    this.normalizeCatalogEntries(entries).forEach((entry) => {
+      const existing = mergedEntries.get(entry.entryKey)
+      if (!existing) {
+        mergedEntries.set(entry.entryKey, {
+          ...entry,
+          authors: [...(entry.authors || [])],
+          sources: [...(entry.sources || [])]
+        })
+        return
+      }
+      existing.authors = [...new Set([...(existing.authors || []), ...(entry.authors || [])])]
+      existing.sources = [...new Map([...(existing.sources || []), ...(entry.sources || [])].map((source) => [`${source.source}:${source.evidenceUrl || ''}:${source.sourceRef || ''}:${source.label || ''}`, source])).values()]
+      if (!existing.publishedDate && entry.publishedDate) existing.publishedDate = entry.publishedDate
+    })
+    return [...mergedEntries.values()]
+  }
+
+  async importCatalogForLibrary(libraryId, rows, options = {}) {
     await this.ensureSeriesReviewCatalogSchema()
     const results = []
     let createdCount = 0
     let updatedCount = 0
+    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
 
     for (const row of Array.isArray(rows) ? rows : []) {
-      const seriesName = this.normalizeSeriesName(row?.seriesName || '')
+      const seriesName = resolver.canonicalizeName(row?.seriesName || '')
       if (!seriesName) continue
 
       const seriesNameNormalized = this.normalizeKeyPart(seriesName)
       const trustStatus = row?.trustStatus === 'untrusted' ? 'untrusted' : 'trusted'
-      const entries = this.normalizeCatalogEntries(row?.entries)
+      const entries = this.mergeCatalogEntryPayloads(row?.entries)
       const selectionBySlot =
         row?.selectionBySlot && typeof row.selectionBySlot === 'object' && !Array.isArray(row.selectionBySlot)
           ? row.selectionBySlot
@@ -612,8 +891,41 @@ class SeriesReviewManager {
     }
   }
 
+  async getLocalSeriesGroupsForLibrary(libraryId, resolver = null) {
+    const effectiveResolver = resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    const seriesRows = await Database.seriesModel.findAll({
+      where: {
+        libraryId
+      },
+      order: [['name', 'ASC']]
+    })
+
+    const groups = new Map()
+    seriesRows.forEach((series) => {
+      const decisionKey = effectiveResolver.getDecisionKey(series.name)
+      if (!decisionKey) return
+      if (!groups.has(decisionKey)) {
+        groups.set(decisionKey, {
+          decisionKey,
+          seriesRows: [],
+          names: []
+        })
+      }
+      groups.get(decisionKey).seriesRows.push(series)
+      groups.get(decisionKey).names.push(series.name)
+    })
+
+    groups.forEach((group) => {
+      group.seriesName = effectiveResolver.chooseDisplayName(group.names) || this.choosePreferredSeriesLabel(group.names)
+      group.catalogId = this.buildLocalOnlyCatalogId(group.decisionKey)
+    })
+
+    return groups
+  }
+
   async getCatalogsForLibrary(libraryId, includeUntrusted = false, includeDismissed = false) {
     await this.ensureSeriesReviewCatalogSchema()
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const where = { libraryId }
     if (!includeDismissed) where.visibilityStatus = 'visible'
 
@@ -621,14 +933,25 @@ class SeriesReviewManager {
       where,
       order: [['seriesName', 'ASC']]
     })
+    const allCatalogs = includeDismissed
+      ? catalogs
+      : await Database.seriesReviewCatalogModel.findAll({
+          where: { libraryId },
+          order: [['seriesName', 'ASC']]
+        })
 
     const detailSummaries = []
+    const catalogDecisionKeys = new Set(
+      allCatalogs
+        .map((catalog) => resolver.getDecisionKey(catalog.seriesName))
+        .filter(Boolean)
+    )
     for (const catalog of catalogs) {
-      const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id)
+      const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id, { resolver })
       if (!detail) continue
       const displayBucket = detail.catalog.displayBucket
       if (!includeDismissed && displayBucket === 'dismissed') continue
-      if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'dismissed') continue
+      if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'local_only' && displayBucket !== 'dismissed') continue
       detailSummaries.push({
         ...detail.catalog,
         missingCount: detail.slots.filter((slot) => slot.status === 'missing').length,
@@ -638,28 +961,50 @@ class SeriesReviewManager {
       })
     }
 
+    const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+    for (const group of localSeriesGroups.values()) {
+      if (!group?.seriesName || catalogDecisionKeys.has(group.decisionKey)) continue
+      const detail = await this.getCatalogDetailForLibrary(libraryId, group.catalogId, { resolver, localSeriesGroups })
+      if (!detail?.localBooks?.length) continue
+      detailSummaries.push({
+        ...detail.catalog,
+        missingCount: 0,
+        disputedCount: 0,
+        localBookCount: detail.localBooks.length,
+        unsequencedCount: detail.unsequencedBooks.length
+      })
+    }
+
     return detailSummaries.sort((a, b) => {
-      const bucketOrder = { trusted: 0, less_trusted: 1, potential: 2, dismissed: 3 }
-      const bucketDelta = (bucketOrder[a.displayBucket] || 99) - (bucketOrder[b.displayBucket] || 99)
-      if (bucketDelta !== 0) return bucketDelta
       const sortDelta = this.getCatalogSortKey(a.seriesName).localeCompare(this.getCatalogSortKey(b.seriesName))
       if (sortDelta !== 0) return sortDelta
+      const authorDelta = String(a.authorLine || '').localeCompare(String(b.authorLine || ''))
+      if (authorDelta !== 0) return authorDelta
       return a.seriesName.localeCompare(b.seriesName)
     })
   }
 
-  async getMatchingSeriesRowsForCatalog(libraryId, seriesNameNormalized) {
-    const seriesRows = await Database.seriesModel.findAll({
-      where: {
-        libraryId
-      },
-      order: [['name', 'ASC']]
-    })
-    return seriesRows.filter((series) => this.normalizeKeyPart(series.name) === seriesNameNormalized)
+  async getMatchingSeriesRowsForCatalog(libraryId, seriesName, { resolver = null, seriesRows = null } = {}) {
+    const effectiveResolver = resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    const rows =
+      seriesRows ||
+      (await Database.seriesModel.findAll({
+        where: {
+          libraryId
+        },
+        order: [['name', 'ASC']]
+      }))
+    const targetDecisionKey = effectiveResolver.getDecisionKey(seriesName)
+    return rows.filter((series) => effectiveResolver.getDecisionKey(series.name) === targetDecisionKey)
   }
 
-  async getLocalCatalogBooks(libraryId, seriesNameNormalized) {
-    const matchingSeries = await this.getMatchingSeriesRowsForCatalog(libraryId, seriesNameNormalized)
+  async getLocalCatalogBooks(libraryId, seriesName, options = {}) {
+    const matchingSeries =
+      options?.matchingSeries ||
+      (await this.getMatchingSeriesRowsForCatalog(libraryId, seriesName, {
+        resolver: options?.resolver || null,
+        seriesRows: options?.seriesRows || null
+      }))
     const localBooks = []
     const seen = new Set()
 
@@ -716,7 +1061,10 @@ class SeriesReviewManager {
       label: source.label,
       confidence: source.confidence,
       evidenceUrl: source.evidenceUrl,
-      notes: source.notes
+      notes: source.notes,
+      sourceRef: source.sourceRef || null,
+      providerMeta: source.providerMeta || null,
+      rawEvidence: source.rawEvidence || null
     }))
   }
 
@@ -771,7 +1119,7 @@ class SeriesReviewManager {
       }
     }
 
-    if (expectedSeriesNormalized && seriesNames.some((seriesName) => this.normalizeKeyPart(seriesName) === expectedSeriesNormalized)) {
+    if (expectedSeriesNormalized && seriesNames.some((seriesName) => this.normalizeDecisionKey(seriesName) === expectedSeriesNormalized)) {
       score += 4
       reasons.push(this.buildCatalogCandidateReason('series-match', `Current series includes ${context.seriesName}`))
     }
@@ -825,7 +1173,7 @@ class SeriesReviewManager {
     const rowKey = String(slotDetail?.rowKey || slotDetail?.slot || '').trim()
     return {
       seriesName: catalog.seriesName,
-      seriesNameNormalized: this.normalizeKeyPart(catalog.seriesName),
+      seriesNameNormalized: this.normalizeDecisionKey(catalog.seriesName),
       expectedTitle,
       expectedTitleNormalized: this.normalizeSearchText(expectedTitle),
       expectedTitleTokens: this.tokenizeSearchText(expectedTitle),
@@ -843,13 +1191,13 @@ class SeriesReviewManager {
     }
   }
 
-  finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = []) {
+  finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = [], options = {}) {
     const integerSlots = []
     for (const slot of slotMap.keys()) {
       if (this.isIntegerCatalogSlot(slot)) integerSlots.push(Number(slot))
     }
 
-    if (integerSlots.length) {
+    if (integerSlots.length && options.fillIntegerGaps !== false) {
       const minSlot = Math.min(...integerSlots)
       const maxSlot = Math.max(...integerSlots)
       for (let value = minSlot; value <= maxSlot; value++) {
@@ -879,6 +1227,11 @@ class SeriesReviewManager {
         slot.expectedAuthors = slot.choices[0].authors || []
         slot.expectedPublishedDate = slot.choices[0].publishedDate || null
         slot.sourceSupport = slot.choices[0].sources
+      } else if (slot.localBooks.length === 1) {
+        slot.expectedTitle = slot.localBooks[0].title
+        slot.expectedAuthors = (slot.localBooks[0].authors || []).map((author) => author?.name || author).filter(Boolean)
+        slot.expectedPublishedDate = null
+        slot.sourceSupport = []
       }
 
       if (slot.choices.length > 1 && !selectedChoice) {
@@ -952,8 +1305,14 @@ class SeriesReviewManager {
     }
   }
 
-  async getCatalogDetailForLibrary(libraryId, catalogId) {
+  async getCatalogDetailForLibrary(libraryId, catalogId, options = {}) {
     await this.ensureSeriesReviewCatalogSchema()
+    const localOnlyDecisionKey = this.parseLocalOnlyCatalogId(catalogId)
+    if (localOnlyDecisionKey) {
+      return this.getLocalOnlyCatalogDetailForLibrary(libraryId, localOnlyDecisionKey, options)
+    }
+
+    const resolver = options?.resolver || null
     const catalog = await Database.seriesReviewCatalogModel.findOne({
       where: {
         id: catalogId,
@@ -962,7 +1321,7 @@ class SeriesReviewManager {
     })
     if (!catalog) return null
 
-    const localBooks = await this.getLocalCatalogBooks(libraryId, catalog.seriesNameNormalized)
+    const localBooks = await this.getLocalCatalogBooks(libraryId, catalog.seriesName, { resolver })
     const slotMap = new Map()
 
     localBooks.forEach((book) => {
@@ -976,7 +1335,8 @@ class SeriesReviewManager {
           libraryItemId: book.libraryItemId,
           title: book.title,
           relPath: book.relPath,
-          sequence: book.sequence
+          sequence: book.sequence,
+          authors: book.authors || []
         })
       })
     })
@@ -1000,22 +1360,79 @@ class SeriesReviewManager {
     })
 
     const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks, entries)
-    const displayBucket = this.getCatalogDisplayBucket({
-      trustStatus: catalog.trustStatus,
-      visibilityStatus: catalog.visibilityStatus,
-      localBookCount: localBooks.length
-    })
 
     return {
       catalog: {
-        ...this.buildSeriesReviewCatalogPayload(catalog),
+        ...this.buildCatalogViewPayload({
+          id: catalog.id,
+          seriesName: catalog.seriesName,
+          trustStatus: catalog.trustStatus,
+          visibilityStatus: catalog.visibilityStatus,
+          dismissedAt: catalog.dismissedAt || null,
+          entries,
+          localBooks,
+          canDismiss: true
+        }),
         selectionBySlot: catalog.selectionBySlot || {},
-        displayBucket,
-        displayLabel: this.getCatalogDisplayLabel(displayBucket)
+        canDismiss: true
       },
       localBooks,
       unsequencedBooks: finalized.unsequencedBooks,
       unsequencedSourceEntries: finalized.unsequencedSourceEntries,
+      slots: finalized.slots,
+      rows: finalized.rows
+    }
+  }
+
+  async getLocalOnlyCatalogDetailForLibrary(libraryId, decisionKey, options = {}) {
+    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
+    const group = localSeriesGroups.get(decisionKey)
+    if (!group?.seriesName) return null
+
+    const localBooks = await this.getLocalCatalogBooks(libraryId, group.seriesName, {
+      resolver,
+      matchingSeries: group.seriesRows
+    })
+    if (!localBooks.length) return null
+
+    const slotMap = new Map()
+    localBooks.forEach((book) => {
+      const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+      if (!coveredSlots.length) return
+      coveredSlots.forEach((coveredSlot) => {
+        const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
+        if (!slot) return
+        slot.locallyCovered = true
+        slot.localBooks.push({
+          libraryItemId: book.libraryItemId,
+          title: book.title,
+          relPath: book.relPath,
+          sequence: book.sequence,
+          authors: book.authors || []
+        })
+      })
+    })
+
+    const finalized = this.finalizeCatalogSlots(slotMap, {}, localBooks, [], { fillIntegerGaps: false })
+    return {
+      catalog: {
+        ...this.buildCatalogViewPayload({
+          id: group.catalogId,
+          seriesName: group.seriesName,
+          trustStatus: 'local_only',
+          visibilityStatus: 'visible',
+          entries: [],
+          localBooks,
+          displayBucket: 'local_only',
+          canDismiss: false
+        }),
+        selectionBySlot: {},
+        canDismiss: false
+      },
+      localBooks,
+      unsequencedBooks: finalized.unsequencedBooks,
+      unsequencedSourceEntries: [],
       slots: finalized.slots,
       rows: finalized.rows
     }
@@ -1405,9 +1822,43 @@ class SeriesReviewManager {
     return hasTagUpdates
   }
 
-  async importSuggestionsForLibrary(libraryId, rows) {
+  sequencesCompatible(left, right) {
+    const leftSequence = this.normalizeSequence(left)
+    const rightSequence = this.normalizeSequence(right)
+    if (rightSequence) return leftSequence === rightSequence
+    return true
+  }
+
+  findMatchingCurrentSeriesEntry(currentSeries, suggestedName, suggestedSequence, resolver = this.buildSeriesNameControlResolver([])) {
+    const decisionKey = resolver.getDecisionKey(suggestedName)
+    if (!decisionKey) return null
+    return (Array.isArray(currentSeries) ? currentSeries : []).find((series) => {
+      return resolver.getDecisionKey(series.name) === decisionKey && this.sequencesCompatible(series.sequence, suggestedSequence)
+    }) || null
+  }
+
+  applyAutoLinkedSuggestionState(suggestion, groupedSuggestion, currentSeries, resolver, now) {
+    const linkedSeries = groupedSuggestion.kind === 'series' ? this.findMatchingCurrentSeriesEntry(currentSeries, groupedSuggestion.suggestedName, groupedSuggestion.suggestedSequence, resolver) : null
+    if (linkedSeries) {
+      suggestion.state = 'linked'
+      suggestion.decisionAction = 'assumed_link'
+      suggestion.decisionSeriesId = linkedSeries.id || null
+      suggestion.decidedAt = suggestion.decidedAt || now
+      return
+    }
+
+    if (suggestion.state === 'linked') {
+      suggestion.state = 'pending'
+      suggestion.decisionAction = null
+      suggestion.decisionSeriesId = null
+      suggestion.decidedAt = null
+    }
+  }
+
+  async importSuggestionsForLibrary(libraryId, rows, options = {}) {
     const now = new Date()
     const results = []
+    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
 
     for (const row of Array.isArray(rows) ? rows : []) {
       const libraryItemId = typeof row?.libraryItemId === 'string' ? row.libraryItemId : null
@@ -1425,7 +1876,9 @@ class SeriesReviewManager {
         continue
       }
 
-      const groupedSuggestions = this.groupContributions(row.sourceSuggestions)
+      const expandedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      const currentSeries = this.getCurrentSeriesPayload(expandedLibraryItem)
+      const groupedSuggestions = this.groupContributions(row.sourceSuggestions, resolver)
       const incomingKeys = groupedSuggestions.map((group) => group.suggestionKey)
       const existingSuggestions = await Database.seriesReviewSuggestionModel.findAll({
         where: {
@@ -1453,7 +1906,8 @@ class SeriesReviewManager {
             isActive: true
           })
         } else {
-          const shouldReopen = suggestion.state !== 'pending' && this.hasMeaningfulSuggestionChange(suggestion, groupedSuggestion)
+          const wasLinked = suggestion.state === 'linked'
+          const shouldReopen = suggestion.state !== 'pending' && suggestion.state !== 'linked' && this.hasMeaningfulSuggestionChange(suggestion, groupedSuggestion)
           suggestion.kind = groupedSuggestion.kind
           suggestion.suggestedName = groupedSuggestion.suggestedName
           suggestion.suggestedNameNormalized = groupedSuggestion.suggestedNameNormalized
@@ -1464,8 +1918,18 @@ class SeriesReviewManager {
           if (shouldReopen) {
             suggestion.state = 'pending'
           }
+          if (wasLinked && suggestion.state === 'pending') {
+            suggestion.decisionAction = null
+            suggestion.decisionSeriesId = null
+            suggestion.decidedAt = null
+          }
+          this.applyAutoLinkedSuggestionState(suggestion, groupedSuggestion, currentSeries, resolver, now)
           await suggestion.save()
+          results.push(suggestion)
+          continue
         }
+        this.applyAutoLinkedSuggestionState(suggestion, groupedSuggestion, currentSeries, resolver, now)
+        await suggestion.save()
         results.push(suggestion)
       }
     }
@@ -1501,10 +1965,12 @@ class SeriesReviewManager {
       kind: suggestion.kind,
       suggestionKey: suggestion.suggestionKey,
       suggestedName: suggestion.suggestedName,
+      seriesDecisionKey: suggestion.suggestedName ? this.normalizeDecisionKey(suggestion.suggestedName) : null,
       suggestedSequence: suggestion.suggestedSequence,
       state: suggestion.state,
       decisionAction: suggestion.decisionAction,
       decisionSeriesId: suggestion.decisionSeriesId,
+      canUnlink: suggestion.kind === 'series' && ['linked', 'applied', 'manual_override'].includes(suggestion.state),
       contributions,
       sourceCount: contributions.length,
       firstSeenAt: suggestion.firstSeenAt,
@@ -1532,11 +1998,21 @@ class SeriesReviewManager {
     })
   }
 
-  buildQueueRow(libraryItem, suggestions) {
+  getQueueGroupingName(currentSeries, suggestions, resolver = this.buildSeriesNameControlResolver([])) {
+    if (Array.isArray(currentSeries) && currentSeries.length) {
+      return resolver.canonicalizeName(currentSeries[0].name) || this.normalizeSeriesName(currentSeries[0].name)
+    }
+    const positiveSuggestion = (Array.isArray(suggestions) ? suggestions : []).find((suggestion) => suggestion.kind === 'series' && suggestion.suggestedName)
+    return positiveSuggestion ? resolver.canonicalizeName(positiveSuggestion.suggestedName) || positiveSuggestion.suggestedName : ''
+  }
+
+  buildQueueRow(libraryItem, suggestions, resolver = this.buildSeriesNameControlResolver([])) {
     const media = libraryItem.media
     const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion))
+    const currentSeries = this.getCurrentSeriesPayload(libraryItem)
     const suggestionAnalysis = this.analyzeSuggestionSet(suggestionPayloads)
     const currentTags = Array.isArray(media?.tags) ? media.tags : []
+    const queueGroupName = this.getQueueGroupingName(currentSeries, suggestionPayloads, resolver)
     return {
       libraryItemId: libraryItem.id,
       title: media?.title || libraryItem.title || '',
@@ -1544,7 +2020,9 @@ class SeriesReviewManager {
       authors: Array.isArray(media?.authors) ? media.authors.map((author) => ({ id: author.id, name: author.name })) : [],
       hasPreviousSeriesEdit: currentTags.includes(this.SERIES_EDIT_TAG),
       seriesEditTag: currentTags.includes(this.SERIES_EDIT_TAG) ? this.SERIES_EDIT_TAG : null,
-      currentSeries: this.getCurrentSeriesPayload(libraryItem),
+      currentSeries,
+      queueGroupName,
+      queueGroupSortKey: this.getCatalogSortKey(queueGroupName || media?.title || libraryItem.title || ''),
       queuePriority: suggestionAnalysis.queuePriority,
       conflictType: suggestionAnalysis.conflictType,
       conflictSummary: suggestionAnalysis.conflictSummary,
@@ -1553,6 +2031,7 @@ class SeriesReviewManager {
   }
 
   async getQueueForLibrary(libraryId, includeDecided = false) {
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const where = {
       libraryId,
       isActive: true
@@ -1590,14 +2069,14 @@ class SeriesReviewManager {
       .map((libraryItemId) => {
         const libraryItem = libraryItemMap[libraryItemId]
         if (!libraryItem) return null
-        return this.buildQueueRow(libraryItem, suggestionsByItemId[libraryItemId] || [])
+        return this.buildQueueRow(libraryItem, suggestionsByItemId[libraryItemId] || [], resolver)
       })
       .filter(Boolean)
+      .filter((row) => row.currentSeries.length || row.suggestions.some((suggestion) => suggestion.kind === 'series'))
       .sort((a, b) => {
+        const groupDelta = String(a.queueGroupSortKey || '').localeCompare(String(b.queueGroupSortKey || ''))
+        if (groupDelta !== 0) return groupDelta
         if ((a.queuePriority || 0) !== (b.queuePriority || 0)) return (a.queuePriority || 0) - (b.queuePriority || 0)
-        const aPriority = a.currentSeries.length ? 1 : 0
-        const bPriority = b.currentSeries.length ? 1 : 0
-        if (aPriority !== bPriority) return aPriority - bPriority
         return a.title.localeCompare(b.title)
       })
   }
@@ -1769,6 +2248,197 @@ class SeriesReviewManager {
     }
   }
 
+  async rebuildSuggestionsForLibrary(libraryId, resolver = null) {
+    const activeSuggestions = await Database.seriesReviewSuggestionModel.findAll({
+      where: {
+        libraryId,
+        isActive: true
+      }
+    })
+    if (!activeSuggestions.length) return
+
+    const rowsByLibraryItem = new Map()
+    activeSuggestions.forEach((suggestion) => {
+      if (!rowsByLibraryItem.has(suggestion.libraryItemId)) {
+        rowsByLibraryItem.set(suggestion.libraryItemId, [])
+      }
+      rowsByLibraryItem.get(suggestion.libraryItemId).push(...(Array.isArray(suggestion.contributions) ? suggestion.contributions : []))
+    })
+
+    await this.importSuggestionsForLibrary(
+      libraryId,
+      [...rowsByLibraryItem.entries()].map(([libraryItemId, sourceSuggestions]) => ({
+        libraryItemId,
+        sourceSuggestions
+      })),
+      { resolver: resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId)) }
+    )
+  }
+
+  mergeCatalogSelectionBySlot(target, source) {
+    const nextSelection = { ...(target || {}) }
+    Object.entries(source || {}).forEach(([slot, entryKey]) => {
+      if (!nextSelection[slot]) nextSelection[slot] = entryKey
+    })
+    return nextSelection
+  }
+
+  async rebuildCatalogsForLibrary(libraryId, resolver = null) {
+    const effectiveResolver = resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    const catalogs = await Database.seriesReviewCatalogModel.findAll({
+      where: {
+        libraryId
+      },
+      order: [['createdAt', 'ASC']]
+    })
+    if (!catalogs.length) return
+
+    const groupedCatalogs = new Map()
+    catalogs.forEach((catalog) => {
+      const canonicalName = effectiveResolver.canonicalizeName(catalog.seriesName) || this.normalizeSeriesName(catalog.seriesName)
+      const groupKey = this.normalizeKeyPart(canonicalName)
+      if (!groupedCatalogs.has(groupKey)) {
+        groupedCatalogs.set(groupKey, {
+          canonicalName,
+          rows: []
+        })
+      }
+      groupedCatalogs.get(groupKey).rows.push(catalog)
+    })
+
+    const retainedIds = new Set()
+    for (const group of groupedCatalogs.values()) {
+      const primaryCatalog = group.rows[0]
+      const mergedEntries = this.mergeCatalogEntryPayloads(group.rows.flatMap((row) => row.entries || []))
+      const mergedSelection = group.rows.reduce((selectionBySlot, row) => this.mergeCatalogSelectionBySlot(selectionBySlot, row.selectionBySlot), {})
+      const anyVisible = group.rows.some((row) => (row.visibilityStatus || 'visible') !== 'dismissed')
+      primaryCatalog.seriesName = group.canonicalName
+      primaryCatalog.seriesNameNormalized = this.normalizeKeyPart(group.canonicalName)
+      primaryCatalog.trustStatus = group.rows.some((row) => row.trustStatus === 'trusted') ? 'trusted' : 'untrusted'
+      primaryCatalog.visibilityStatus = anyVisible ? 'visible' : 'dismissed'
+      primaryCatalog.dismissedAt = anyVisible ? null : group.rows.map((row) => row.dismissedAt).find(Boolean) || new Date()
+      primaryCatalog.entries = mergedEntries
+      primaryCatalog.selectionBySlot = mergedSelection
+      await primaryCatalog.save()
+      retainedIds.add(primaryCatalog.id)
+    }
+
+    const staleCatalogIds = catalogs.map((catalog) => catalog.id).filter((catalogId) => !retainedIds.has(catalogId))
+    if (staleCatalogIds.length) {
+      await Database.seriesReviewCatalogModel.destroy({
+        where: {
+          id: {
+            [Op.in]: staleCatalogIds
+          }
+        }
+      })
+    }
+  }
+
+  async renameLocalSeriesSafely(libraryId, userId, sourceName, targetName) {
+    const sourceDecisionKey = this.normalizeDecisionKey(sourceName)
+    const normalizedTargetLabel = this.normalizeSeriesName(targetName)
+    const seriesRows = await Database.seriesModel.findAll({
+      where: {
+        libraryId
+      },
+      order: [['name', 'ASC']]
+    })
+
+    const sourceSeriesIds = seriesRows
+      .filter((series) => this.normalizeDecisionKey(series.name) === sourceDecisionKey)
+      .filter((series) => this.normalizeSeriesName(series.name).toLowerCase() !== normalizedTargetLabel.toLowerCase())
+      .map((series) => series.id)
+
+    if (!sourceSeriesIds.length) {
+      return {
+        changedCount: 0,
+        conflictCount: 0
+      }
+    }
+
+    const preview = await this.previewSeriesManagementAction(libraryId, sourceSeriesIds, normalizedTargetLabel)
+    if (preview.conflictCount) {
+      throw new Error('Rename would create conflicting local coverage; resolve it manually in Series Management first')
+    }
+    const includedLibraryItemIds = (preview.books || []).filter((book) => book.includedByDefault).map((book) => book.libraryItemId)
+    if (!includedLibraryItemIds.length) {
+      return {
+        changedCount: 0,
+        conflictCount: 0
+      }
+    }
+
+    return this.applySeriesManagementAction(libraryId, userId, sourceSeriesIds, normalizedTargetLabel, includedLibraryItemIds)
+  }
+
+  async applySeriesNameControlForLibrary(libraryId, userId, sourceName, targetName, controlType = 'alias', { applyLocalRename = false } = {}) {
+    const currentResolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    const canonicalTargetName = currentResolver.canonicalizeName(targetName) || this.normalizeSeriesName(targetName)
+
+    let renameResult = null
+    if (applyLocalRename) {
+      renameResult = await this.renameLocalSeriesSafely(libraryId, userId, sourceName, canonicalTargetName)
+    }
+
+    const control = await this.upsertSeriesNameControlForLibrary(libraryId, userId, sourceName, canonicalTargetName, controlType)
+
+    const nextResolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    await this.rebuildCatalogsForLibrary(libraryId, nextResolver)
+    await this.rebuildSuggestionsForLibrary(libraryId, nextResolver)
+
+    return {
+      control,
+      renameResult,
+      canonicalName: canonicalTargetName
+    }
+  }
+
+  async aliasSuggestion(suggestionId, primarySuggestionId, userId) {
+    const aliasSuggestion = await this.getSuggestionById(suggestionId)
+    const primarySuggestion = await this.getSuggestionById(primarySuggestionId)
+    if (!aliasSuggestion || !primarySuggestion) return null
+    if (aliasSuggestion.libraryId !== primarySuggestion.libraryId || aliasSuggestion.libraryItemId !== primarySuggestion.libraryItemId) {
+      throw new Error('Alias controls must target suggestions from the same review row')
+    }
+    if (aliasSuggestion.kind !== 'series' || primarySuggestion.kind !== 'series') {
+      throw new Error('Alias controls require two series suggestions')
+    }
+    if (aliasSuggestion.id === primarySuggestion.id) {
+      throw new Error('Choose a different suggestion to mark as the alias')
+    }
+
+    const result = await this.applySeriesNameControlForLibrary(
+      aliasSuggestion.libraryId,
+      userId,
+      aliasSuggestion.suggestedName,
+      primarySuggestion.suggestedName,
+      'alias'
+    )
+    return {
+      canonicalName: result.canonicalName
+    }
+  }
+
+  async renameSuggestion(suggestionId, targetLabel, userId) {
+    const suggestion = await this.getSuggestionById(suggestionId)
+    if (!suggestion) return null
+    if (suggestion.kind !== 'series') throw new Error('Only series suggestions can be renamed')
+
+    const result = await this.applySeriesNameControlForLibrary(
+      suggestion.libraryId,
+      userId,
+      suggestion.suggestedName,
+      targetLabel,
+      'rename',
+      { applyLocalRename: true }
+    )
+    return {
+      canonicalName: result.canonicalName,
+      renameResult: result.renameResult || { changedCount: 0, conflictCount: 0 }
+    }
+  }
+
   async applySuggestion(suggestionId, userId, mode, replaceSeriesId = null) {
     const suggestion = await this.getSuggestionById(suggestionId)
     if (!suggestion || !suggestion.isActive) return null
@@ -1776,6 +2446,8 @@ class SeriesReviewManager {
 
     const libraryItem = await Database.libraryItemModel.getExpandedById(suggestion.libraryItemId)
     if (!libraryItem || !libraryItem.isBook) return null
+    const resolver = await this.getSeriesNameControlResolverForLibrary(suggestion.libraryId)
+    const suggestedName = resolver.canonicalizeName(suggestion.suggestedName) || suggestion.suggestedName
 
     const currentSeries = Array.isArray(libraryItem.media.series) ? libraryItem.media.series : []
     let nextSeries = currentSeries.map((series) => ({
@@ -1792,10 +2464,10 @@ class SeriesReviewManager {
     }
 
     const suggestedSeriesObject = {
-      name: suggestion.suggestedName,
+      name: suggestedName,
       sequence: suggestion.suggestedSequence || null
     }
-    const existingSuggestedIndex = nextSeries.findIndex((series) => series.name.toLowerCase() === suggestion.suggestedName.toLowerCase())
+    const existingSuggestedIndex = nextSeries.findIndex((series) => resolver.getDecisionKey(series.name) === resolver.getDecisionKey(suggestedName))
     if (existingSuggestedIndex === -1) nextSeries.push(suggestedSeriesObject)
     else nextSeries[existingSuggestedIndex] = suggestedSeriesObject
 
@@ -1849,6 +2521,48 @@ class SeriesReviewManager {
     suggestion.decidedAt = new Date()
     await suggestion.save()
     return suggestion
+  }
+
+  async unlinkSuggestion(suggestionId, userId) {
+    const suggestion = await this.getSuggestionById(suggestionId)
+    if (!suggestion || !suggestion.isActive) return null
+    if (suggestion.kind !== 'series') throw new Error('Only series suggestions can be unlinked')
+
+    const libraryItem = await Database.libraryItemModel.getExpandedById(suggestion.libraryItemId)
+    if (!libraryItem || !libraryItem.isBook) return null
+
+    const resolver = await this.getSeriesNameControlResolverForLibrary(suggestion.libraryId)
+    const currentSeries = Array.isArray(libraryItem.media.series) ? libraryItem.media.series : []
+    const matchingSeriesIds = currentSeries
+      .filter((series) => resolver.getDecisionKey(series.name) === resolver.getDecisionKey(suggestion.suggestedName))
+      .filter((series) => this.sequencesCompatible(series.bookSeries?.sequence || null, suggestion.suggestedSequence))
+      .map((series) => series.id)
+
+    if (!matchingSeriesIds.length) {
+      throw new Error('No linked series entry was found on the book')
+    }
+
+    const nextSeries = currentSeries
+      .filter((series) => !matchingSeriesIds.includes(series.id))
+      .map((series) => ({
+        name: series.name,
+        sequence: series.bookSeries?.sequence || null
+      }))
+
+    const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(nextSeries, libraryItem.libraryId)
+    await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
+
+    suggestion.state = 'pending'
+    suggestion.decisionAction = null
+    suggestion.decisionSeriesId = null
+    suggestion.decidedByUserId = userId || null
+    suggestion.decidedAt = null
+    await suggestion.save()
+
+    return {
+      suggestion,
+      libraryItem: await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    }
   }
 }
 

@@ -114,6 +114,69 @@ describe('SeriesReviewManager', () => {
     expect(rows[0].conflictSummary).to.equal('Series vs no-series conflict')
   })
 
+  it('preserves audible and audnexus provenance as secondary support on grouped suggestions', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Leviathan Wakes',
+      relPath: 'Corey, James S. A./Leviathan Wakes'
+    })
+
+    const result = await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'The Expanse', sequence: '1', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/expanse~1234.htm' },
+          {
+            source: 'audible',
+            label: 'AUD',
+            seriesName: 'The Expanse',
+            sequence: '1',
+            confidence: 0.79,
+            evidenceUrl: 'https://www.audible.com/pd/B00ABC1234',
+            sourceRef: 'audible:us:B00ABC1234:audible',
+            providerMeta: { provider_name: 'audible_audnexus', provider_version: '1.0.0', region_used: 'us' },
+            rawEvidence: { source_ref: 'audible:us:B00ABC1234' }
+          },
+          {
+            source: 'audnexus',
+            label: 'ANX',
+            seriesName: 'The Expanse',
+            sequence: '1',
+            confidence: 0.74,
+            evidenceUrl: 'https://api.audnex.us/books/B00ABC1234?region=us',
+            sourceRef: 'audible:us:B00ABC1234:audnexus',
+            providerMeta: { provider_name: 'audible_audnexus', provider_version: '1.0.0', region_used: 'us' },
+            rawEvidence: { source_ref: 'audible:us:B00ABC1234' }
+          }
+        ]
+      }
+    ])
+
+    expect(result.importedCount).to.equal(1)
+
+    const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows).to.have.length(1)
+    expect(rows[0].suggestions).to.have.length(1)
+    const suggestion = rows[0].suggestions[0]
+    expect(suggestion.suggestedName).to.equal('The Expanse')
+    expect(suggestion.suggestedSequence).to.equal('1')
+
+    const audibleContribution = suggestion.contributions.find((contribution) => contribution.source === 'audible')
+    expect(audibleContribution).to.exist
+    expect(audibleContribution.role).to.equal('automated_support')
+    expect(audibleContribution.sourceRef).to.equal('audible:us:B00ABC1234:audible')
+    expect(audibleContribution.providerMeta).to.include({ provider_name: 'audible_audnexus', region_used: 'us' })
+    expect(audibleContribution.rawEvidence).to.deep.equal({ source_ref: 'audible:us:B00ABC1234' })
+
+    const audnexusContribution = suggestion.contributions.find((contribution) => contribution.source === 'audnexus')
+    expect(audnexusContribution).to.exist
+    expect(audnexusContribution.role).to.equal('automated_support')
+    expect(audnexusContribution.sourceRef).to.equal('audible:us:B00ABC1234:audnexus')
+
+    expect(suggestion.evidenceSummary.hasPrimaryAutomatedSource).to.equal(true)
+    expect(suggestion.evidenceSummary.hasSecondaryAutomatedSource).to.equal(false)
+    expect(suggestion.evidenceSummary.automatedSecondarySupportCount).to.equal(2)
+  })
+
   it('prioritizes automated agreement over manual-reference-only matches', async () => {
     const { libraryItem } = await createBookFixture({ title: 'A Memory Called Empire' })
 
@@ -169,8 +232,191 @@ describe('SeriesReviewManager', () => {
     ])
 
     const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
-    expect(rows.map((row) => row.title)).to.deep.equal(['Conflict A', 'Conflict B', 'Conflict C'])
-    expect(rows.map((row) => row.conflictType)).to.deep.equal(['no_series_conflict', 'ordinal_conflict', 'series_name_conflict'])
+    expect(rows.map((row) => row.title)).to.deep.equal(['Conflict C', 'Conflict B', 'Conflict A'])
+    expect(rows.map((row) => row.conflictType)).to.deep.equal(['series_name_conflict', 'ordinal_conflict', 'no_series_conflict'])
+  })
+
+  it('auto-links safely normalized current series matches and groups queue rows by series name', async () => {
+    const { libraryItem: foundationItem } = await createBookFixture({
+      title: 'A Title That Would Sort First',
+      currentSeries: [{ name: 'Foundation', sequence: '1' }]
+    })
+    const { libraryItem: amberItem } = await createBookFixture({
+      title: 'Z Title That Should Group First',
+      currentSeries: [{ name: 'Amber', sequence: '1' }]
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: foundationItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Foundation Series', sequence: '1' }]
+      },
+      {
+        libraryItemId: amberItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'Amber series', sequence: '1' }]
+      }
+    ])
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(0)
+
+    const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(decidedRows.map((row) => row.queueGroupName)).to.deep.equal(['Amber', 'Foundation'])
+    expect(decidedRows[0].title).to.equal('Z Title That Should Group First')
+    expect(decidedRows[0].suggestions[0].state).to.equal('linked')
+    expect(decidedRows[0].suggestions[0].decisionAction).to.equal('assumed_link')
+    expect(decidedRows[1].suggestions[0].state).to.equal('linked')
+  })
+
+  it('does not auto-link away source ordinal work when the local series has no ordinal', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Foundation',
+      currentSeries: [{ name: 'Foundation', sequence: '' }]
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Foundation Series', sequence: '1' }]
+      }
+    ])
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].suggestions[0].state).to.equal('pending')
+    expect(pendingRows[0].suggestions[0].decisionAction).to.equal(null)
+
+    const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(decidedRows).to.have.length(1)
+    expect(decidedRows[0].suggestions[0].state).to.equal('pending')
+  })
+
+  it('aliases one suggestion to another primary and collapses the queue back to the primary name', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Wyrd Sisters'
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Discworld - Witches', sequence: '2' },
+          { source: 'wikidata', label: 'WD', seriesName: 'Witches', sequence: '2' }
+        ]
+      }
+    ])
+
+    const beforeAlias = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const primarySuggestion = beforeAlias[0].suggestions.find((suggestion) => suggestion.suggestedName === 'Witches')
+    const aliasSuggestion = beforeAlias[0].suggestions.find((suggestion) => suggestion.suggestedName === 'Discworld - Witches')
+
+    await SeriesReviewManager.aliasSuggestion(aliasSuggestion.id, primarySuggestion.id, user.id)
+
+    const afterAlias = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(afterAlias).to.have.length(1)
+    expect(afterAlias[0].suggestions).to.have.length(1)
+    expect(afterAlias[0].suggestions[0].suggestedName).to.equal('Witches')
+    expect(afterAlias[0].suggestions[0].contributions.map((contribution) => contribution.seriesName)).to.deep.equal(['Discworld - Witches', 'Witches'])
+  })
+
+  it('renames a suggested series, updates existing ABS series rows, and recanonicalizes catalogs', async () => {
+    const { libraryItem: sourceItem } = await createBookFixture({
+      title: 'Dragon Keeper',
+      currentSeries: [{ name: 'The Rain Wild Chronicles', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Dragon Haven',
+      currentSeries: [{ name: 'Rain Wilds Chronicles', sequence: '2' }]
+    })
+    await stubExpandedLibraryItems()
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Rain Wild Chronicles',
+        entries: [
+          {
+            title: 'Dragon Keeper',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: sourceItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Rain Wild Chronicles', sequence: '1' }]
+      }
+    ])
+
+    const initialRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    await SeriesReviewManager.renameSuggestion(initialRows[0].suggestions[0].id, 'Rain Wilds Chronicles', user.id)
+
+    const updatedSourceItem = await Database.libraryItemModel.getExpandedById(sourceItem.id)
+    expect(updatedSourceItem.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Rain Wilds Chronicles#1'])
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs.map((catalog) => catalog.seriesName)).to.deep.equal(['Rain Wilds Chronicles'])
+
+    const updatedDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(updatedDetail.catalog.seriesName).to.equal('Rain Wilds Chronicles')
+  })
+
+  it('blocks rename auto-merge when the target label would create conflicting local coverage', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Problem Book',
+      currentSeries: [
+        { name: 'The Rain Wild Chronicles', sequence: '1' },
+        { name: 'Rain Wilds Chronicles', sequence: '2' }
+      ]
+    })
+    await stubExpandedLibraryItems()
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Rain Wild Chronicles', sequence: '1' }]
+      }
+    ])
+
+    const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    let failure = null
+    try {
+      await SeriesReviewManager.renameSuggestion(rows[0].suggestions[0].id, 'Rain Wilds Chronicles', user.id)
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure?.message || failure)).to.equal('Rename would create conflicting local coverage; resolve it manually in Series Management first')
+  })
+
+  it('unlinks an auto-linked suggestion and moves it back into pending review', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Foundation',
+      currentSeries: [{ name: 'Foundation', sequence: '1' }]
+    })
+    await stubExpandedLibraryItems()
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [{ source: 'fictiondb', label: 'FDB', seriesName: 'The Foundation Series', sequence: '1' }]
+      }
+    ])
+
+    const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const suggestion = decidedRows[0].suggestions[0]
+    expect(suggestion.state).to.equal('linked')
+
+    await SeriesReviewManager.unlinkSuggestion(suggestion.id, user.id)
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.series).to.have.length(0)
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(1)
+    expect(pendingRows[0].suggestions[0].state).to.equal('pending')
+    expect(pendingRows[0].suggestions[0].suggestedName).to.equal('The Foundation Series')
   })
 
   it('adds a suggestion alongside existing series and persists the applied decision across reimport', async () => {
@@ -204,7 +450,8 @@ describe('SeriesReviewManager', () => {
     ])
 
     const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
-    expect(decidedRows[0].suggestions[0].state).to.equal('applied')
+    expect(decidedRows[0].suggestions[0].state).to.equal('linked')
+    expect(decidedRows[0].suggestions[0].decisionAction).to.equal('assumed_link')
     const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
     expect(pendingRows).to.have.length(0)
   })
@@ -316,7 +563,7 @@ describe('SeriesReviewManager', () => {
     })
   })
 
-  it('keeps prior decision metadata on reopened pending rows so the UI can explain why they returned', async () => {
+  it('keeps matched applied rows out of pending review after later source refreshes', async () => {
     const { libraryItem } = await createBookFixture({ title: 'Leviathan Wakes' })
     await stubExpandedLibraryItems()
 
@@ -339,14 +586,13 @@ describe('SeriesReviewManager', () => {
     ])
 
     const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
-    expect(pendingRows).to.have.length(1)
-    expect(pendingRows[0].suggestions[0].state).to.equal('pending')
-    expect(pendingRows[0].suggestions[0].previousDecision).to.include({
-      action: 'add',
-      reopened: true
-    })
-    expect(pendingRows[0].suggestions[0].hasMeaningfulUpdateSinceDecision).to.equal(true)
-    expect(pendingRows[0].suggestions[0].contributions[0].notes).to.equal('Lower confidence after source refresh')
+    expect(pendingRows).to.have.length(0)
+
+    const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(decidedRows).to.have.length(1)
+    expect(decidedRows[0].suggestions[0].state).to.equal('linked')
+    expect(decidedRows[0].suggestions[0].decisionAction).to.equal('assumed_link')
+    expect(decidedRows[0].suggestions[0].contributions[0].notes).to.equal('Lower confidence after source refresh')
   })
 
   it('removes a selected current series entry and adds the temp series-edit tag', async () => {
@@ -526,6 +772,67 @@ describe('SeriesReviewManager', () => {
     expect(catalogs[0].displayBucket).to.equal('trusted')
   })
 
+  it('includes local-only series in the catalog list and builds non-dismissible local detail without invented gaps', async () => {
+    await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+    await createBookFixture({
+      title: 'Alpha Return',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '3' }],
+      authors: ['Author A']
+    })
+    await createBookFixture({
+      title: 'Beta One',
+      currentSeries: [{ name: 'Beta Cycle', sequence: '1' }],
+      authors: ['Author B']
+    })
+    await createBookFixture({
+      title: 'Zeta Zero',
+      currentSeries: [{ name: 'Zeta Files', sequence: '1' }],
+      authors: ['Author Z']
+    })
+
+    await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Beta Cycle',
+        entries: [
+          {
+            title: 'Beta One',
+            authors: ['Author B'],
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/beta-cycle~1111.htm' }]
+          }
+        ]
+      }
+    ])
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal([
+      'Alpha Saga:local_only',
+      'Beta Cycle:trusted',
+      'Zeta Files:local_only'
+    ])
+    expect(catalogs[0].authorLine).to.equal('Author A')
+    expect(catalogs[0].canDismiss).to.equal(false)
+    expect(catalogs[1].evidenceLinks).to.deep.equal([
+      {
+        source: 'fictiondb',
+        label: 'FDB',
+        url: 'https://www.fictiondb.com/series/beta-cycle~1111.htm'
+      }
+    ])
+
+    const alphaDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, catalogs[0].id)
+    expect(alphaDetail.catalog.displayBucket).to.equal('local_only')
+    expect(alphaDetail.catalog.displayLabel).to.equal('Local series')
+    expect(alphaDetail.catalog.canDismiss).to.equal(false)
+    expect(alphaDetail.catalog.evidenceLinks).to.deep.equal([])
+    expect(alphaDetail.slots.map((slot) => slot.slot)).to.deep.equal(['1', '3'])
+    expect(alphaDetail.slots.every((slot) => slot.status === 'covered')).to.equal(true)
+  })
+
   it('classifies source-only catalogs as potential series and hides them from the default trusted list', async () => {
     await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {
@@ -627,6 +934,42 @@ describe('SeriesReviewManager', () => {
     expect(slot5.status).to.equal('disputed')
     expect(slot5.choices).to.have.length(2)
     expect(detail.unsequencedBooks.map((book) => book.title)).to.deep.equal(['Expanse Stories'])
+  })
+
+  it('preserves catalog source provenance metadata in series detail support rows', async () => {
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Expanse',
+        entries: [
+          {
+            title: 'Leviathan Wakes',
+            sequence: '1',
+            sources: [
+              { source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/expanse~1234.htm' },
+              {
+                source: 'audible',
+                label: 'AUD',
+                confidence: 0.79,
+                evidenceUrl: 'https://www.audible.com/pd/B00ABC1234',
+                sourceRef: 'audible:us:B00ABC1234:audible',
+                providerMeta: { provider_name: 'audible_audnexus', provider_version: '1.0.0', region_used: 'us' },
+                rawEvidence: { source_ref: 'audible:us:B00ABC1234' }
+              }
+            ]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const slot = detail.slots.find((entry) => entry.slot === '1')
+    expect(slot).to.exist
+    const audibleSupport = (slot.sourceSupport || []).find((support) => support.source === 'audible')
+    expect(audibleSupport).to.exist
+    expect(audibleSupport.label).to.equal('AUD')
+    expect(audibleSupport.sourceRef).to.equal('audible:us:B00ABC1234:audible')
+    expect(audibleSupport.providerMeta).to.include({ provider_name: 'audible_audnexus', region_used: 'us' })
+    expect(audibleSupport.rawEvidence).to.deep.equal({ source_ref: 'audible:us:B00ABC1234' })
   })
 
   it('keeps source-only unsequenced continuation entries visible in catalog detail', async () => {
