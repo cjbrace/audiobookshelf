@@ -158,7 +158,44 @@ class SeriesReviewController {
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
 
     try {
-      const matches = await SeriesReviewManager.refreshLocalSeriesMatchesForLibrary(req.library.id, req.body?.matchIds)
+      const matchRows = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(req.library.id, { includeResolved: true })
+      const allowedIds = Array.isArray(req.body?.matchIds) && req.body.matchIds.length ? new Set(req.body.matchIds.map((value) => String(value || '').trim()).filter(Boolean)) : null
+      const matches = []
+
+      for (const match of matchRows) {
+        if (allowedIds && !allowedIds.has(match.id)) continue
+        const localBooks = Array.isArray(match.localBooks) ? match.localBooks : []
+        if (!localBooks.length) continue
+
+        const lookup = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
+          local_series_name: match.localSeriesName,
+          local_decision_key: match.localDecisionKey,
+          local_books: localBooks
+        })
+        const lookupResult = Array.isArray(lookup?.results)
+          ? lookup.results.find((result) => String(result?.source || '').trim().toLowerCase() === String(match.source || '').trim().toLowerCase()) || lookup.results[0] || null
+          : null
+        const resolvedSource = lookupResult || {}
+        const books = localBooks.map((book) => ({
+          libraryItemId: book.libraryItemId,
+          title: book.title,
+          relPath: book.relPath,
+          authors: (book.authors || []).map((author) => ({ name: author.name || author })),
+          currentSeries: [{ name: book.seriesName, sequence: book.sequence || '' }]
+        }))
+        matches.push({
+          matchId: match.id,
+          localSeriesName: match.localSeriesName,
+          localDecisionKey: match.localDecisionKey,
+          source: String(resolvedSource.source || match.source || '').trim().toLowerCase(),
+          sourceSeriesName: resolvedSource.sourceSeriesName || match.sourceSeriesName,
+          sourceAuthor: resolvedSource.sourceAuthor || match.sourceAuthor,
+          sourceSeriesUrl: resolvedSource.sourceUrl || resolvedSource.sourceSeriesUrl || match.sourceUrl,
+          evidenceSnapshot: resolvedSource.evidenceSnapshot || match.evidenceSnapshot || {},
+          books
+        })
+      }
+
       if (!matches.length) {
         return res.json({
           library_id: req.library.id,
