@@ -101,6 +101,7 @@ class ApiRouter {
     this.router.get('/libraries/:id/series-review/local-matches', LibraryController.middleware.bind(this), SeriesReviewController.getLocalCatalogMatches.bind(this))
     this.router.post('/libraries/:id/series-review/source-import/start', LibraryController.middleware.bind(this), SeriesReviewController.startSourceImport.bind(this))
     this.router.post('/libraries/:id/series-review/local-matches/import', LibraryController.middleware.bind(this), SeriesReviewController.importLocalCatalogMatches.bind(this))
+    this.router.post('/libraries/:id/series-review/local-matches/refresh', LibraryController.middleware.bind(this), SeriesReviewController.refreshLocalCatalogMatches.bind(this))
     this.router.post('/libraries/:id/series-review/management/preview', LibraryController.middleware.bind(this), SeriesReviewController.previewManagementAction.bind(this))
     this.router.post('/libraries/:id/series-review/management/apply', LibraryController.middleware.bind(this), SeriesReviewController.applyManagementAction.bind(this))
     this.router.post('/libraries/:id/series-review/import', LibraryController.middleware.bind(this), SeriesReviewController.importSuggestions.bind(this))

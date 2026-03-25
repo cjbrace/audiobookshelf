@@ -1363,11 +1363,12 @@ class SeriesReviewManager {
     return this.getCatalogDetailForLibrary(libraryId, catalogId)
   }
 
-  async buildLocalSeriesMatchImportPayloadForLibrary(libraryId, selections) {
+  async buildLocalSeriesMatchImportPayloadForLibrary(libraryId, selections, options = {}) {
     const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
     const catalogs = await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
     const sourceUrlMap = this.buildCatalogSourceUrlMap(catalogs)
+    const forceRefresh = !!options?.forceRefresh
     const requestedSelections = Array.isArray(selections) ? selections : []
     const matches = []
 
@@ -1383,7 +1384,7 @@ class SeriesReviewManager {
       if (!matchRow) {
         throw new Error('Saved local source link was not found')
       }
-      if (sourceUrlMap.has(matchRow.sourceSeriesUrl)) continue
+      if (!forceRefresh && sourceUrlMap.has(matchRow.sourceSeriesUrl)) continue
 
       const group = localSeriesGroups.get(matchRow.localDecisionKey)
       if (!group?.seriesName) continue
@@ -1419,6 +1420,26 @@ class SeriesReviewManager {
     }
 
     return matches
+  }
+
+  async refreshLocalSeriesMatchesForLibrary(libraryId, matchIds = [], options = {}) {
+    const allowedIds = Array.isArray(matchIds) && matchIds.length ? new Set(matchIds.map((value) => String(value || '').trim()).filter(Boolean)) : null
+    const matchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
+    const selections = matchRows
+      .filter((matchRow) => !allowedIds || allowedIds.has(matchRow.id))
+      .map((matchRow) => ({
+        matchId: matchRow.id,
+        includedLibraryItemIds: []
+      }))
+
+    if (!selections.length) {
+      return []
+    }
+
+    return this.buildLocalSeriesMatchImportPayloadForLibrary(libraryId, selections, {
+      ...options,
+      forceRefresh: true
+    })
   }
 
   async getCatalogsForLibrary(libraryId, includeUntrusted = false, includeDismissed = false) {

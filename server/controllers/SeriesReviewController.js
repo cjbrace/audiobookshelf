@@ -153,6 +153,34 @@ class SeriesReviewController {
     }
   }
 
+  async refreshLocalCatalogMatches(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    try {
+      const matches = await SeriesReviewManager.refreshLocalSeriesMatchesForLibrary(req.library.id, req.body?.matchIds)
+      if (!matches.length) {
+        return res.json({
+          library_id: req.library.id,
+          summary: {
+            selected_matches: 0,
+            queue_rows_updated: 0,
+            series_catalogs_created: 0,
+            series_catalogs_updated: 0
+          }
+        })
+      }
+      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      return res.json(result)
+    } catch (error) {
+      const statusCode = Number(error?.statusCode || 0)
+      if (statusCode >= 400) {
+        return res.status(statusCode).send(String(error?.message || 'Manual series refresh failed'))
+      }
+      return handleActionError(res, error)
+    }
+  }
+
   async importCatalog(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

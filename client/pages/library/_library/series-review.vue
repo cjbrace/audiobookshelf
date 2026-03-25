@@ -30,6 +30,15 @@
             {{ localCatalogMatchesExpanded ? 'Hide Locally Matched' : 'Import Locally Matched' }}
           </ui-btn>
           <ui-btn
+            v-if="activeTab === 'catalog'"
+            color="bg-bg border border-white/20"
+            small
+            :loading="localCatalogRefreshLoading"
+            @click="refreshLocalCatalogMatches"
+          >
+            Refresh Saved Links
+          </ui-btn>
+          <ui-btn
             color="bg-bg border border-white/20"
             small
             :loading="activeTab === 'queue' ? loading : activeTab === 'management' ? managementLoading : catalogLoading"
@@ -1285,6 +1294,7 @@ export default {
       localCatalogMatchesExpanded: false,
       localCatalogMatchSelectionById: {},
       localCatalogImporting: false,
+      localCatalogRefreshLoading: false,
       catalogManualLookupResults: [],
       catalogManualLookupCatalogId: '',
       catalogManualLookupLoading: false,
@@ -2100,6 +2110,23 @@ export default {
         this.$toast.error(error?.response?.data || 'Failed to import locally matched series')
       } finally {
         this.localCatalogImporting = false
+      }
+    },
+    async refreshLocalCatalogMatches() {
+      this.localCatalogRefreshLoading = true
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/local-matches/refresh`, {})
+        const summary = response.summary || {}
+        this.$toast.success(
+          `Refreshed ${summary.selected_matches || 0} match${(summary.selected_matches || 0) === 1 ? '' : 'es'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
+        )
+        await this.loadCatalogs({ preferCache: false })
+        await this.loadQueue()
+        await this.loadLocalCatalogMatches({ silent: true })
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to refresh saved links')
+      } finally {
+        this.localCatalogRefreshLoading = false
       }
     },
     async chooseCatalogSlot(choice, row) {
