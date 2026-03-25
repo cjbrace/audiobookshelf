@@ -1483,6 +1483,7 @@ class SeriesReviewManager {
         resolver,
         localSeriesGroups,
         skipResolvedLookup: true,
+        skipLocalSeriesMatches: true,
         localBooksCache,
         expandedSeriesCache,
         preloadedSeriesBooksBySeriesId,
@@ -2010,14 +2011,17 @@ class SeriesReviewManager {
     })
 
     const finalized = this.finalizeCatalogSlots(slotMap, {}, localBooks, [], { fillIntegerGaps: false })
-    const effectiveCatalogs = allCatalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
-    const localSeriesMatches = await this.getLocalSeriesMatchesForLibrary(libraryId, {
-      resolver,
-      localSeriesGroups,
-      catalogs: effectiveCatalogs,
-      sourceUrlMap: this.buildCatalogSourceUrlMap(effectiveCatalogs),
-      includeResolved: true
-    })
+    let localSeriesMatches = []
+    if (!options?.skipLocalSeriesMatches) {
+      const effectiveCatalogs = allCatalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
+      localSeriesMatches = await this.getLocalSeriesMatchesForLibrary(libraryId, {
+        resolver,
+        localSeriesGroups,
+        catalogs: effectiveCatalogs,
+        sourceUrlMap: this.buildCatalogSourceUrlMap(effectiveCatalogs),
+        includeResolved: true
+      })
+    }
     return {
       catalog: {
         ...this.buildCatalogViewPayload({
