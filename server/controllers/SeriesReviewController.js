@@ -207,7 +207,7 @@ class SeriesReviewController {
           source: String(selectedResult.source || '').trim().toLowerCase(),
           sourceSeriesName: selectedResult.sourceSeriesName || '',
           sourceAuthor: selectedResult.sourceAuthor || '',
-          sourceSeriesUrl: selectedResult.sourceUrl || selectedResult.sourceSeriesUrl || '',
+          sourceSeriesUrl: selectedResult.sourceSeriesUrl || selectedResult.sourceUrl || '',
           evidenceSnapshot: selectedResult.evidenceSnapshot || {},
           books: localBooks.map((book) => ({
             libraryItemId: book.libraryItemId,

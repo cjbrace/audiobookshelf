@@ -1308,7 +1308,7 @@ class SeriesReviewManager {
     const source = String(payload?.source || 'fictiondb').trim().toLowerCase()
     if (!['fictiondb', 'audible', 'wikidata'].includes(source)) throw new Error('Unsupported manual lookup source')
     const sourceSeriesName = this.normalizeSeriesName(payload?.sourceSeriesName || payload?.evidenceSnapshot?.sourceSeriesName || '')
-    const sourceSeriesUrl = String(payload?.sourceUrl || payload?.sourceSeriesUrl || payload?.evidenceSnapshot?.sourceUrl || '').trim()
+    const sourceSeriesUrl = String(payload?.sourceSeriesUrl || payload?.sourceUrl || payload?.evidenceSnapshot?.sourceSeriesUrl || payload?.evidenceSnapshot?.sourceUrl || '').trim()
     if (!sourceSeriesName || !sourceSeriesUrl) {
       throw new Error('Missing source series name or URL')
     }

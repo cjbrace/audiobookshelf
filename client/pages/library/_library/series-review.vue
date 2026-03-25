@@ -1492,11 +1492,11 @@ export default {
       return SOURCE_LEGEND[key]?.code || key.toUpperCase() || 'SRC'
     },
     getManualSourceHref(entry) {
-      const href = String(entry?.sourceLinkUrl || entry?.sourceUrl || '').trim()
+      const href = String(entry?.sourceSeriesUrl || entry?.sourceLinkUrl || entry?.sourceUrl || '').trim()
       return /^https?:\/\//i.test(href) ? href : ''
     },
     getManualSourceText(entry) {
-      return String(entry?.sourceIdentifier || entry?.sourceUrl || '').trim()
+      return String(entry?.sourceIdentifier || entry?.sourceSeriesUrl || entry?.sourceUrl || '').trim()
     },
     getManualSourceMeta(entry) {
       const parts = []
@@ -1508,7 +1508,7 @@ export default {
       return String(entry?.sequenceStatusNote || entry?.evidenceSnapshot?.sequenceStatusNote || '').trim()
     },
     getManualLookupResultKey(entry) {
-      return `${entry?.source || 'source'}:${entry?.sourceUrl || entry?.sourceIdentifier || entry?.sourceSeriesName || ''}`
+      return `${entry?.source || 'source'}:${entry?.sourceSeriesUrl || entry?.sourceUrl || entry?.sourceIdentifier || entry?.sourceSeriesName || ''}`
     },
     formatAuthors(authors) {
       return (authors || []).map((author) => author.name).join(', ') || '-'
@@ -2048,6 +2048,7 @@ export default {
             sourceSeriesName: result.sourceSeriesName,
             sourceAuthor: result.sourceAuthor,
             sourceUrl: result.sourceUrl,
+            sourceSeriesUrl: result.sourceSeriesUrl || result.sourceUrl,
             evidenceSnapshot: result.evidenceSnapshot || {}
           }
         )
