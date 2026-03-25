@@ -1229,8 +1229,8 @@ const SOURCE_LEGEND = {
   fantasticfiction: { code: 'FF', name: 'Fantastic Fiction', url: 'https://www.fantasticfiction.com/' }
 }
 
-const CATALOG_LIST_CACHE_PREFIX = 'series-review:catalog-list:'
-const CATALOG_DETAIL_CACHE_KEY = 'series-review:catalog-detail-cache'
+const CATALOG_LIST_CACHE_PREFIX = 'series-review:v2:catalog-list:'
+const CATALOG_DETAIL_CACHE_KEY = 'series-review:v2:catalog-detail-cache'
 
 export default {
   async asyncData({ redirect, store, params }) {
@@ -1636,6 +1636,9 @@ export default {
     persistCatalogCaches() {
       if (!process.client) return
       try {
+        Object.keys(window.sessionStorage)
+          .filter((key) => key.startsWith('series-review:catalog-list:') || key === 'series-review:catalog-detail-cache')
+          .forEach((key) => window.sessionStorage.removeItem(key))
         Object.entries(this.catalogListCache || {}).forEach(([key, value]) => {
           window.sessionStorage.setItem(key, JSON.stringify(value || []))
         })
@@ -2038,7 +2041,10 @@ export default {
             evidenceSnapshot: result.evidenceSnapshot || {}
           }
         )
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
         this.selectedCatalogDetail = detail
+        this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.persistCatalogCaches()
         await this.loadLocalCatalogMatches({ silent: true })
@@ -2056,7 +2062,10 @@ export default {
         const detail = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/local-match/${match.id}/remove`
         )
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
         this.selectedCatalogDetail = detail
+        this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.persistCatalogCaches()
         await this.loadLocalCatalogMatches({ silent: true })

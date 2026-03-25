@@ -954,6 +954,10 @@ describe('SeriesReviewManager', () => {
 
     const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
     expect(detail.localBooks.map((book) => book.title)).to.deep.equal(['Alpha Start', 'Alpha Return'])
+
+    const resolvedLocalOnlyDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, localCatalog.id)
+    expect(resolvedLocalOnlyDetail.catalog.id).to.equal(importResult.catalogs[0].id)
+    expect(resolvedLocalOnlyDetail.catalog.displayBucket).to.equal('locally_linked')
   })
 
   it('resolves audible manual links into the locally linked category', async () => {
