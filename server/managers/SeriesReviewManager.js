@@ -1332,6 +1332,8 @@ class SeriesReviewManager {
           order: [['seriesName', 'ASC']]
         })
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+    const localBooksCache = new Map()
+    const expandedSeriesCache = new Map()
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
     const resolvedLocalDecisionKeys = new Set(
       (await this.getLocalSeriesMatchRowsForLibrary(libraryId))
@@ -1346,7 +1348,12 @@ class SeriesReviewManager {
         .filter(Boolean)
     )
     for (const catalog of catalogs) {
-      const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id, { resolver, localSeriesGroups })
+      const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id, {
+        resolver,
+        localSeriesGroups,
+        localBooksCache,
+        expandedSeriesCache
+      })
       if (!detail) continue
       const displayBucket = detail.catalog.displayBucket
       if (!includeDismissed && displayBucket === 'dismissed') continue
@@ -1366,7 +1373,9 @@ class SeriesReviewManager {
       const detail = await this.getCatalogDetailForLibrary(libraryId, group.catalogId, {
         resolver,
         localSeriesGroups,
-        skipResolvedLookup: true
+        skipResolvedLookup: true,
+        localBooksCache,
+        expandedSeriesCache
       })
       if (!detail?.localBooks?.length) continue
       detailSummaries.push({
@@ -1408,11 +1417,28 @@ class SeriesReviewManager {
         resolver: options?.resolver || null,
         seriesRows: options?.seriesRows || null
       }))
+    const cacheKey = matchingSeries.length
+      ? matchingSeries
+          .map((series) => String(series?.id || ''))
+          .filter(Boolean)
+          .sort()
+          .join('|')
+      : ''
+    const localBooksCache = options?.localBooksCache instanceof Map ? options.localBooksCache : null
+    if (cacheKey && localBooksCache?.has(cacheKey)) {
+      return localBooksCache.get(cacheKey)
+    }
+
+    const expandedSeriesCache = options?.expandedSeriesCache instanceof Map ? options.expandedSeriesCache : null
     const localBooks = []
     const seen = new Set()
 
     for (const series of matchingSeries) {
-      const expandedSeries = await Database.seriesModel.getExpandedById(series.id)
+      let expandedSeries = expandedSeriesCache?.get(series.id)
+      if (!expandedSeries) {
+        expandedSeries = await Database.seriesModel.getExpandedById(series.id)
+        if (expandedSeriesCache) expandedSeriesCache.set(series.id, expandedSeries)
+      }
       for (const book of expandedSeries?.books || []) {
         const libraryItem = book.libraryItem
         if (!libraryItem?.id || seen.has(libraryItem.id)) continue
@@ -1430,12 +1456,14 @@ class SeriesReviewManager {
       }
     }
 
-    return localBooks.sort((a, b) => {
+    const sortedLocalBooks = localBooks.sort((a, b) => {
       const aSeq = a.sequence || 'zzzz'
       const bSeq = b.sequence || 'zzzz'
       if (aSeq !== bSeq) return aSeq.localeCompare(bSeq, undefined, { numeric: true })
       return a.title.localeCompare(b.title)
     })
+    if (cacheKey && localBooksCache) localBooksCache.set(cacheKey, sortedLocalBooks)
+    return sortedLocalBooks
   }
 
   ensureCatalogSlot(map, slot) {
@@ -1735,7 +1763,9 @@ class SeriesReviewManager {
     })
     const localBooks = await this.getLocalCatalogBooks(libraryId, catalog.seriesName, {
       resolver,
-      matchingSeries: [...new Map([...matchedSeriesRows, ...manualLinkedSeriesRows].map((seriesRow) => [seriesRow.id, seriesRow])).values()]
+      matchingSeries: [...new Map([...matchedSeriesRows, ...manualLinkedSeriesRows].map((seriesRow) => [seriesRow.id, seriesRow])).values()],
+      localBooksCache: options?.localBooksCache,
+      expandedSeriesCache: options?.expandedSeriesCache
     })
     const slotMap = new Map()
 
@@ -1822,7 +1852,9 @@ class SeriesReviewManager {
 
     const localBooks = await this.getLocalCatalogBooks(libraryId, group.seriesName, {
       resolver,
-      matchingSeries: group.seriesRows
+      matchingSeries: group.seriesRows,
+      localBooksCache: options?.localBooksCache,
+      expandedSeriesCache: options?.expandedSeriesCache
     })
     if (!localBooks.length) return null
 
