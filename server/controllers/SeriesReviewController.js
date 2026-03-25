@@ -166,51 +166,8 @@ class SeriesReviewController {
       const catalogDetail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, catalogId)
       if (!catalogDetail) return res.sendStatus(404)
 
-      const allowedIds = Array.isArray(req.body?.matchIds) && req.body.matchIds.length ? new Set(req.body.matchIds.map((value) => String(value || '').trim()).filter(Boolean)) : null
-      const targetSeriesName = String(catalogDetail.catalog?.seriesName || '').trim().toLowerCase()
-      const matchRows = await SeriesReviewManager.getLocalSeriesMatchRowsForLibrary(req.library.id, { includeResolved: true })
-      const matchingRows = matchRows.filter((matchRow) => {
-        const localName = String(matchRow?.localSeriesName || '').trim().toLowerCase()
-        const sourceName = String(matchRow?.sourceSeriesName || '').trim().toLowerCase()
-        return localName === targetSeriesName || sourceName === targetSeriesName
-      })
-      const matches = []
-
-      for (const match of matchingRows) {
-        if (allowedIds && !allowedIds.has(match.id)) continue
-        const localBooks = Array.isArray(match.localBooks) ? match.localBooks : []
-        if (!localBooks.length) continue
-
-        const lookup = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
-          local_series_name: match.localSeriesName,
-          local_decision_key: match.localDecisionKey,
-          local_books: localBooks
-        })
-        const lookupResult = Array.isArray(lookup?.results)
-          ? lookup.results.find((result) => String(result?.source || '').trim().toLowerCase() === String(match.source || '').trim().toLowerCase()) || lookup.results[0] || null
-          : null
-        const resolvedSource = lookupResult || {}
-        const books = localBooks.map((book) => ({
-          libraryItemId: book.libraryItemId,
-          title: book.title,
-          relPath: book.relPath,
-          authors: (book.authors || []).map((author) => ({ name: author.name || author })),
-          currentSeries: [{ name: book.seriesName, sequence: book.sequence || '' }]
-        }))
-        matches.push({
-          matchId: match.id,
-          localSeriesName: match.localSeriesName,
-          localDecisionKey: match.localDecisionKey,
-          source: String(resolvedSource.source || match.source || '').trim().toLowerCase(),
-          sourceSeriesName: resolvedSource.sourceSeriesName || match.sourceSeriesName,
-          sourceAuthor: resolvedSource.sourceAuthor || match.sourceAuthor,
-          sourceSeriesUrl: resolvedSource.sourceUrl || resolvedSource.sourceSeriesUrl || match.sourceUrl,
-          evidenceSnapshot: resolvedSource.evidenceSnapshot || match.evidenceSnapshot || {},
-          books
-        })
-      }
-
-      if (!matches.length) {
+      const localBooks = Array.isArray(catalogDetail.localBooks) ? catalogDetail.localBooks : []
+      if (!localBooks.length) {
         return res.json({
           library_id: req.library.id,
           summary: {
@@ -221,6 +178,46 @@ class SeriesReviewController {
           }
         })
       }
+
+      const lookup = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
+        local_series_name: String(catalogDetail.catalog?.seriesName || '').trim(),
+        local_decision_key: '',
+        local_books: localBooks
+      })
+      const results = Array.isArray(lookup?.results) ? lookup.results : []
+      const preferredSource = String(catalogDetail.catalog?.evidenceLinks?.[0]?.source || '').trim().toLowerCase()
+      const selectedResult = results.find((result) => String(result?.source || '').trim().toLowerCase() === preferredSource) || results[0] || null
+      if (!selectedResult) {
+        return res.json({
+          library_id: req.library.id,
+          summary: {
+            selected_matches: 0,
+            queue_rows_updated: 0,
+            series_catalogs_created: 0,
+            series_catalogs_updated: 0
+          }
+        })
+      }
+
+      const matches = [
+        {
+          matchId: '',
+          localSeriesName: String(catalogDetail.catalog?.seriesName || '').trim(),
+          localDecisionKey: '',
+          source: String(selectedResult.source || '').trim().toLowerCase(),
+          sourceSeriesName: selectedResult.sourceSeriesName || '',
+          sourceAuthor: selectedResult.sourceAuthor || '',
+          sourceSeriesUrl: selectedResult.sourceUrl || selectedResult.sourceSeriesUrl || '',
+          evidenceSnapshot: selectedResult.evidenceSnapshot || {},
+          books: localBooks.map((book) => ({
+            libraryItemId: book.libraryItemId,
+            title: book.title,
+            relPath: book.relPath,
+            authors: (book.authors || []).map((author) => ({ name: author.name || author })),
+            currentSeries: [{ name: book.seriesName, sequence: book.sequence || '' }]
+          }))
+        }
+      ]
       const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
       return res.json(result)
     } catch (error) {
