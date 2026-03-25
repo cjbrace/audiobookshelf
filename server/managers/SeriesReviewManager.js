@@ -1363,7 +1363,11 @@ class SeriesReviewManager {
     for (const group of localSeriesGroups.values()) {
       if (resolvedLocalDecisionKeys.has(group.decisionKey)) continue
       if (!group?.seriesName || catalogDecisionKeys.has(group.decisionKey)) continue
-      const detail = await this.getCatalogDetailForLibrary(libraryId, group.catalogId, { resolver, localSeriesGroups })
+      const detail = await this.getCatalogDetailForLibrary(libraryId, group.catalogId, {
+        resolver,
+        localSeriesGroups,
+        skipResolvedLookup: true
+      })
       if (!detail?.localBooks?.length) continue
       detailSummaries.push({
         ...detail.catalog,
@@ -1800,14 +1804,17 @@ class SeriesReviewManager {
   async getLocalOnlyCatalogDetailForLibrary(libraryId, decisionKey, options = {}) {
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
-    const allCatalogs = options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
-    const resolvedCatalogId = await this.getResolvedCatalogIdForLocalDecisionKey(libraryId, decisionKey, allCatalogs)
-    if (resolvedCatalogId) {
-      return this.getCatalogDetailForLibrary(libraryId, resolvedCatalogId, {
-        ...options,
-        resolver,
-        localSeriesGroups
-      })
+    const shouldResolveLinkedCatalog = options?.skipResolvedLookup ? false : true
+    const allCatalogs = shouldResolveLinkedCatalog ? options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })) : null
+    if (shouldResolveLinkedCatalog) {
+      const resolvedCatalogId = await this.getResolvedCatalogIdForLocalDecisionKey(libraryId, decisionKey, allCatalogs)
+      if (resolvedCatalogId) {
+        return this.getCatalogDetailForLibrary(libraryId, resolvedCatalogId, {
+          ...options,
+          resolver,
+          localSeriesGroups
+        })
+      }
     }
 
     const group = localSeriesGroups.get(decisionKey)
@@ -1838,11 +1845,12 @@ class SeriesReviewManager {
     })
 
     const finalized = this.finalizeCatalogSlots(slotMap, {}, localBooks, [], { fillIntegerGaps: false })
+    const effectiveCatalogs = allCatalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
     const localSeriesMatches = await this.getLocalSeriesMatchesForLibrary(libraryId, {
       resolver,
       localSeriesGroups,
-      catalogs: allCatalogs,
-      sourceUrlMap: this.buildCatalogSourceUrlMap(allCatalogs),
+      catalogs: effectiveCatalogs,
+      sourceUrlMap: this.buildCatalogSourceUrlMap(effectiveCatalogs),
       includeResolved: true
     })
     return {
