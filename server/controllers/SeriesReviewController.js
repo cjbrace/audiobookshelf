@@ -199,7 +199,7 @@ class SeriesReviewController {
         })
       }
 
-      await SeriesReviewManager.saveLocalSeriesMatchForLibrary(req.library.id, catalogId, {
+      await SeriesReviewManager.saveLocalSeriesMatchForSeriesName(req.library.id, String(catalogDetail.catalog?.seriesName || '').trim(), '', {
         source: selectedResult.source,
         sourceSeriesName: selectedResult.sourceSeriesName,
         sourceAuthor: selectedResult.sourceAuthor,

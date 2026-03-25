@@ -385,7 +385,7 @@ describe('SeriesReviewController', () => {
         }
       ]
     })
-    sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForLibrary').resolves({ catalog: { id: 'local-series:android-x' } })
+    sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForSeriesName').resolves({ id: 'match-1' })
     sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1, queue_rows_updated: 1 } })
 
     const req = {
@@ -402,7 +402,7 @@ describe('SeriesReviewController', () => {
 
     await SeriesReviewController.refreshLocalCatalogMatches(req, res)
 
-    expect(SeriesReviewManager.saveLocalSeriesMatchForLibrary.calledOnceWithExactly('library-1', 'local-series:android-x', {
+    expect(SeriesReviewManager.saveLocalSeriesMatchForSeriesName.calledOnceWithExactly('library-1', 'Android X', '', {
       source: 'audible',
       sourceSeriesName: 'Android X',
       sourceAuthor: 'Michael La Ronn',

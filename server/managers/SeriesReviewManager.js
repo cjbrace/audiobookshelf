@@ -1305,6 +1305,16 @@ class SeriesReviewManager {
     const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
     if (!context) return null
 
+    return this.saveLocalSeriesMatchForSeriesName(libraryId, context.localSeriesName, context.localDecisionKey, payload)
+  }
+
+  async saveLocalSeriesMatchForSeriesName(libraryId, localSeriesName, localDecisionKey, payload) {
+    const seriesName = this.normalizeSeriesName(localSeriesName || '')
+    const decisionKey = this.normalizeDecisionKey(localDecisionKey || localSeriesName || '')
+    if (!seriesName || !decisionKey) {
+      throw new Error('Series name is required')
+    }
+
     const source = String(payload?.source || 'fictiondb').trim().toLowerCase()
     if (!['fictiondb', 'audible', 'wikidata'].includes(source)) throw new Error('Unsupported manual lookup source')
     const sourceSeriesName = this.normalizeSeriesName(payload?.sourceSeriesName || payload?.evidenceSnapshot?.sourceSeriesName || '')
@@ -1318,12 +1328,12 @@ class SeriesReviewManager {
     const existing = await Database.seriesReviewLocalSeriesMatchModel.findOne({
       where: {
         libraryId,
-        localDecisionKey: context.localDecisionKey
+        localDecisionKey: decisionKey
       }
     })
 
     if (existing) {
-      existing.localSeriesName = context.localSeriesName
+      existing.localSeriesName = seriesName
       existing.source = source
       existing.sourceSeriesName = sourceSeriesName
       existing.sourceAuthor = sourceAuthor || null
@@ -1333,8 +1343,8 @@ class SeriesReviewManager {
     } else {
       await Database.seriesReviewLocalSeriesMatchModel.create({
         libraryId,
-        localDecisionKey: context.localDecisionKey,
-        localSeriesName: context.localSeriesName,
+        localDecisionKey: decisionKey,
+        localSeriesName: seriesName,
         source,
         sourceSeriesName,
         sourceAuthor: sourceAuthor || null,
