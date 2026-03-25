@@ -1084,6 +1084,75 @@ class SeriesReviewManager {
     return groups
   }
 
+  async getSeriesBooksBySeriesIds(libraryId, seriesIds = []) {
+    const uniqueSeriesIds = [...new Set((Array.isArray(seriesIds) ? seriesIds : []).map((id) => String(id || '').trim()).filter(Boolean))]
+    const booksBySeriesId = new Map()
+    if (!uniqueSeriesIds.length) return booksBySeriesId
+
+    const rows = await Database.sequelize.query(
+      `SELECT
+          bs.seriesId AS seriesId,
+          bs.sequence AS sequence,
+          b.id AS bookId,
+          b.title AS title,
+          li.id AS libraryItemId,
+          li.relPath AS relPath,
+          a.id AS authorId,
+          a.name AS authorName
+        FROM bookSeries bs
+        INNER JOIN books b
+          ON b.id = bs.bookId
+        LEFT JOIN libraryItems li
+          ON li.mediaId = b.id
+          AND li.libraryId = :libraryId
+          AND li.mediaType = 'book'
+        LEFT JOIN bookAuthors ba
+          ON ba.bookId = b.id
+        LEFT JOIN authors a
+          ON a.id = ba.authorId
+        WHERE bs.seriesId IN (:seriesIds)
+        ORDER BY bs.seriesId ASC, bs.sequence ASC, b.title ASC`,
+      {
+        replacements: {
+          libraryId,
+          seriesIds: uniqueSeriesIds
+        },
+        type: Database.sequelize.QueryTypes.SELECT
+      }
+    )
+
+    rows.forEach((row) => {
+      const seriesId = String(row.seriesId || '')
+      const bookId = String(row.bookId || '')
+      if (!seriesId || !bookId) return
+      if (!booksBySeriesId.has(seriesId)) booksBySeriesId.set(seriesId, new Map())
+
+      const bucket = booksBySeriesId.get(seriesId)
+      if (!bucket.has(bookId)) {
+        bucket.set(bookId, {
+          libraryItemId: row.libraryItemId || null,
+          title: row.title || '',
+          relPath: row.relPath || '',
+          sequence: this.normalizeSequence(row.sequence || null),
+          authors: []
+        })
+      }
+
+      const authorName = String(row.authorName || '').trim()
+      if (!authorName) return
+      const book = bucket.get(bookId)
+      if (!book.authors.some((author) => author.name === authorName)) {
+        book.authors.push({ id: row.authorId || null, name: authorName })
+      }
+    })
+
+    booksBySeriesId.forEach((bucket, seriesId) => {
+      booksBySeriesId.set(seriesId, [...bucket.values()])
+    })
+
+    return booksBySeriesId
+  }
+
   async getLocalSeriesMatchRowsForLibrary(libraryId, options = {}) {
     const where = { libraryId }
     if (options?.localDecisionKey) where.localDecisionKey = options.localDecisionKey
@@ -1334,6 +1403,10 @@ class SeriesReviewManager {
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
     const localBooksCache = new Map()
     const expandedSeriesCache = new Map()
+    const preloadedSeriesBooksBySeriesId = await this.getSeriesBooksBySeriesIds(
+      libraryId,
+      [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
+    )
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
     const resolvedLocalDecisionKeys = new Set(
       (await this.getLocalSeriesMatchRowsForLibrary(libraryId))
@@ -1352,7 +1425,8 @@ class SeriesReviewManager {
         resolver,
         localSeriesGroups,
         localBooksCache,
-        expandedSeriesCache
+        expandedSeriesCache,
+        preloadedSeriesBooksBySeriesId
       })
       if (!detail) continue
       const displayBucket = detail.catalog.displayBucket
@@ -1375,7 +1449,8 @@ class SeriesReviewManager {
         localSeriesGroups,
         skipResolvedLookup: true,
         localBooksCache,
-        expandedSeriesCache
+        expandedSeriesCache,
+        preloadedSeriesBooksBySeriesId
       })
       if (!detail?.localBooks?.length) continue
       detailSummaries.push({
@@ -1430,10 +1505,29 @@ class SeriesReviewManager {
     }
 
     const expandedSeriesCache = options?.expandedSeriesCache instanceof Map ? options.expandedSeriesCache : null
+    const preloadedSeriesBooksBySeriesId =
+      options?.preloadedSeriesBooksBySeriesId instanceof Map ? options.preloadedSeriesBooksBySeriesId : null
     const localBooks = []
     const seen = new Set()
 
     for (const series of matchingSeries) {
+      const preloadedBooks = preloadedSeriesBooksBySeriesId?.get(series.id) || null
+      if (preloadedBooks) {
+        for (const book of preloadedBooks) {
+          if (!book?.libraryItemId || seen.has(book.libraryItemId)) continue
+          seen.add(book.libraryItemId)
+          localBooks.push({
+            libraryItemId: book.libraryItemId,
+            title: book.title || '',
+            relPath: book.relPath || '',
+            authors: Array.isArray(book.authors) ? book.authors : [],
+            sequence: this.normalizeSequence(book.sequence || null),
+            seriesName: series.name
+          })
+        }
+        continue
+      }
+
       let expandedSeries = expandedSeriesCache?.get(series.id)
       if (!expandedSeries) {
         expandedSeries = await Database.seriesModel.getExpandedById(series.id)
