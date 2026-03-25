@@ -166,22 +166,17 @@ class SeriesReviewController {
       const catalogDetail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, catalogId)
       if (!catalogDetail) return res.sendStatus(404)
 
-      const sourceUrls = new Set((catalogDetail.catalog?.evidenceLinks || []).map((link) => String(link?.url || '').trim()).filter(Boolean))
       const allowedIds = Array.isArray(req.body?.matchIds) && req.body.matchIds.length ? new Set(req.body.matchIds.map((value) => String(value || '').trim()).filter(Boolean)) : null
-      let matchRows = sourceUrls.size
-        ? await SeriesReviewManager.getLocalSeriesMatchRowsForLibrary(req.library.id, { sourceSeriesUrls: [...sourceUrls] })
-        : []
-      let localFallback = null
-      if (!matchRows.length) {
-        try {
-          localFallback = await SeriesReviewManager.buildManualLookupContextForCatalog(req.library.id, catalogId)
-        } catch (error) {
-          localFallback = null
-        }
-      }
+      const targetSeriesName = String(catalogDetail.catalog?.seriesName || '').trim().toLowerCase()
+      const matchRows = await SeriesReviewManager.getLocalSeriesMatchRowsForLibrary(req.library.id, { includeResolved: true })
+      const matchingRows = matchRows.filter((matchRow) => {
+        const localName = String(matchRow?.localSeriesName || '').trim().toLowerCase()
+        const sourceName = String(matchRow?.sourceSeriesName || '').trim().toLowerCase()
+        return localName === targetSeriesName || sourceName === targetSeriesName
+      })
       const matches = []
 
-      for (const match of matchRows) {
+      for (const match of matchingRows) {
         if (allowedIds && !allowedIds.has(match.id)) continue
         const localBooks = Array.isArray(match.localBooks) ? match.localBooks : []
         if (!localBooks.length) continue
@@ -213,28 +208,6 @@ class SeriesReviewController {
           evidenceSnapshot: resolvedSource.evidenceSnapshot || match.evidenceSnapshot || {},
           books
         })
-      }
-
-      if (!matches.length && localFallback?.localSeriesName && Array.isArray(localFallback.localBooks) && localFallback.localBooks.length) {
-        const lookup = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
-          local_series_name: localFallback.localSeriesName,
-          local_decision_key: localFallback.localDecisionKey,
-          local_books: localFallback.localBooks
-        })
-        const lookupResult = Array.isArray(lookup?.results) ? lookup.results[0] || null : null
-        if (lookupResult) {
-          matches.push({
-            matchId: '',
-            localSeriesName: localFallback.localSeriesName,
-            localDecisionKey: localFallback.localDecisionKey,
-            source: String(lookupResult.source || '').trim().toLowerCase(),
-            sourceSeriesName: lookupResult.sourceSeriesName || '',
-            sourceAuthor: lookupResult.sourceAuthor || '',
-            sourceSeriesUrl: lookupResult.sourceUrl || lookupResult.sourceSeriesUrl || '',
-            evidenceSnapshot: lookupResult.evidenceSnapshot || {},
-            books: localFallback.localBooks
-          })
-        }
       }
 
       if (!matches.length) {
