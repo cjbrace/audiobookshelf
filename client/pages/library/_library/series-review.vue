@@ -36,7 +36,7 @@
             :loading="localCatalogRefreshLoading"
             @click="refreshLocalCatalogMatches"
           >
-            Refresh Saved Links
+            Refresh This Link
           </ui-btn>
           <ui-btn
             color="bg-bg border border-white/20"
@@ -2115,7 +2115,9 @@ export default {
     async refreshLocalCatalogMatches() {
       this.localCatalogRefreshLoading = true
       try {
-        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/local-matches/refresh`, {})
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/local-matches/refresh`, {
+          catalogId: this.selectedCatalogDetail?.catalog?.id || ''
+        })
         const summary = response.summary || {}
         this.$toast.success(
           `Refreshed ${summary.selected_matches || 0} match${(summary.selected_matches || 0) === 1 ? '' : 'es'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
