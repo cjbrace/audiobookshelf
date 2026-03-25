@@ -1305,10 +1305,10 @@ class SeriesReviewManager {
     const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
     if (!context) return null
 
-    return this.saveLocalSeriesMatchForSeriesName(libraryId, context.localSeriesName, context.localDecisionKey, payload)
+    return this.saveLocalSeriesMatchForSeriesName(libraryId, context.localSeriesName, context.localDecisionKey, payload, catalogId)
   }
 
-  async saveLocalSeriesMatchForSeriesName(libraryId, localSeriesName, localDecisionKey, payload) {
+  async saveLocalSeriesMatchForSeriesName(libraryId, localSeriesName, localDecisionKey, payload, catalogId = null) {
     const seriesName = this.normalizeSeriesName(localSeriesName || '')
     const decisionKey = this.normalizeDecisionKey(localDecisionKey || localSeriesName || '')
     if (!seriesName || !decisionKey) {
@@ -1353,7 +1353,13 @@ class SeriesReviewManager {
       })
     }
 
-    return this.getCatalogDetailForLibrary(libraryId, catalogId, {
+    if (catalogId) {
+      return this.getCatalogDetailForLibrary(libraryId, catalogId, {
+        skipResolvedLookup: true
+      })
+    }
+
+    return this.getCatalogDetailForLibrary(libraryId, this.buildLocalOnlyCatalogId(decisionKey), {
       skipResolvedLookup: true
     })
   }

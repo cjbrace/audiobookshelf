@@ -104,7 +104,15 @@ class SeriesReviewController {
 
     let detail
     try {
-      detail = await SeriesReviewManager.saveLocalSeriesMatchForLibrary(req.library.id, req.params.catalogId, req.body)
+      const catalogDetail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+      if (!catalogDetail) return res.sendStatus(404)
+      detail = await SeriesReviewManager.saveLocalSeriesMatchForSeriesName(
+        req.library.id,
+        String(catalogDetail.catalog?.seriesName || '').trim(),
+        '',
+        req.body,
+        req.params.catalogId
+      )
     } catch (error) {
       return handleActionError(res, error)
     }
@@ -205,7 +213,7 @@ class SeriesReviewController {
         sourceAuthor: selectedResult.sourceAuthor,
         sourceSeriesUrl: selectedResult.sourceSeriesUrl || selectedResult.sourceUrl || '',
         evidenceSnapshot: selectedResult.evidenceSnapshot || {}
-      })
+      }, catalogId)
 
       const matches = [
         {

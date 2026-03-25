@@ -340,7 +340,10 @@ describe('SeriesReviewController', () => {
   })
 
   it('saves a selected local source-series link', async () => {
-    sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForLibrary').resolves({ catalog: { id: 'local-series:alpha' } })
+    sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary').resolves({
+      catalog: { id: 'local-series:alpha', seriesName: 'Alpha Saga' }
+    })
+    sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForSeriesName').resolves({ catalog: { id: 'local-series:alpha' } })
 
     const req = {
       user: { isAdminOrUp: true },
@@ -357,10 +360,11 @@ describe('SeriesReviewController', () => {
 
     await SeriesReviewController.saveLocalCatalogMatch(req, res)
 
-    expect(SeriesReviewManager.saveLocalSeriesMatchForLibrary.calledOnceWithExactly('library-1', 'local-series:alpha', {
+    expect(SeriesReviewManager.saveLocalSeriesMatchForSeriesName.calledOnceWithExactly('library-1', 'Alpha Saga', '', {
       sourceSeriesName: 'Alpha Saga',
       sourceUrl: 'https://www.fictiondb.com/series/alpha~123.htm'
-    })).to.be.true
+    }, 'local-series:alpha')).to.be.true
+    expect(SeriesReviewManager.getCatalogDetailForLibrary.calledOnceWithExactly('library-1', 'local-series:alpha')).to.be.true
     expect(res.json.calledOnceWithExactly({ catalog: { id: 'local-series:alpha' } })).to.be.true
   })
 
@@ -408,7 +412,7 @@ describe('SeriesReviewController', () => {
       sourceAuthor: 'Michael La Ronn',
       sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
       evidenceSnapshot: { sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }
-    })).to.be.true
+    }, 'local-series:android-x')).to.be.true
     expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnce).to.be.true
     expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1, queue_rows_updated: 1 } })).to.be.true
   })
