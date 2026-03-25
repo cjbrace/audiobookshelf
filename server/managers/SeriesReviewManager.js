@@ -247,15 +247,17 @@ class SeriesReviewManager {
     return decodeURIComponent(rawId.slice('local-series:'.length))
   }
 
-  getCatalogDisplayBucket({ trustStatus, visibilityStatus, localBookCount, isLocalOnly = false }) {
+  getCatalogDisplayBucket({ trustStatus, visibilityStatus, localBookCount, isLocalOnly = false, isLocallyLinked = false }) {
     if (visibilityStatus === 'dismissed') return 'dismissed'
     if (isLocalOnly) return 'local_only'
+    if (isLocallyLinked) return 'locally_linked'
     if (!localBookCount) return 'potential'
     return trustStatus === 'untrusted' ? 'less_trusted' : 'trusted'
   }
 
   getCatalogDisplayLabel(bucket) {
     if (bucket === 'local_only') return 'Local series'
+    if (bucket === 'locally_linked') return 'Locally linked'
     if (bucket === 'potential') return 'Potential series'
     if (bucket === 'less_trusted') return 'Less trusted'
     if (bucket === 'dismissed') return 'Dismissed'
@@ -392,6 +394,7 @@ class SeriesReviewManager {
     action = null,
     localBooks = [],
     displayBucket = null,
+    isLocallyLinked = false,
     canDismiss = true
   }) {
     const normalizedEntries = this.normalizeCatalogEntries(entries)
@@ -400,7 +403,8 @@ class SeriesReviewManager {
       this.getCatalogDisplayBucket({
         trustStatus,
         visibilityStatus,
-        localBookCount: Array.isArray(localBooks) ? localBooks.length : 0
+        localBookCount: Array.isArray(localBooks) ? localBooks.length : 0,
+        isLocallyLinked
       })
     const authorMeta = this.buildCatalogAuthorMeta(seriesName, localBooks, normalizedEntries)
 
@@ -431,8 +435,14 @@ class SeriesReviewManager {
       sourceSeriesName: matchRow.sourceSeriesName,
       sourceAuthor: matchRow.sourceAuthor || evidenceSnapshot.sourceAuthor || '',
       sourceUrl: matchRow.sourceSeriesUrl,
+      sourceLinkUrl: evidenceSnapshot.sourceLinkUrl || matchRow.sourceSeriesUrl,
+      sourceIdentifier: evidenceSnapshot.sourceIdentifier || matchRow.sourceSeriesUrl,
+      sourceAsin: evidenceSnapshot.sourceAsin || '',
+      sourceRegion: evidenceSnapshot.sourceRegion || '',
       matchingBooks: Array.isArray(evidenceSnapshot.matchingBooks) ? evidenceSnapshot.matchingBooks : [],
       sampleBooks: Array.isArray(evidenceSnapshot.sampleBooks) ? evidenceSnapshot.sampleBooks : [],
+      sequenceIncomplete: !!evidenceSnapshot.sequenceIncomplete,
+      sequenceStatusNote: typeof evidenceSnapshot.sequenceStatusNote === 'string' ? evidenceSnapshot.sequenceStatusNote : '',
       evidenceSnapshot,
       localBooks,
       resolvedCatalogId: resolvedCatalogId || null,
@@ -1090,7 +1100,7 @@ class SeriesReviewManager {
   buildCatalogSourceUrlMap(catalogs = []) {
     const sourceUrlMap = new Map()
     ;(Array.isArray(catalogs) ? catalogs : []).forEach((catalog) => {
-      this.getCatalogSourceUrls(catalog?.entries || [], 'fictiondb').forEach((sourceUrl) => {
+      this.getCatalogSourceUrls(catalog?.entries || []).forEach((sourceUrl) => {
         if (!sourceUrlMap.has(sourceUrl)) sourceUrlMap.set(sourceUrl, catalog.id)
       })
     })
@@ -1123,7 +1133,7 @@ class SeriesReviewManager {
   }
 
   async getManualLinkedSeriesRowsForCatalog(libraryId, catalog, options = {}) {
-    const sourceSeriesUrls = this.getCatalogSourceUrls(catalog?.entries || [], 'fictiondb')
+    const sourceSeriesUrls = this.getCatalogSourceUrls(catalog?.entries || [])
     if (!sourceSeriesUrls.length) return []
 
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
@@ -1178,7 +1188,7 @@ class SeriesReviewManager {
     if (!context) return null
 
     const source = String(payload?.source || 'fictiondb').trim().toLowerCase()
-    if (source !== 'fictiondb') throw new Error('Only FictionDB manual links are supported in v1')
+    if (!['fictiondb', 'audible', 'wikidata'].includes(source)) throw new Error('Unsupported manual lookup source')
     const sourceSeriesName = this.normalizeSeriesName(payload?.sourceSeriesName || payload?.evidenceSnapshot?.sourceSeriesName || '')
     const sourceSeriesUrl = String(payload?.sourceUrl || payload?.sourceSeriesUrl || payload?.evidenceSnapshot?.sourceUrl || '').trim()
     if (!sourceSeriesName || !sourceSeriesUrl) {
@@ -1326,7 +1336,7 @@ class SeriesReviewManager {
       if (!detail) continue
       const displayBucket = detail.catalog.displayBucket
       if (!includeDismissed && displayBucket === 'dismissed') continue
-      if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'local_only' && displayBucket !== 'dismissed') continue
+      if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'local_only' && displayBucket !== 'locally_linked' && displayBucket !== 'dismissed') continue
       detailSummaries.push({
         ...detail.catalog,
         missingCount: detail.slots.filter((slot) => slot.status === 'missing').length,
@@ -1758,6 +1768,7 @@ class SeriesReviewManager {
           dismissedAt: catalog.dismissedAt || null,
           entries,
           localBooks,
+          isLocallyLinked: manualLinkedSeriesRows.length > 0,
           canDismiss: true
         }),
         selectionBySlot: catalog.selectionBySlot || {},

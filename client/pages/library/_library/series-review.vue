@@ -161,7 +161,7 @@
           <div class="flex flex-wrap items-start gap-3">
             <div class="grow min-w-[18rem]">
               <p class="text-sm uppercase tracking-wide text-gray-400">Locally Matched Import</p>
-              <p class="text-base text-gray-100 mt-1">Import only the saved local-to-FictionDB series links. Untick individual local books before running the batch.</p>
+              <p class="text-base text-gray-100 mt-1">Import only the saved local source links. Untick individual local books before running the batch.</p>
             </div>
             <div class="text-sm text-gray-300">
               Saved matches: {{ unresolvedLocalCatalogMatches.length }}
@@ -182,10 +182,20 @@
                 <div class="grow min-w-[18rem]">
                   <p class="text-sm text-gray-400">Local series</p>
                   <p class="text-lg font-semibold text-white">{{ match.localSeriesName }}</p>
+                  <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
+                      {{ getManualSourceCode(match) }} · {{ getManualSourceDisplayName(match) }}
+                    </span>
+                  </div>
                   <p class="text-sm text-gray-300 mt-1">{{ match.sourceSeriesName }}<span v-if="match.sourceAuthor"> - {{ match.sourceAuthor }}</span></p>
-                  <a :href="match.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
-                    {{ match.sourceUrl }}
+                  <p v-if="getManualSourceMeta(match)" class="text-xs text-gray-400 mt-1">{{ getManualSourceMeta(match) }}</p>
+                  <p v-if="getManualSequenceStatus(match)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(match) }}</p>
+                  <a v-if="getManualSourceHref(match)" :href="getManualSourceHref(match)" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
+                    {{ getManualSourceText(match) }}
                   </a>
+                  <p v-else-if="getManualSourceText(match)" class="mt-1 text-sm text-gray-300 break-all">
+                    {{ getManualSourceText(match) }}
+                  </p>
                 </div>
                 <div class="text-sm text-gray-300">
                   Selected books: {{ (localCatalogMatchSelectionById[match.id] || []).length }} / {{ match.localBooks.length }}
@@ -705,14 +715,6 @@
                     placeholder="Filter by series or author"
                   />
                 </label>
-                <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                  <input v-model="includeUntrustedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="handleCatalogFilterChange" />
-                  <span>Show less-trusted series</span>
-                </label>
-                <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                  <input v-model="includeDismissedCatalogs" type="checkbox" class="rounded border-white/20 bg-black/30" @change="handleCatalogFilterChange" />
-                  <span>Show dismissed series</span>
-                </label>
               </div>
 
               <div v-if="catalogCategoryOptions.length" class="flex flex-wrap gap-2">
@@ -722,7 +724,7 @@
                   :class="!catalogCategoryFilter ? 'bg-sky-400/20 border-sky-300/45 text-sky-50' : 'bg-black/20 border-white/15 text-gray-200'"
                   @click="setCatalogCategoryFilter('')"
                 >
-                  All categories ({{ catalogSeries.length }})
+                  All categories ({{ allVisibleCatalogCount }})
                 </button>
                 <button
                   v-for="option in catalogCategoryOptions"
@@ -814,8 +816,8 @@
                   <div v-if="canUseManualCatalogLookup" class="rounded border border-white/10 bg-black/20 p-3 space-y-3">
                     <div class="flex flex-wrap items-start gap-3">
                       <div class="grow min-w-[18rem]">
-                        <p class="text-sm uppercase tracking-wide text-gray-400">Manual FictionDB Lookup</p>
-                        <p class="text-sm text-gray-200 mt-1">Search using the local series title, local authors, and local book context, then save one FictionDB series link for later batch import.</p>
+                        <p class="text-sm uppercase tracking-wide text-gray-400">Manual Source Lookup</p>
+                        <p class="text-sm text-gray-200 mt-1">Search using the local series title, local authors, and local book context, then save one source link for later batch import. Results are ordered FictionDB, Audible, then Wikidata.</p>
                         <p v-if="catalogManualLookupError" class="text-sm text-amber-200 mt-2">{{ catalogManualLookupError }}</p>
                       </div>
                       <ui-btn
@@ -823,7 +825,7 @@
                         :loading="catalogManualLookupLoading"
                         @click="lookupManualCatalogSources"
                       >
-                        Lookup FictionDB
+                        Lookup Sources
                       </ui-btn>
                     </div>
 
@@ -836,11 +838,21 @@
                       >
                         <div class="flex flex-wrap items-start gap-3">
                           <div class="grow min-w-[18rem]">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
+                                {{ getManualSourceCode(match) }} · {{ getManualSourceDisplayName(match) }}
+                              </span>
+                            </div>
                             <p class="text-lg font-semibold text-white">{{ match.sourceSeriesName }}</p>
                             <p v-if="match.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ match.sourceAuthor }}</p>
-                            <a :href="match.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
-                              {{ match.sourceUrl }}
+                            <p v-if="getManualSourceMeta(match)" class="text-xs text-gray-400 mt-1">{{ getManualSourceMeta(match) }}</p>
+                            <p v-if="getManualSequenceStatus(match)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(match) }}</p>
+                            <a v-if="getManualSourceHref(match)" :href="getManualSourceHref(match)" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
+                              {{ getManualSourceText(match) }}
                             </a>
+                            <p v-else-if="getManualSourceText(match)" class="mt-1 text-sm text-gray-300 break-all">
+                              {{ getManualSourceText(match) }}
+                            </p>
                           </div>
                           <ui-btn
                             v-if="match.canRemove"
@@ -873,16 +885,26 @@
                     <div v-if="catalogManualLookupResults.length" class="grid grid-cols-1 xl:grid-cols-2 gap-3">
                       <div
                         v-for="result in catalogManualLookupResults"
-                        :key="'manual-lookup-result:' + result.sourceUrl"
+                        :key="getManualLookupResultKey(result)"
                         class="rounded border border-white/10 bg-black/15 p-3 space-y-3"
                       >
                         <div class="flex flex-wrap items-start gap-3">
                           <div class="grow min-w-[18rem]">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
+                                {{ getManualSourceCode(result) }} · {{ getManualSourceDisplayName(result) }}
+                              </span>
+                            </div>
                             <p class="text-lg font-semibold text-white">{{ result.sourceSeriesName }}</p>
                             <p v-if="result.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ result.sourceAuthor }}</p>
-                            <a :href="result.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
-                              {{ result.sourceUrl }}
+                            <p v-if="getManualSourceMeta(result)" class="text-xs text-gray-400 mt-1">{{ getManualSourceMeta(result) }}</p>
+                            <p v-if="getManualSequenceStatus(result)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(result) }}</p>
+                            <a v-if="getManualSourceHref(result)" :href="getManualSourceHref(result)" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
+                              {{ getManualSourceText(result) }}
                             </a>
+                            <p v-else-if="getManualSourceText(result)" class="mt-1 text-sm text-gray-300 break-all">
+                              {{ getManualSourceText(result) }}
+                            </p>
                           </div>
                           <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
                             Score {{ result.score }}
@@ -930,7 +952,7 @@
                         <div class="flex justify-end">
                           <ui-btn
                             color="bg-success/80"
-                            :loading="catalogManualLookupSavingKey === result.sourceUrl"
+                            :loading="catalogManualLookupSavingKey === getManualLookupResultKey(result)"
                             @click="saveLocalCatalogMatch(result)"
                           >
                             Save Link
@@ -944,6 +966,9 @@
                     <p class="text-sm text-gray-200">Series name controls stay aligned with Review Queue alias/rename and Series Management merge behavior.</p>
                     <p v-if="selectedCatalogDetail.catalog.displayBucket === 'local_only'" class="mt-1 text-xs text-gray-400">
                       Local-only series stay visible here until they are linked or merged into a sourced series, and they cannot be dismissed.
+                    </p>
+                    <p v-else-if="selectedCatalogDetail.catalog.displayBucket === 'locally_linked'" class="mt-1 text-xs text-gray-400">
+                      Locally linked series came from saved manual source links and now feed the normal review/catalog pipeline.
                     </p>
                     <p v-else class="mt-1 text-xs text-gray-400">
                       Use Review Queue alias/rename or Series Management merge when this series needs canonical-name cleanup.
@@ -1247,8 +1272,6 @@ export default {
       catalogCategoryFilter: '',
       selectedCatalogId: '',
       selectedCatalogDetail: null,
-      includeUntrustedCatalogs: false,
-      includeDismissedCatalogs: false,
       catalogChoiceLoadingKey: '',
       catalogCandidateSearchLoadingKey: '',
       catalogCandidateQueueLoadingKey: '',
@@ -1359,8 +1382,12 @@ export default {
       if (this.activeTab === 'management') return 'Refresh Management'
       return 'Refresh Detail'
     },
+    allVisibleCatalogCount() {
+      const visibleCatalogs = this.getCatalogListCache(true, false)
+      return visibleCatalogs.length || this.catalogSeries.filter((catalog) => catalog.displayBucket !== 'dismissed').length
+    },
     catalogCategoryOptions() {
-      const bucketOrder = ['trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
+      const bucketOrder = ['trusted', 'local_only', 'locally_linked', 'potential', 'less_trusted', 'dismissed']
       const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
       const bucketCounts = new Map()
       ;(countCatalogs || []).forEach((catalog) => {
@@ -1446,6 +1473,32 @@ export default {
     getSourceDisplayName(source) {
       const key = String(source || '').toLowerCase()
       return SOURCE_LEGEND[key]?.name || source || 'Unknown source'
+    },
+    getManualSourceDisplayName(entry) {
+      return entry?.sourceName || this.getSourceDisplayName(entry?.source)
+    },
+    getManualSourceCode(entry) {
+      const key = String(entry?.source || '').toLowerCase()
+      return SOURCE_LEGEND[key]?.code || key.toUpperCase() || 'SRC'
+    },
+    getManualSourceHref(entry) {
+      const href = String(entry?.sourceLinkUrl || entry?.sourceUrl || '').trim()
+      return /^https?:\/\//i.test(href) ? href : ''
+    },
+    getManualSourceText(entry) {
+      return String(entry?.sourceIdentifier || entry?.sourceUrl || '').trim()
+    },
+    getManualSourceMeta(entry) {
+      const parts = []
+      if (entry?.sourceAsin) parts.push(`ASIN ${entry.sourceAsin}`)
+      if (entry?.sourceRegion) parts.push(String(entry.sourceRegion).toUpperCase())
+      return parts.join(' | ')
+    },
+    getManualSequenceStatus(entry) {
+      return String(entry?.sequenceStatusNote || entry?.evidenceSnapshot?.sequenceStatusNote || '').trim()
+    },
+    getManualLookupResultKey(entry) {
+      return `${entry?.source || 'source'}:${entry?.sourceUrl || entry?.sourceIdentifier || entry?.sourceSeriesName || ''}`
     },
     formatAuthors(authors) {
       return (authors || []).map((author) => author.name).join(', ') || '-'
@@ -1549,6 +1602,7 @@ export default {
     },
     getCatalogBucketLabel(bucket) {
       if (bucket === 'local_only') return 'Local series'
+      if (bucket === 'locally_linked') return 'Locally linked'
       if (bucket === 'less_trusted') return 'Less trusted'
       if (bucket === 'potential') return 'Potential series'
       if (bucket === 'dismissed') return 'Dismissed'
@@ -1556,39 +1610,27 @@ export default {
     },
     getCatalogBucketPillClass(bucket) {
       if (bucket === 'local_only') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100'
+      if (bucket === 'locally_linked') return 'border-sky-300/35 bg-sky-500/10 text-sky-100'
       if (bucket === 'less_trusted') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
       if (bucket === 'potential') return 'border-violet-300/35 bg-violet-500/10 text-violet-100'
       if (bucket === 'dismissed') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
     async setCatalogCategoryFilter(bucket) {
-      const nextBucket = this.catalogCategoryFilter === bucket ? '' : bucket
-      const nextIncludeUntrusted =
-        nextBucket === 'potential' || nextBucket === 'less_trusted' ? true : this.includeUntrustedCatalogs
-      const nextIncludeDismissed = nextBucket === 'dismissed' ? true : this.includeDismissedCatalogs
-
-      this.catalogCategoryFilter = nextBucket
-      if (nextIncludeUntrusted !== this.includeUntrustedCatalogs || nextIncludeDismissed !== this.includeDismissedCatalogs) {
-        this.includeUntrustedCatalogs = nextIncludeUntrusted
-        this.includeDismissedCatalogs = nextIncludeDismissed
-        await this.loadCatalogs({ preferCache: true })
-        return
+      this.catalogCategoryFilter = this.catalogCategoryFilter === bucket ? '' : bucket
+      await this.loadCatalogs({ preferCache: true })
+    },
+    getCatalogFetchFlags(bucket = this.catalogCategoryFilter) {
+      return {
+        includeUntrusted: true,
+        includeDismissed: bucket === 'dismissed'
       }
-
-      const visibleCatalogs = this.filteredCatalogSeries
-      if (!visibleCatalogs.length) {
-        this.selectedCatalogId = ''
-        this.selectedCatalogDetail = null
-        return
-      }
-      if (visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId)) return
-      this.selectCatalog(visibleCatalogs[0].id, { preferCache: true })
     },
     openCatalogEvidence(link) {
       if (!process.client || !link?.url) return
       window.open(link.url, '_blank', 'noopener')
     },
-    catalogListCacheKey(includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
+    catalogListCacheKey(includeUntrusted = true, includeDismissed = false) {
       return `${CATALOG_LIST_CACHE_PREFIX}${includeUntrusted ? 1 : 0}:${includeDismissed ? 1 : 0}`
     },
     persistCatalogCaches() {
@@ -1619,7 +1661,7 @@ export default {
         }
       } catch {}
     },
-    setCatalogListCache(catalogs, includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
+    setCatalogListCache(catalogs, includeUntrusted = true, includeDismissed = false) {
       const key = this.catalogListCacheKey(includeUntrusted, includeDismissed)
       this.$set(this.catalogListCache, key, catalogs || [])
       this.persistCatalogCaches()
@@ -1639,7 +1681,7 @@ export default {
         } catch {}
       }
     },
-    getCatalogListCache(includeUntrusted = this.includeUntrustedCatalogs, includeDismissed = this.includeDismissedCatalogs) {
+    getCatalogListCache(includeUntrusted = true, includeDismissed = false) {
       return this.catalogListCache[this.catalogListCacheKey(includeUntrusted, includeDismissed)] || []
     },
     applyCatalogSeries(catalogs) {
@@ -1781,17 +1823,8 @@ export default {
       this.sourceImportPollHandle = null
     },
     async prefetchCatalogData() {
-      await this.fetchCatalogList({ includeUntrusted: false, includeDismissed: false, updateView: this.activeTab === 'catalog', prefetchOnly: this.activeTab !== 'catalog' })
+      await this.fetchCatalogList({ includeUntrusted: true, includeDismissed: false, updateView: this.activeTab === 'catalog', prefetchOnly: this.activeTab !== 'catalog' })
       await this.fetchCatalogList({ includeUntrusted: true, includeDismissed: true, updateView: false, prefetchOnly: true })
-    },
-    async handleCatalogFilterChange() {
-      if (!this.includeUntrustedCatalogs && (this.catalogCategoryFilter === 'potential' || this.catalogCategoryFilter === 'less_trusted')) {
-        this.catalogCategoryFilter = ''
-      }
-      if (!this.includeDismissedCatalogs && this.catalogCategoryFilter === 'dismissed') {
-        this.catalogCategoryFilter = ''
-      }
-      await this.loadCatalogs({ preferCache: true })
     },
     async loadSourceImportStatus({ silent = false } = {}) {
       try {
@@ -1880,14 +1913,15 @@ export default {
     },
     async loadCatalogs({ preferCache = true } = {}) {
       this.errorMessage = ''
-      const cachedCatalogs = preferCache ? this.getCatalogListCache() : []
+      const flags = this.getCatalogFetchFlags()
+      const cachedCatalogs = preferCache ? this.getCatalogListCache(flags.includeUntrusted, flags.includeDismissed) : []
       const shouldShowLoading = !cachedCatalogs.length && !this.catalogSeries.length
       if (cachedCatalogs.length) this.applyCatalogSeries(cachedCatalogs)
       this.catalogLoading = shouldShowLoading
       try {
         await this.fetchCatalogList({
-          includeUntrusted: this.includeUntrustedCatalogs,
-          includeDismissed: this.includeDismissedCatalogs,
+          includeUntrusted: flags.includeUntrusted,
+          includeDismissed: flags.includeDismissed,
           updateView: true
         })
       } catch (error) {
@@ -1980,10 +2014,10 @@ export default {
         this.catalogManualLookupResults = response.results || []
         this.catalogManualLookupCatalogId = this.selectedCatalogDetail.catalog.id
         if (!this.catalogManualLookupResults.length) {
-          this.catalogManualLookupError = 'No FictionDB series candidates matched this local series context'
+          this.catalogManualLookupError = 'No source-series candidates matched this local series context'
         }
       } catch (error) {
-        const message = error?.response?.data || 'Failed to look up FictionDB series candidates'
+        const message = error?.response?.data || 'Failed to look up source-series candidates'
         this.catalogManualLookupError = message
         this.$toast.error(message)
       } finally {
@@ -1992,7 +2026,7 @@ export default {
     },
     async saveLocalCatalogMatch(result) {
       if (!this.selectedCatalogDetail?.catalog?.id) return
-      this.catalogManualLookupSavingKey = result.sourceUrl
+      this.catalogManualLookupSavingKey = this.getManualLookupResultKey(result)
       try {
         const detail = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/local-match`,

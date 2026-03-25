@@ -950,10 +950,58 @@ describe('SeriesReviewManager', () => {
     ])
 
     const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
-    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Alpha Saga:trusted'])
+    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Alpha Saga:locally_linked'])
 
     const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
     expect(detail.localBooks.map((book) => book.title)).to.deep.equal(['Alpha Start', 'Alpha Return'])
+  })
+
+  it('resolves audible manual links into the locally linked category', async () => {
+    await createBookFixture({
+      title: 'Gamma Start',
+      currentSeries: [{ name: 'Gamma Saga', sequence: '1' }],
+      authors: ['Author G']
+    })
+
+    const localCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const localCatalog = localCatalogs.find((catalog) => catalog.seriesName === 'Gamma Saga')
+    await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, localCatalog.id, {
+      source: 'audible',
+      sourceSeriesName: 'The Gamma Saga',
+      sourceAuthor: 'Author G',
+      sourceUrl: 'https://www.audible.co.uk/pd/B0GAMMA001',
+      evidenceSnapshot: {
+        source: 'audible',
+        sourceSeriesName: 'The Gamma Saga',
+        sourceAuthor: 'Author G',
+        sourceUrl: 'https://www.audible.co.uk/pd/B0GAMMA001',
+        sourceLinkUrl: 'https://www.audible.co.uk/pd/B0GAMMA001',
+        sourceIdentifier: 'ASIN B0GAMMA001',
+        sourceAsin: 'B0GAMMA001',
+        sourceRegion: 'UK',
+        matchingBooks: [{ localTitle: 'Gamma Start', sourceTitle: 'Gamma Start', sourceSequence: '1' }]
+      }
+    })
+
+    await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Gamma Saga',
+        entries: [
+          {
+            title: 'Gamma Start',
+            authors: ['Author G'],
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: 'https://www.audible.co.uk/pd/B0GAMMA001' }]
+          }
+        ]
+      }
+    ])
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Gamma Saga:locally_linked'])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, catalogs[0].id)
+    expect(detail.localBooks.map((book) => book.title)).to.deep.equal(['Gamma Start'])
   })
 
   it('classifies source-only catalogs as potential series and hides them from the default trusted list', async () => {
