@@ -199,6 +199,14 @@ class SeriesReviewController {
         })
       }
 
+      await SeriesReviewManager.saveLocalSeriesMatchForLibrary(req.library.id, catalogId, {
+        source: selectedResult.source,
+        sourceSeriesName: selectedResult.sourceSeriesName,
+        sourceAuthor: selectedResult.sourceAuthor,
+        sourceSeriesUrl: selectedResult.sourceSeriesUrl || selectedResult.sourceUrl || '',
+        evidenceSnapshot: selectedResult.evidenceSnapshot || {}
+      })
+
       const matches = [
         {
           matchId: '',

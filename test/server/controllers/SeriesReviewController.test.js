@@ -364,6 +364,55 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ catalog: { id: 'local-series:alpha' } })).to.be.true
   })
 
+  it('refreshes a saved local link by persisting the repaired source-series url before import', async () => {
+    sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary').resolves({
+      catalog: {
+        id: 'local-series:android-x',
+        seriesName: 'Android X',
+        evidenceLinks: [{ source: 'audible' }]
+      },
+      localBooks: [{ libraryItemId: 'item-1', title: 'Android Deception', relPath: 'Books/Android Deception.m4b', authors: [{ name: 'Michael La Ronn' }], seriesName: 'Android X', sequence: '1' }]
+    })
+    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({
+      results: [
+        {
+          source: 'audible',
+          sourceSeriesName: 'Android X',
+          sourceAuthor: 'Michael La Ronn',
+          sourceUrl: 'https://www.audible.co.uk/pd/B012C5FZPU',
+          sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+          evidenceSnapshot: { sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }
+        }
+      ]
+    })
+    sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForLibrary').resolves({ catalog: { id: 'local-series:android-x' } })
+    sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1, queue_rows_updated: 1 } })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      body: { catalogId: 'local-series:android-x' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.refreshLocalCatalogMatches(req, res)
+
+    expect(SeriesReviewManager.saveLocalSeriesMatchForLibrary.calledOnceWithExactly('library-1', 'local-series:android-x', {
+      source: 'audible',
+      sourceSeriesName: 'Android X',
+      sourceAuthor: 'Michael La Ronn',
+      sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+      evidenceSnapshot: { sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }
+    })).to.be.true
+    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnce).to.be.true
+    expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1, queue_rows_updated: 1 } })).to.be.true
+  })
+
   it('imports selected saved local source-series links', async () => {
     sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
     sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1 } })
