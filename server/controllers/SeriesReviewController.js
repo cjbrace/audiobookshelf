@@ -76,6 +76,83 @@ class SeriesReviewController {
     res.json(detail)
   }
 
+  async lookupManualCatalogSources(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    try {
+      const context = await SeriesReviewManager.buildManualLookupContextForCatalog(req.library.id, req.params.catalogId)
+      if (!context) return res.sendStatus(404)
+      const response = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
+        local_series_name: context.localSeriesName,
+        local_decision_key: context.localDecisionKey,
+        local_books: context.localBooks
+      })
+      return res.json(response)
+    } catch (error) {
+      const statusCode = Number(error?.statusCode || 0)
+      if (statusCode >= 400) {
+        return res.status(statusCode).send(String(error?.message || 'Manual series lookup failed'))
+      }
+      return handleActionError(res, error)
+    }
+  }
+
+  async saveLocalCatalogMatch(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let detail
+    try {
+      detail = await SeriesReviewManager.saveLocalSeriesMatchForLibrary(req.library.id, req.params.catalogId, req.body)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
+  async removeLocalCatalogMatch(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let detail
+    try {
+      detail = await SeriesReviewManager.removeLocalSeriesMatchForLibrary(req.library.id, req.params.catalogId, req.params.matchId)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
+  async getLocalCatalogMatches(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const includeResolved = req.query.includeResolved === '1'
+    const matches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(req.library.id, { includeResolved })
+    res.json({ matches })
+  }
+
+  async importLocalCatalogMatches(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let matches
+    try {
+      matches = await SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary(req.library.id, req.body?.matches)
+      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      return res.json(result)
+    } catch (error) {
+      const statusCode = Number(error?.statusCode || 0)
+      if (statusCode >= 400) {
+        return res.status(statusCode).send(String(error?.message || 'Manual series import failed'))
+      }
+      return handleActionError(res, error)
+    }
+  }
+
   async importCatalog(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

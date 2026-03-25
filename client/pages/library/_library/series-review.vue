@@ -21,6 +21,15 @@
             Import Trusted Sources
           </ui-btn>
           <ui-btn
+            v-if="activeTab === 'catalog'"
+            color="bg-sky-500/80"
+            small
+            :loading="localCatalogMatchesLoading && localCatalogMatchesExpanded"
+            @click="toggleLocalCatalogMatchesPanel"
+          >
+            {{ localCatalogMatchesExpanded ? 'Hide Locally Matched' : 'Import Locally Matched' }}
+          </ui-btn>
+          <ui-btn
             color="bg-bg border border-white/20"
             small
             :loading="activeTab === 'queue' ? loading : activeTab === 'management' ? managementLoading : catalogLoading"
@@ -145,6 +154,113 @@
             <span v-if="selectedCatalogDetail">Slots: {{ selectedCatalogDetail.slots.length }}</span>
             <span v-if="selectedCatalogDetail">Missing: {{ selectedCatalogDetail.slots.filter((slot) => slot.status === 'missing').length }}</span>
             <span v-if="lastLoadedAt">Last loaded: {{ formatTime(lastLoadedAt) }}</span>
+          </div>
+        </div>
+
+        <div v-if="activeTab === 'catalog' && localCatalogMatchesExpanded" class="bg-black/20 rounded-lg p-3 border border-white/10 mb-4 space-y-3">
+          <div class="flex flex-wrap items-start gap-3">
+            <div class="grow min-w-[18rem]">
+              <p class="text-sm uppercase tracking-wide text-gray-400">Locally Matched Import</p>
+              <p class="text-base text-gray-100 mt-1">Import only the saved local-to-FictionDB series links. Untick individual local books before running the batch.</p>
+            </div>
+            <div class="text-sm text-gray-300">
+              Saved matches: {{ unresolvedLocalCatalogMatches.length }}
+            </div>
+          </div>
+
+          <div v-if="!unresolvedLocalCatalogMatches.length && !localCatalogMatchesLoading" class="rounded border border-white/10 bg-black/15 px-3 py-4 text-sm text-gray-400">
+            No saved local source links are waiting for import.
+          </div>
+
+          <div v-else class="space-y-3">
+            <div
+              v-for="match in unresolvedLocalCatalogMatches"
+              :key="'local-match-batch:' + match.id"
+              class="rounded border border-white/10 bg-black/15 p-3 space-y-3"
+            >
+              <div class="flex flex-wrap items-start gap-3">
+                <div class="grow min-w-[18rem]">
+                  <p class="text-sm text-gray-400">Local series</p>
+                  <p class="text-lg font-semibold text-white">{{ match.localSeriesName }}</p>
+                  <p class="text-sm text-gray-300 mt-1">{{ match.sourceSeriesName }}<span v-if="match.sourceAuthor"> - {{ match.sourceAuthor }}</span></p>
+                  <a :href="match.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
+                    {{ match.sourceUrl }}
+                  </a>
+                </div>
+                <div class="text-sm text-gray-300">
+                  Selected books: {{ (localCatalogMatchSelectionById[match.id] || []).length }} / {{ match.localBooks.length }}
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
+                <div class="rounded border border-white/10 bg-black/20 p-3">
+                  <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Local Books</h3>
+                  <div class="mt-2 space-y-2 text-sm text-gray-200">
+                    <label
+                      v-for="book in match.localBooks"
+                      :key="'local-match-book:' + match.id + ':' + book.libraryItemId"
+                      class="flex items-start gap-2 rounded border border-white/10 bg-black/15 px-3 py-2"
+                    >
+                      <input
+                        type="checkbox"
+                        class="mt-1 rounded border-white/20 bg-black/30"
+                        :checked="isLocalCatalogMatchBookSelected(match.id, book.libraryItemId)"
+                        @change="toggleLocalCatalogMatchBook(match.id, book.libraryItemId)"
+                      />
+                      <span class="min-w-0">
+                        <span class="block font-medium text-white">{{ book.title }}</span>
+                        <span v-if="formatCatalogLocalSeries(book)" class="block text-xs text-gray-400 mt-1">{{ formatCatalogLocalSeries(book) }}</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="rounded border border-white/10 bg-black/20 p-3">
+                  <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Saved Evidence</h3>
+                  <div v-if="match.matchingBooks.length" class="mt-2 space-y-2 text-sm text-gray-200">
+                    <div
+                      v-for="book in match.matchingBooks"
+                      :key="'local-match-evidence:' + match.id + ':' + book.localTitle + ':' + book.sourceTitle"
+                      class="rounded border border-white/10 bg-black/15 px-3 py-2"
+                    >
+                      <p class="font-medium text-white">{{ book.localTitle }}</p>
+                      <p class="text-gray-300 mt-1">{{ book.sourceTitle }}</p>
+                      <p class="text-xs text-gray-400 mt-1">
+                        <span v-if="book.sourceSequence">#{{ book.sourceSequence }}</span>
+                        <span v-if="book.sourceSequence && book.sourcePublishedDate"> | </span>
+                        <span v-if="book.sourcePublishedDate">{{ book.sourcePublishedDate }}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div v-else-if="match.sampleBooks.length" class="mt-2 space-y-2 text-sm text-gray-200">
+                    <div
+                      v-for="book in match.sampleBooks"
+                      :key="'local-match-sample:' + match.id + ':' + book.title"
+                      class="rounded border border-white/10 bg-black/15 px-3 py-2"
+                    >
+                      <p class="font-medium text-white">{{ book.title }}</p>
+                      <p v-if="book.authors && book.authors.length" class="text-xs text-gray-400 mt-1">{{ book.authors.join(', ') }}</p>
+                      <p class="text-xs text-gray-400 mt-1">
+                        <span v-if="book.sequence">#{{ book.sequence }}</span>
+                        <span v-if="book.sequence && book.publishedDate"> | </span>
+                        <span v-if="book.publishedDate">{{ book.publishedDate }}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <p v-else class="mt-2 text-sm text-gray-400">No saved book evidence snapshot is available.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex justify-end">
+              <ui-btn
+                color="bg-success/80"
+                :loading="localCatalogImporting"
+                @click="importSelectedLocalCatalogMatches"
+              >
+                Import Selected Local Matches
+              </ui-btn>
+            </div>
           </div>
         </div>
 
@@ -695,6 +811,135 @@
                     </ui-btn>
                   </div>
 
+                  <div v-if="canUseManualCatalogLookup" class="rounded border border-white/10 bg-black/20 p-3 space-y-3">
+                    <div class="flex flex-wrap items-start gap-3">
+                      <div class="grow min-w-[18rem]">
+                        <p class="text-sm uppercase tracking-wide text-gray-400">Manual FictionDB Lookup</p>
+                        <p class="text-sm text-gray-200 mt-1">Search using the local series title, local authors, and local book context, then save one FictionDB series link for later batch import.</p>
+                        <p v-if="catalogManualLookupError" class="text-sm text-amber-200 mt-2">{{ catalogManualLookupError }}</p>
+                      </div>
+                      <ui-btn
+                        color="bg-bg border border-white/20"
+                        :loading="catalogManualLookupLoading"
+                        @click="lookupManualCatalogSources"
+                      >
+                        Lookup FictionDB
+                      </ui-btn>
+                    </div>
+
+                    <div v-if="selectedCatalogLocalMatches.length" class="space-y-3">
+                      <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Saved Local Link</h3>
+                      <div
+                        v-for="match in selectedCatalogLocalMatches"
+                        :key="'selected-local-match:' + match.id"
+                        class="rounded border border-white/10 bg-black/15 p-3"
+                      >
+                        <div class="flex flex-wrap items-start gap-3">
+                          <div class="grow min-w-[18rem]">
+                            <p class="text-lg font-semibold text-white">{{ match.sourceSeriesName }}</p>
+                            <p v-if="match.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ match.sourceAuthor }}</p>
+                            <a :href="match.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
+                              {{ match.sourceUrl }}
+                            </a>
+                          </div>
+                          <ui-btn
+                            v-if="match.canRemove"
+                            small
+                            color="bg-bg border border-white/20"
+                            :loading="catalogLocalMatchRemovingKey === match.id"
+                            @click="removeLocalCatalogMatch(match)"
+                          >
+                            Remove link
+                          </ui-btn>
+                        </div>
+                        <div v-if="match.matchingBooks.length" class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2 text-sm text-gray-200">
+                          <div
+                            v-for="book in match.matchingBooks"
+                            :key="'saved-local-evidence:' + match.id + ':' + book.localTitle + ':' + book.sourceTitle"
+                            class="rounded border border-white/10 bg-black/20 px-3 py-2"
+                          >
+                            <p class="font-medium text-white">{{ book.localTitle }}</p>
+                            <p class="text-gray-300 mt-1">{{ book.sourceTitle }}</p>
+                            <p class="text-xs text-gray-400 mt-1">
+                              <span v-if="book.sourceSequence">#{{ book.sourceSequence }}</span>
+                              <span v-if="book.sourceSequence && book.sourcePublishedDate"> | </span>
+                              <span v-if="book.sourcePublishedDate">{{ book.sourcePublishedDate }}</span>
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="catalogManualLookupResults.length" class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                      <div
+                        v-for="result in catalogManualLookupResults"
+                        :key="'manual-lookup-result:' + result.sourceUrl"
+                        class="rounded border border-white/10 bg-black/15 p-3 space-y-3"
+                      >
+                        <div class="flex flex-wrap items-start gap-3">
+                          <div class="grow min-w-[18rem]">
+                            <p class="text-lg font-semibold text-white">{{ result.sourceSeriesName }}</p>
+                            <p v-if="result.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ result.sourceAuthor }}</p>
+                            <a :href="result.sourceUrl" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
+                              {{ result.sourceUrl }}
+                            </a>
+                          </div>
+                          <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
+                            Score {{ result.score }}
+                          </span>
+                        </div>
+
+                        <div v-if="result.matchingBooks.length">
+                          <p class="text-sm font-semibold uppercase tracking-wide text-gray-300">Matching Books</p>
+                          <div class="mt-2 space-y-2 text-sm text-gray-200">
+                            <div
+                              v-for="book in result.matchingBooks"
+                              :key="'manual-match-book:' + result.sourceUrl + ':' + book.localTitle + ':' + book.sourceTitle"
+                              class="rounded border border-white/10 bg-black/20 px-3 py-2"
+                            >
+                              <p class="font-medium text-white">{{ book.localTitle }}</p>
+                              <p class="text-gray-300 mt-1">{{ book.sourceTitle }}</p>
+                              <p class="text-xs text-gray-400 mt-1">
+                                <span v-if="book.sourceSequence">#{{ book.sourceSequence }}</span>
+                                <span v-if="book.sourceSequence && book.sourcePublishedDate"> | </span>
+                                <span v-if="book.sourcePublishedDate">{{ book.sourcePublishedDate }}</span>
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div v-if="result.sampleBooks.length">
+                          <p class="text-sm font-semibold uppercase tracking-wide text-gray-300">Sample Source Books</p>
+                          <div class="mt-2 space-y-2 text-sm text-gray-200">
+                            <div
+                              v-for="book in result.sampleBooks"
+                              :key="'manual-sample-book:' + result.sourceUrl + ':' + book.title"
+                              class="rounded border border-white/10 bg-black/20 px-3 py-2"
+                            >
+                              <p class="font-medium text-white">{{ book.title }}</p>
+                              <p v-if="book.authors && book.authors.length" class="text-xs text-gray-400 mt-1">{{ book.authors.join(', ') }}</p>
+                              <p class="text-xs text-gray-400 mt-1">
+                                <span v-if="book.sequence">#{{ book.sequence }}</span>
+                                <span v-if="book.sequence && book.publishedDate"> | </span>
+                                <span v-if="book.publishedDate">{{ book.publishedDate }}</span>
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div class="flex justify-end">
+                          <ui-btn
+                            color="bg-success/80"
+                            :loading="catalogManualLookupSavingKey === result.sourceUrl"
+                            @click="saveLocalCatalogMatch(result)"
+                          >
+                            Save Link
+                          </ui-btn>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div class="rounded border border-white/10 bg-black/20 p-3">
                     <p class="text-sm text-gray-200">Series name controls stay aligned with Review Queue alias/rename and Series Management merge behavior.</p>
                     <p v-if="selectedCatalogDetail.catalog.displayBucket === 'local_only'" class="mt-1 text-xs text-gray-400">
@@ -1012,6 +1257,17 @@ export default {
       catalogCandidateFilterBySlot: {},
       catalogListCache: {},
       catalogDetailCache: {},
+      localCatalogMatches: [],
+      localCatalogMatchesLoading: false,
+      localCatalogMatchesExpanded: false,
+      localCatalogMatchSelectionById: {},
+      localCatalogImporting: false,
+      catalogManualLookupResults: [],
+      catalogManualLookupCatalogId: '',
+      catalogManualLookupLoading: false,
+      catalogManualLookupSavingKey: '',
+      catalogManualLookupError: '',
+      catalogLocalMatchRemovingKey: '',
       sourceImportStatus: null,
       sourceImportError: '',
       sourceImportStarting: false,
@@ -1137,6 +1393,18 @@ export default {
       if (!this.selectedCatalogDetail?.catalog) return ''
       const authorLine = this.selectedCatalogAuthorLine
       return authorLine ? `${this.selectedCatalogDetail.catalog.seriesName} - ${authorLine}` : `${this.selectedCatalogDetail.catalog.seriesName}`
+    },
+    canUseManualCatalogLookup() {
+      return this.selectedCatalogDetail?.catalog?.displayBucket === 'local_only' && !!this.selectedCatalogDetail?.localBooks?.length
+    },
+    selectedCatalogLocalMatches() {
+      return this.selectedCatalogDetail?.catalog?.localSeriesMatches || []
+    },
+    unresolvedLocalCatalogMatches() {
+      return (this.localCatalogMatches || []).filter((match) => !match.resolvedCatalogId)
+    },
+    selectedLocalCatalogMatchCount() {
+      return this.unresolvedLocalCatalogMatches.filter((match) => (this.localCatalogMatchSelectionById[match.id] || []).length).length
     }
   },
   mounted() {
@@ -1155,6 +1423,7 @@ export default {
         await this.loadManagementData()
       } else {
         await this.loadCatalogs()
+        if (this.localCatalogMatchesExpanded) await this.loadLocalCatalogMatches()
       }
     },
     async switchTab(tab) {
@@ -1162,6 +1431,7 @@ export default {
       this.activeTab = tab
       this.errorMessage = ''
       await this.refreshActiveTab()
+      if (tab === 'catalog') await this.loadLocalCatalogMatches({ silent: true })
     },
     formatTime(value) {
       if (!value) return '-'
@@ -1626,15 +1896,64 @@ export default {
         this.catalogLoading = false
       }
     },
+    initializeLocalCatalogMatchSelections(matches) {
+      const nextSelections = { ...this.localCatalogMatchSelectionById }
+      ;(matches || []).forEach((match) => {
+        if (match.resolvedCatalogId) return
+        const existing = nextSelections[match.id]
+        const availableIds = (match.localBooks || []).map((book) => book.libraryItemId)
+        if (existing && existing.length) {
+          nextSelections[match.id] = existing.filter((id) => availableIds.includes(id))
+          return
+        }
+        nextSelections[match.id] = [...availableIds]
+      })
+      this.localCatalogMatchSelectionById = nextSelections
+    },
+    async loadLocalCatalogMatches({ silent = false } = {}) {
+      this.localCatalogMatchesLoading = true
+      try {
+        const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/local-matches`)
+        this.localCatalogMatches = response.matches || []
+        this.initializeLocalCatalogMatchSelections(this.localCatalogMatches)
+      } catch (error) {
+        if (!silent) this.$toast.error(error?.response?.data || 'Failed to load locally matched series')
+      } finally {
+        this.localCatalogMatchesLoading = false
+      }
+    },
+    async toggleLocalCatalogMatchesPanel() {
+      this.localCatalogMatchesExpanded = !this.localCatalogMatchesExpanded
+      if (this.localCatalogMatchesExpanded) {
+        await this.loadLocalCatalogMatches()
+      }
+    },
+    isLocalCatalogMatchBookSelected(matchId, libraryItemId) {
+      return (this.localCatalogMatchSelectionById[matchId] || []).includes(libraryItemId)
+    },
+    toggleLocalCatalogMatchBook(matchId, libraryItemId) {
+      const next = new Set(this.localCatalogMatchSelectionById[matchId] || [])
+      if (next.has(libraryItemId)) next.delete(libraryItemId)
+      else next.add(libraryItemId)
+      this.$set(this.localCatalogMatchSelectionById, matchId, [...next])
+    },
     async selectCatalog(catalogId, { preferCache = false, skipLoading = false, updateView = true } = {}) {
       if (!catalogId) {
         this.selectedCatalogId = ''
         this.selectedCatalogDetail = null
+        this.catalogManualLookupResults = []
+        this.catalogManualLookupCatalogId = ''
+        this.catalogManualLookupError = ''
         return
       }
       this.selectedCatalogId = catalogId
       this.catalogCandidateResultsBySlot = {}
       this.catalogCandidateFilterBySlot = {}
+      if (this.catalogManualLookupCatalogId !== catalogId) {
+        this.catalogManualLookupResults = []
+        this.catalogManualLookupCatalogId = ''
+        this.catalogManualLookupError = ''
+      }
       if (preferCache && this.catalogDetailCache[catalogId]) {
         if (updateView) this.selectedCatalogDetail = this.catalogDetailCache[catalogId]
       }
@@ -1648,6 +1967,99 @@ export default {
         this.errorMessage = error?.response?.data || 'Failed to load series detail'
       } finally {
         if (!skipLoading || !this.catalogDetailCache[catalogId]) this.catalogLoading = false
+      }
+    },
+    async lookupManualCatalogSources() {
+      if (!this.selectedCatalogDetail?.catalog?.id) return
+      this.catalogManualLookupLoading = true
+      this.catalogManualLookupError = ''
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/manual-lookup`
+        )
+        this.catalogManualLookupResults = response.results || []
+        this.catalogManualLookupCatalogId = this.selectedCatalogDetail.catalog.id
+        if (!this.catalogManualLookupResults.length) {
+          this.catalogManualLookupError = 'No FictionDB series candidates matched this local series context'
+        }
+      } catch (error) {
+        const message = error?.response?.data || 'Failed to look up FictionDB series candidates'
+        this.catalogManualLookupError = message
+        this.$toast.error(message)
+      } finally {
+        this.catalogManualLookupLoading = false
+      }
+    },
+    async saveLocalCatalogMatch(result) {
+      if (!this.selectedCatalogDetail?.catalog?.id) return
+      this.catalogManualLookupSavingKey = result.sourceUrl
+      try {
+        const detail = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/local-match`,
+          {
+            source: result.source,
+            sourceSeriesName: result.sourceSeriesName,
+            sourceAuthor: result.sourceAuthor,
+            sourceUrl: result.sourceUrl,
+            evidenceSnapshot: result.evidenceSnapshot || {}
+          }
+        )
+        this.selectedCatalogDetail = detail
+        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.persistCatalogCaches()
+        await this.loadLocalCatalogMatches({ silent: true })
+        this.$toast.success('Saved local source link')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to save local source link')
+      } finally {
+        this.catalogManualLookupSavingKey = ''
+      }
+    },
+    async removeLocalCatalogMatch(match) {
+      if (!this.selectedCatalogDetail?.catalog?.id) return
+      this.catalogLocalMatchRemovingKey = match.id
+      try {
+        const detail = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/local-match/${match.id}/remove`
+        )
+        this.selectedCatalogDetail = detail
+        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.persistCatalogCaches()
+        await this.loadLocalCatalogMatches({ silent: true })
+        this.$toast.success('Removed local source link')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to remove local source link')
+      } finally {
+        this.catalogLocalMatchRemovingKey = ''
+      }
+    },
+    async importSelectedLocalCatalogMatches() {
+      const matches = this.unresolvedLocalCatalogMatches
+        .map((match) => ({
+          matchId: match.id,
+          includedLibraryItemIds: this.localCatalogMatchSelectionById[match.id] || []
+        }))
+        .filter((match) => match.includedLibraryItemIds.length)
+      if (!matches.length) {
+        this.$toast.error('Select at least one local book to import')
+        return
+      }
+      this.localCatalogImporting = true
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/local-matches/import`, {
+          matches
+        })
+        const summary = response.summary || {}
+        this.$toast.success(
+          `Imported ${summary.selected_matches || matches.length} match${(summary.selected_matches || matches.length) === 1 ? '' : 'es'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
+        )
+        await this.loadCatalogs({ preferCache: false })
+        await this.loadQueue()
+        await this.loadLocalCatalogMatches({ silent: true })
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to import locally matched series')
+      } finally {
+        this.localCatalogImporting = false
       }
     },
     async chooseCatalogSlot(choice, row) {

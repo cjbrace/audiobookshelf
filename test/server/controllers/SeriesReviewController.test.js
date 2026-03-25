@@ -287,6 +287,106 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ catalog: { id: 'catalog-1' }, slots: [] })).to.be.true
   })
 
+  it('looks up manual source-series candidates for a local catalog', async () => {
+    sinon.stub(SeriesReviewManager, 'buildManualLookupContextForCatalog').resolves({
+      localSeriesName: 'Alpha Saga',
+      localDecisionKey: 'alpha saga',
+      localBooks: [{ libraryItemId: 'item-1', title: 'Alpha Start' }]
+    })
+    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({ results: [{ sourceSeriesName: 'Alpha Saga' }] })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'local-series:alpha' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.lookupManualCatalogSources(req, res)
+
+    expect(SeriesReviewManager.buildManualLookupContextForCatalog.calledOnceWithExactly('library-1', 'local-series:alpha')).to.be.true
+    expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
+      local_series_name: 'Alpha Saga',
+      local_decision_key: 'alpha saga',
+      local_books: [{ libraryItemId: 'item-1', title: 'Alpha Start' }]
+    })).to.be.true
+    expect(res.json.calledOnceWithExactly({ results: [{ sourceSeriesName: 'Alpha Saga' }] })).to.be.true
+  })
+
+  it('lists saved local catalog matches for batch import', async () => {
+    sinon.stub(SeriesReviewManager, 'getLocalSeriesMatchesForLibrary').resolves([{ id: 'match-1' }])
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      query: {}
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.getLocalCatalogMatches(req, res)
+
+    expect(SeriesReviewManager.getLocalSeriesMatchesForLibrary.calledOnceWithExactly('library-1', { includeResolved: false })).to.be.true
+    expect(res.json.calledOnceWithExactly({ matches: [{ id: 'match-1' }] })).to.be.true
+  })
+
+  it('saves a selected local source-series link', async () => {
+    sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForLibrary').resolves({ catalog: { id: 'local-series:alpha' } })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'local-series:alpha' },
+      body: { sourceSeriesName: 'Alpha Saga', sourceUrl: 'https://www.fictiondb.com/series/alpha~123.htm' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.saveLocalCatalogMatch(req, res)
+
+    expect(SeriesReviewManager.saveLocalSeriesMatchForLibrary.calledOnceWithExactly('library-1', 'local-series:alpha', {
+      sourceSeriesName: 'Alpha Saga',
+      sourceUrl: 'https://www.fictiondb.com/series/alpha~123.htm'
+    })).to.be.true
+    expect(res.json.calledOnceWithExactly({ catalog: { id: 'local-series:alpha' } })).to.be.true
+  })
+
+  it('imports selected saved local source-series links', async () => {
+    sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
+    sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1 } })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      body: { matches: [{ matchId: 'match-1', includedLibraryItemIds: ['item-1'] }] }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.importLocalCatalogMatches(req, res)
+
+    expect(SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary.calledOnceWithExactly('library-1', [{ matchId: 'match-1', includedLibraryItemIds: ['item-1'] }])).to.be.true
+    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }])).to.be.true
+    expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1 } })).to.be.true
+  })
+
   it('imports catalog rows for the library', async () => {
     sinon.stub(SeriesReviewManager, 'importCatalogForLibrary').resolves({ importedCount: 1 })
 

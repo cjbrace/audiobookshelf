@@ -46,6 +46,7 @@ class SeriesImportBridgeManager {
     const candidateBaseUrls = this.getCandidateBaseUrls()
     const orderedBaseUrls = this.shouldUseCachedBaseUrl() ? [this.cachedBaseUrl, ...candidateBaseUrls.filter((url) => url !== this.cachedBaseUrl)] : candidateBaseUrls
     let lastNetworkError = null
+    const timeout = Number(payload.timeoutMs || 10000)
 
     for (const baseUrl of orderedBaseUrls) {
       try {
@@ -54,7 +55,7 @@ class SeriesImportBridgeManager {
           url: this.buildUrl(baseUrl, path),
           params: payload.params || undefined,
           data: payload.data || undefined,
-          timeout: 10000,
+          timeout,
           validateStatus: () => true
         })
         if (response.status === 404) {
@@ -96,6 +97,26 @@ class SeriesImportBridgeManager {
       data: {
         library_id: libraryId
       }
+    })
+  }
+
+  async lookupManualSeries(libraryId, payload) {
+    return this.request('post', '/api/series-import/manual-lookup', {
+      data: {
+        library_id: libraryId,
+        ...payload
+      },
+      timeoutMs: 60000
+    })
+  }
+
+  async importManualSeriesMatches(libraryId, matches) {
+    return this.request('post', '/api/series-import/manual-import', {
+      data: {
+        library_id: libraryId,
+        matches
+      },
+      timeoutMs: 120000
     })
   }
 }
