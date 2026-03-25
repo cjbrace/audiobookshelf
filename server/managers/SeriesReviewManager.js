@@ -1343,7 +1343,9 @@ class SeriesReviewManager {
       })
     }
 
-    return this.getCatalogDetailForLibrary(libraryId, catalogId)
+    return this.getCatalogDetailForLibrary(libraryId, catalogId, {
+      skipResolvedLookup: true
+    })
   }
 
   async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId) {

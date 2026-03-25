@@ -2041,13 +2041,10 @@ export default {
             evidenceSnapshot: result.evidenceSnapshot || {}
           }
         )
-        this.invalidateSeriesReviewCaches()
-        await this.loadCatalogs({ preferCache: false })
         this.selectedCatalogDetail = detail
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.persistCatalogCaches()
-        await this.loadLocalCatalogMatches({ silent: true })
         this.$toast.success('Saved local source link')
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to save local source link')
