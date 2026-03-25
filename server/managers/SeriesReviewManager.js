@@ -1215,9 +1215,44 @@ class SeriesReviewManager {
     })
   }
 
+  buildManualLinkedSeriesRowsBySourceUrl(localSeriesGroups, matchRows = []) {
+    const linkedSeriesRowsBySourceUrl = new Map()
+
+    ;(Array.isArray(matchRows) ? matchRows : []).forEach((matchRow) => {
+      const sourceSeriesUrl = String(matchRow?.sourceSeriesUrl || '').trim()
+      if (!sourceSeriesUrl) return
+      const group = localSeriesGroups.get(matchRow.localDecisionKey)
+      if (!group?.seriesRows?.length) return
+      if (!linkedSeriesRowsBySourceUrl.has(sourceSeriesUrl)) linkedSeriesRowsBySourceUrl.set(sourceSeriesUrl, [])
+
+      const bucket = linkedSeriesRowsBySourceUrl.get(sourceSeriesUrl)
+      const seen = new Set(bucket.map((seriesRow) => seriesRow.id))
+      group.seriesRows.forEach((seriesRow) => {
+        if (!seriesRow?.id || seen.has(seriesRow.id)) return
+        seen.add(seriesRow.id)
+        bucket.push(seriesRow)
+      })
+    })
+
+    return linkedSeriesRowsBySourceUrl
+  }
+
   async getManualLinkedSeriesRowsForCatalog(libraryId, catalog, options = {}) {
     const sourceSeriesUrls = this.getCatalogSourceUrls(catalog?.entries || [])
     if (!sourceSeriesUrls.length) return []
+
+    if (options?.manualLinkedSeriesRowsBySourceUrl instanceof Map) {
+      const linkedSeriesRows = []
+      const seen = new Set()
+      sourceSeriesUrls.forEach((sourceSeriesUrl) => {
+        ;(options.manualLinkedSeriesRowsBySourceUrl.get(sourceSeriesUrl) || []).forEach((seriesRow) => {
+          if (!seriesRow?.id || seen.has(seriesRow.id)) return
+          seen.add(seriesRow.id)
+          linkedSeriesRows.push(seriesRow)
+        })
+      })
+      return linkedSeriesRows
+    }
 
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
@@ -1408,11 +1443,9 @@ class SeriesReviewManager {
       [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
     )
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
-    const resolvedLocalDecisionKeys = new Set(
-      (await this.getLocalSeriesMatchRowsForLibrary(libraryId))
-        .filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl))
-        .map((matchRow) => matchRow.localDecisionKey)
-    )
+    const localMatchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
+    const resolvedLocalDecisionKeys = new Set(localMatchRows.filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl)).map((matchRow) => matchRow.localDecisionKey))
+    const manualLinkedSeriesRowsBySourceUrl = this.buildManualLinkedSeriesRowsBySourceUrl(localSeriesGroups, localMatchRows)
 
     const detailSummaries = []
     const catalogDecisionKeys = new Set(
@@ -1422,11 +1455,13 @@ class SeriesReviewManager {
     )
     for (const catalog of catalogs) {
       const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id, {
+        catalogRow: catalog,
         resolver,
         localSeriesGroups,
         localBooksCache,
         expandedSeriesCache,
-        preloadedSeriesBooksBySeriesId
+        preloadedSeriesBooksBySeriesId,
+        manualLinkedSeriesRowsBySourceUrl
       })
       if (!detail) continue
       const displayBucket = detail.catalog.displayBucket
@@ -1450,7 +1485,8 @@ class SeriesReviewManager {
         skipResolvedLookup: true,
         localBooksCache,
         expandedSeriesCache,
-        preloadedSeriesBooksBySeriesId
+        preloadedSeriesBooksBySeriesId,
+        manualLinkedSeriesRowsBySourceUrl
       })
       if (!detail?.localBooks?.length) continue
       detailSummaries.push({
@@ -1838,12 +1874,15 @@ class SeriesReviewManager {
     }
 
     const resolver = options?.resolver || null
-    const catalog = await Database.seriesReviewCatalogModel.findOne({
-      where: {
-        id: catalogId,
-        libraryId
-      }
-    })
+    const catalog =
+      options?.catalogRow?.id === catalogId && options?.catalogRow?.libraryId === libraryId
+        ? options.catalogRow
+        : await Database.seriesReviewCatalogModel.findOne({
+            where: {
+              id: catalogId,
+              libraryId
+            }
+          })
     if (!catalog) return null
 
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver || undefined))
