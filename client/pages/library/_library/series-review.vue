@@ -27,7 +27,7 @@
             :loading="localCatalogMatchesLoading && localCatalogMatchesExpanded"
             @click="toggleLocalCatalogMatchesPanel"
           >
-            {{ localCatalogMatchesExpanded ? 'Hide Locally Matched' : 'Import Locally Matched' }}
+            {{ localCatalogMatchesExpanded ? 'Hide Lookup Links' : 'Import Lookup Links' }}
           </ui-btn>
           <ui-btn
             v-if="activeTab === 'catalog'"
@@ -169,8 +169,8 @@
         <div v-if="activeTab === 'catalog' && localCatalogMatchesExpanded" class="bg-black/20 rounded-lg p-3 border border-white/10 mb-4 space-y-3">
           <div class="flex flex-wrap items-start gap-3">
             <div class="grow min-w-[18rem]">
-              <p class="text-sm uppercase tracking-wide text-gray-400">Locally Matched Import</p>
-              <p class="text-base text-gray-100 mt-1">Import only the saved local source links. Untick individual local books before running the batch.</p>
+              <p class="text-sm uppercase tracking-wide text-gray-400">Lookup Link Import</p>
+              <p class="text-base text-gray-100 mt-1">Import only the saved lookup links. Untick individual books before running the batch.</p>
             </div>
             <div class="text-sm text-gray-300">
               Saved matches: {{ unresolvedLocalCatalogMatches.length }}
@@ -178,7 +178,7 @@
           </div>
 
           <div v-if="!unresolvedLocalCatalogMatches.length && !localCatalogMatchesLoading" class="rounded border border-white/10 bg-black/15 px-3 py-4 text-sm text-gray-400">
-            No saved local source links are waiting for import.
+            No saved lookup links are waiting for import.
           </div>
 
           <div v-else class="space-y-3">
@@ -189,7 +189,7 @@
             >
               <div class="flex flex-wrap items-start gap-3">
                 <div class="grow min-w-[18rem]">
-                  <p class="text-sm text-gray-400">Local series</p>
+                  <p class="text-sm text-gray-400">Active series</p>
                   <p class="text-lg font-semibold text-white">{{ match.localSeriesName }}</p>
                   <div class="mt-2 flex flex-wrap items-center gap-2">
                     <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
@@ -826,7 +826,7 @@
                     <div class="flex flex-wrap items-start gap-3">
                       <div class="grow min-w-[18rem]">
                         <p class="text-sm uppercase tracking-wide text-gray-400">Manual Source Lookup</p>
-                        <p class="text-sm text-gray-200 mt-1">Search using the local series title, local authors, and local book context, then save one source link for later batch import. Results are ordered FictionDB, Audible, then Wikidata.</p>
+                        <p class="text-sm text-gray-200 mt-1">Search using the active series title, authors, and book context, then save source links for later review-queue import. Results are ordered FictionDB, Audible, then Wikidata.</p>
                         <p v-if="catalogManualLookupError" class="text-sm text-amber-200 mt-2">{{ catalogManualLookupError }}</p>
                       </div>
                       <ui-btn
@@ -839,7 +839,7 @@
                     </div>
 
                     <div v-if="selectedCatalogLocalMatches.length" class="space-y-3">
-                      <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Saved Local Link</h3>
+                      <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Saved Lookup Links</h3>
                       <div
                         v-for="match in selectedCatalogLocalMatches"
                         :key="'selected-local-match:' + match.id"
@@ -1432,7 +1432,7 @@ export default {
       return authorLine ? `${this.selectedCatalogDetail.catalog.seriesName} - ${authorLine}` : `${this.selectedCatalogDetail.catalog.seriesName}`
     },
     canUseManualCatalogLookup() {
-      return this.selectedCatalogDetail?.catalog?.displayBucket === 'local_only' && !!this.selectedCatalogDetail?.localBooks?.length
+      return this.selectedCatalogDetail?.catalog?.displayBucket !== 'dismissed' && !!this.selectedCatalogDetail?.localBooks?.length
     },
     selectedCatalogLocalMatches() {
       return this.selectedCatalogDetail?.catalog?.localSeriesMatches || []
