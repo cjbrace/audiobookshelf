@@ -965,6 +965,41 @@ describe('SeriesReviewManager', () => {
     expect(batchMatches.map((match) => match.source).sort()).to.deep.equal(['audible', 'fictiondb'])
   })
 
+  it('backfills legacy saved local links into the persistent source-link table on first series-review access', async () => {
+    await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+
+    await Database.seriesReviewLocalSeriesMatchModel.create({
+      libraryId: library.id,
+      localDecisionKey: 'alpha saga',
+      localSeriesName: 'Alpha Saga',
+      source: 'fictiondb',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }],
+        sampleBooks: [{ title: 'Alpha Start', sequence: '1' }]
+      }
+    })
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs.find((catalog) => catalog.seriesName === 'Alpha Saga')).to.exist
+
+    const backfilledRows = await Database.seriesReviewSeriesSourceLinkModel.findAll({
+      where: { libraryId: library.id }
+    })
+    expect(backfilledRows).to.have.length(1)
+    expect(backfilledRows[0].sourceSeriesUrl).to.equal('https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm')
+    expect(backfilledRows[0].coverageStatus).to.equal('linked')
+  })
+
   it('hides resolved local-only series and applies saved local links to imported catalog coverage', async () => {
     await createBookFixture({
       title: 'Alpha Start',

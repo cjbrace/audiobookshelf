@@ -8,7 +8,17 @@ class SeriesReviewManager {
     return '-series-edit'
   }
 
+  resetSeriesReviewSchemaCacheIfNeeded() {
+    if (this.seriesReviewSchemaSequelize === Database.sequelize) return
+    this.seriesReviewSchemaSequelize = Database.sequelize
+    this.seriesReviewCatalogSchemaReady = false
+    this.seriesReviewCatalogSchemaPromise = null
+    this.seriesReviewSeriesSourceLinkSchemaReady = false
+    this.seriesReviewSeriesSourceLinkSchemaPromise = null
+  }
+
   async ensureSeriesReviewCatalogSchema() {
+    this.resetSeriesReviewSchemaCacheIfNeeded()
     if (this.seriesReviewCatalogSchemaReady) return
     if (!this.seriesReviewCatalogSchemaPromise) {
       this.seriesReviewCatalogSchemaPromise = this.ensureSeriesReviewCatalogSchemaInner()
@@ -44,6 +54,7 @@ class SeriesReviewManager {
     }
 
     await this.ensureSeriesReviewLocalSeriesMatchSchemaInner()
+    await this.ensureSeriesReviewSeriesSourceLinkSchemaInner()
   }
 
   async ensureSeriesReviewLocalSeriesMatchSchemaInner() {
@@ -66,6 +77,72 @@ class SeriesReviewManager {
       unique: true,
       name: desiredIndexName
     })
+  }
+
+  async ensureSeriesReviewSeriesSourceLinkSchemaInner() {
+    this.resetSeriesReviewSchemaCacheIfNeeded()
+    if (this.seriesReviewSeriesSourceLinkSchemaReady) return
+    if (!this.seriesReviewSeriesSourceLinkSchemaPromise) {
+      this.seriesReviewSeriesSourceLinkSchemaPromise = this.ensureSeriesReviewSeriesSourceLinkSchemaInnerImpl()
+        .then(() => {
+          this.seriesReviewSeriesSourceLinkSchemaReady = true
+        })
+        .finally(() => {
+          this.seriesReviewSeriesSourceLinkSchemaPromise = null
+        })
+    }
+    await this.seriesReviewSeriesSourceLinkSchemaPromise
+  }
+
+  async ensureSeriesReviewSeriesSourceLinkSchemaInnerImpl() {
+    const queryInterface = Database.sequelize.getQueryInterface()
+    const tableName = 'seriesReviewSeriesSourceLinks'
+    let tableDescription = null
+    try {
+      tableDescription = await queryInterface.describeTable(tableName)
+    } catch {
+      return
+    }
+    if (!tableDescription) return
+
+    const existingCount = await Database.seriesReviewSeriesSourceLinkModel.count()
+    const legacyRows = await Database.seriesReviewLocalSeriesMatchModel.findAll({
+      order: [['updatedAt', 'DESC']],
+      raw: true
+    })
+    if (!legacyRows.length) return
+    if (existingCount >= legacyRows.length) return
+
+    const now = new Date().toISOString()
+    for (const row of legacyRows) {
+      const evidenceSnapshot = this.normalizeEvidenceSnapshot(row.evidenceSnapshot)
+      const linkedBookCount = this.getSeriesSourceLinkBookCount(evidenceSnapshot)
+      const coverageStatus = linkedBookCount > 0 ? 'linked' : 'partial'
+      await Database.sequelize.query(
+        `INSERT OR IGNORE INTO seriesReviewSeriesSourceLinks
+          (id, libraryId, localDecisionKey, localSeriesName, source, sourceSeriesName, sourceAuthor, sourceSeriesUrl, coverageStatus, linkedBookCount, totalBookCount, evidenceSnapshot, isActive, unlinkedAt, unlinkedByUserId, createdAt, updatedAt)
+         VALUES
+          (:id, :libraryId, :localDecisionKey, :localSeriesName, :source, :sourceSeriesName, :sourceAuthor, :sourceSeriesUrl, :coverageStatus, :linkedBookCount, :totalBookCount, :evidenceSnapshot, 1, NULL, NULL, :createdAt, :updatedAt)`,
+        {
+          replacements: {
+            id: row.id,
+            libraryId: row.libraryId,
+            localDecisionKey: row.localDecisionKey,
+            localSeriesName: row.localSeriesName,
+            source: row.source,
+            sourceSeriesName: row.sourceSeriesName,
+            sourceAuthor: row.sourceAuthor,
+            sourceSeriesUrl: row.sourceSeriesUrl,
+            coverageStatus,
+            linkedBookCount,
+            totalBookCount: linkedBookCount,
+            evidenceSnapshot: JSON.stringify(evidenceSnapshot || {}),
+            createdAt: row.createdAt || now,
+            updatedAt: row.updatedAt || now
+          }
+        }
+      )
+    }
   }
 
   normalizeSeriesName(value) {
@@ -113,6 +190,23 @@ class SeriesReviewManager {
 
   normalizeDecisionKey(value) {
     return this.normalizeKeyPart(this.normalizeDecisionSeriesName(value))
+  }
+
+  normalizeEvidenceSnapshot(snapshot) {
+    if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) return snapshot
+    if (typeof snapshot !== 'string') return {}
+    try {
+      const parsed = JSON.parse(snapshot)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  getEffectiveEvidenceSnapshot(snapshot, fallbackSnapshot = null) {
+    const normalized = this.normalizeEvidenceSnapshot(snapshot)
+    if (Object.keys(normalized).length) return normalized
+    return this.normalizeEvidenceSnapshot(fallbackSnapshot)
   }
 
   getPreferredSeriesLabelScore(value) {
@@ -1198,7 +1292,8 @@ class SeriesReviewManager {
   }
 
   getSeriesSourceLinkBookCount(evidenceSnapshot) {
-    const matchingBooks = Array.isArray(evidenceSnapshot?.matchingBooks) ? evidenceSnapshot.matchingBooks : []
+    const snapshot = this.normalizeEvidenceSnapshot(evidenceSnapshot)
+    const matchingBooks = Array.isArray(snapshot?.matchingBooks) ? snapshot.matchingBooks : []
     const seen = new Set()
     let count = 0
     matchingBooks.forEach((book) => {
@@ -1212,7 +1307,7 @@ class SeriesReviewManager {
 
   getSeriesSourceLinkCoverageStatus(linkRow, localBooks = [], evidenceSnapshot = null) {
     if (!linkRow?.isActive) return 'previously_linked'
-    const snapshot = evidenceSnapshot && typeof evidenceSnapshot === 'object' && !Array.isArray(evidenceSnapshot) ? evidenceSnapshot : linkRow?.evidenceSnapshot || {}
+    const snapshot = this.getEffectiveEvidenceSnapshot(evidenceSnapshot, linkRow?.evidenceSnapshot)
     const snapshotLinkedBookCount = this.getSeriesSourceLinkBookCount(snapshot)
     const storedLinkedBookCount = Number.isFinite(Number(linkRow?.linkedBookCount)) ? Number(linkRow.linkedBookCount) : 0
     const linkedBookCount = snapshotLinkedBookCount || storedLinkedBookCount
@@ -1222,7 +1317,7 @@ class SeriesReviewManager {
   }
 
   buildSeriesSourceLinkPayload(linkRow, { localBooks = [], resolvedCatalogId = null, evidenceSnapshot = null } = {}) {
-    const snapshot = evidenceSnapshot && typeof evidenceSnapshot === 'object' && !Array.isArray(evidenceSnapshot) ? evidenceSnapshot : linkRow?.evidenceSnapshot || {}
+    const snapshot = this.getEffectiveEvidenceSnapshot(evidenceSnapshot, linkRow?.evidenceSnapshot)
     const linkedBookCount = this.getSeriesSourceLinkBookCount(snapshot) || Number(linkRow?.linkedBookCount || 0)
     const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number(linkRow?.totalBookCount || 0)
     const coverageStatus = this.getSeriesSourceLinkCoverageStatus(linkRow, localBooks, snapshot)
@@ -1257,7 +1352,7 @@ class SeriesReviewManager {
     }
   }
 
-  buildManualLookupResultWithSeriesSourceLinkState(result, { activeLink = null, inactiveLink = null } = {}) {
+  buildManualLookupResultWithSeriesSourceLinkState(result, { activeLink = null, inactiveLink = null, localBooks = [] } = {}) {
     const payload = {
       ...result,
       linkState: 'candidate',
@@ -1273,7 +1368,12 @@ class SeriesReviewManager {
     if (!sourceSeriesUrl) return payload
 
     if (activeLink) {
-      const coverageStatus = this.getSeriesSourceLinkCoverageStatus(activeLink, activeLink.localBooks || [], activeLink.evidenceSnapshot || result?.evidenceSnapshot || {})
+      const activeLinkedBookCount = Number(activeLink.linkedBookCount || 0)
+      const activeTotalBookCount = Number(activeLink.totalBookCount || (Array.isArray(localBooks) ? localBooks.length : 0) || 0)
+      const coverageStatus =
+        activeLinkedBookCount > 0 && activeTotalBookCount > 0 && activeLinkedBookCount >= activeTotalBookCount
+          ? 'linked'
+          : activeLink.coverageStatus || this.getSeriesSourceLinkCoverageStatus(activeLink, localBooks, activeLink.evidenceSnapshot || result?.evidenceSnapshot || {})
       payload.savedLinkId = activeLink.id
       payload.savedLinkCoverageStatus = coverageStatus
       payload.savedLinkIsActive = true
@@ -1445,7 +1545,7 @@ class SeriesReviewManager {
     }
 
     const sourceAuthor = this.normalizeSeriesName(payload?.sourceAuthor || payload?.evidenceSnapshot?.sourceAuthor || '')
-    const evidenceSnapshot = payload?.evidenceSnapshot && typeof payload.evidenceSnapshot === 'object' && !Array.isArray(payload.evidenceSnapshot) ? payload.evidenceSnapshot : {}
+    const evidenceSnapshot = this.normalizeEvidenceSnapshot(payload?.evidenceSnapshot)
     const context = catalogId ? await this.buildManualLookupContextForCatalog(libraryId, catalogId) : null
     const localBooks = Array.isArray(context?.localBooks) ? context.localBooks : []
     const linkedBookCount = this.getSeriesSourceLinkBookCount(evidenceSnapshot)

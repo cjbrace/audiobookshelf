@@ -112,7 +112,8 @@ class SeriesReviewController {
         const inactiveLink = activeLink ? null : inactiveLinksByUrl.get(sourceSeriesUrl) || null
         return SeriesReviewManager.buildManualLookupResultWithSeriesSourceLinkState(result, {
           activeLink,
-          inactiveLink
+          inactiveLink,
+          localBooks: context.localBooks
         })
       })
       return res.json({
