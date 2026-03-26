@@ -12,7 +12,8 @@ function parseArgs(argv) {
     libraryId: '',
     dryRun: false,
     limit: 0,
-    outputJson: ''
+    outputJson: '',
+    progressEvery: 10
   }
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -29,6 +30,8 @@ function parseArgs(argv) {
       out.limit = Number(argv[++index] || 0) || 0
     } else if (arg === '--output-json') {
       out.outputJson = argv[++index] || ''
+    } else if (arg === '--progress-every') {
+      out.progressEvery = Number(argv[++index] || 0) || 0
     } else {
       throw new Error(`Unknown argument: ${arg}`)
     }
@@ -252,6 +255,10 @@ async function main() {
       catalogs: []
     }
 
+    process.stderr.write(
+      `[library_start] ${library.name || library.id}: ${catalogs.length} catalogs, mode=${args.dryRun ? 'dry-run' : 'write'}\n`
+    )
+
     for (const catalog of catalogs) {
       const catalogSeriesName = SeriesReviewManager.normalizeSeriesName(catalog.seriesName || '')
       const decisionKey = resolver.getDecisionKey(catalogSeriesName)
@@ -343,8 +350,12 @@ async function main() {
         librarySummary.catalogsSeen += 1
         summary.totals.catalogsSeen += 1
         librarySummary.catalogs.push(catalogSummary)
-        if (librarySummary.catalogsSeen % 25 === 0) {
-          process.stderr.write(`[catalog] ${library.name || library.id}: ${librarySummary.catalogsSeen}/${catalogs.length}\n`)
+        if (args.progressEvery > 0 && librarySummary.catalogsSeen % args.progressEvery === 0) {
+          process.stderr.write(
+            `[catalog_progress] ${library.name || library.id}: ${librarySummary.catalogsSeen}/${catalogs.length} ` +
+              `seen=${librarySummary.sourceLinksSeen} saved=${librarySummary.sourceLinksSaved} ` +
+              `inactive=${librarySummary.sourceLinksSkippedInactive} unmatched=${librarySummary.sourceLinksSkippedUnmatched}\n`
+          )
         }
       } catch (error) {
         catalogSummary.error = String(error?.message || error)
@@ -354,6 +365,12 @@ async function main() {
         process.stderr.write(`[catalog_error] ${library.name || library.id} ${catalog.id}: ${catalogSummary.error}\n`)
       }
     }
+
+    process.stderr.write(
+      `[library_done] ${library.name || library.id}: ${librarySummary.catalogsSeen}/${catalogs.length} catalogs, ` +
+        `seen=${librarySummary.sourceLinksSeen} saved=${librarySummary.sourceLinksSaved} ` +
+        `inactive=${librarySummary.sourceLinksSkippedInactive} unmatched=${librarySummary.sourceLinksSkippedUnmatched}\n`
+    )
 
     summary.libraries.push(librarySummary)
   }
