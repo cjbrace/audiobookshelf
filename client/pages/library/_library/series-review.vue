@@ -439,6 +439,13 @@
                                 {{ contribution.seriesName }}
                                 <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
                               </span>
+                              <span
+                                v-if="getSeriesLinkStateLabel(match)"
+                                class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                                :class="getSeriesLinkStateClass(match)"
+                              >
+                                {{ getSeriesLinkStateLabel(match) }}
+                              </span>
                               <span v-if="contribution.confidence !== null && contribution.confidence !== undefined" class="text-gray-400">
                                 conf: {{ formatConfidence(contribution.confidence) }}
                               </span>
@@ -1548,6 +1555,7 @@ export default {
       return String(entry?.sequenceStatusNote || entry?.evidenceSnapshot?.sequenceStatusNote || '').trim()
     },
     getSeriesLinkStateLabel(entry) {
+      if (entry?.pendingImport || String(entry?.importStatus || '').toLowerCase() === 'pending') return 'Pending Import'
       if (entry?.linkStateLabel) return entry.linkStateLabel
       if (entry?.coverageStatus === 'linked') return 'Linked'
       if (entry?.coverageStatus === 'previously_linked') return 'Previously Linked'
@@ -1555,6 +1563,9 @@ export default {
       return ''
     },
     getSeriesLinkStateClass(entry) {
+      if (entry?.pendingImport || String(entry?.importStatus || '').toLowerCase() === 'pending') {
+        return 'border-sky-300/35 bg-sky-400/10 text-sky-50'
+      }
       const state = String(entry?.linkState || entry?.coverageStatus || '').toLowerCase()
       if (state === 'linked') return 'border-red-300/35 bg-red-500/10 text-red-100'
       if (state === 'partial') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
