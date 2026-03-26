@@ -688,6 +688,49 @@ class SeriesReviewManager {
     return [...urls]
   }
 
+  doesCatalogSourceMatchSeriesSourceUrl(source, sourceSeriesUrl, preferredSource = '') {
+    const targetUrl = this.normalizeExternalUrl(sourceSeriesUrl || '')
+    if (!targetUrl) return false
+
+    const sourceKey = String(source?.source || '').trim().toLowerCase()
+    if (preferredSource && sourceKey !== String(preferredSource || '').trim().toLowerCase()) return false
+
+    const evidenceUrl = this.normalizeExternalUrl(source?.evidenceUrl || '')
+    return !!evidenceUrl && evidenceUrl === targetUrl
+  }
+
+  stripCatalogSourceEvidence(entries = [], sourceSeriesUrl, options = {}) {
+    const preferredSource = String(options?.source || '').trim().toLowerCase()
+    let changed = false
+    let removedCount = 0
+
+    const nextEntries = (Array.isArray(entries) ? entries : []).map((entry) => {
+      const currentSources = Array.isArray(entry?.sources) ? entry.sources : []
+      if (!currentSources.length) return entry
+
+      const nextSources = currentSources.filter((source) => {
+        const shouldRemove = this.doesCatalogSourceMatchSeriesSourceUrl(source, sourceSeriesUrl, preferredSource)
+        if (shouldRemove) {
+          changed = true
+          removedCount += 1
+        }
+        return !shouldRemove
+      })
+
+      if (nextSources.length === currentSources.length) return entry
+      return {
+        ...entry,
+        sources: nextSources
+      }
+    })
+
+    return {
+      changed,
+      removedCount,
+      entries: changed ? nextEntries : Array.isArray(entries) ? entries : []
+    }
+  }
+
   buildCatalogViewPayload({
     id,
     seriesName,
@@ -1817,6 +1860,7 @@ class SeriesReviewManager {
     })
     if (!matchRow) throw new Error('Saved local source link was not found')
     await this.cleanupImportedArtifactsForSeriesSourceLink(libraryId, matchRow, userId)
+    await this.cleanupCatalogEvidenceForSeriesSourceLink(libraryId, matchRow)
     matchRow.isActive = false
     matchRow.importStatus = 'imported'
     matchRow.unlinkedAt = new Date()
@@ -2032,6 +2076,36 @@ class SeriesReviewManager {
 
     if (affectedLibraryItemIds.size) {
       await this.rebuildSuggestionsForLibraryItems(libraryId, [...affectedLibraryItemIds], resolver)
+    }
+  }
+
+  async cleanupCatalogEvidenceForSeriesSourceLink(libraryId, matchRow) {
+    const sourceSeriesUrl = String(matchRow?.sourceSeriesUrl || '').trim()
+    if (!sourceSeriesUrl) return { catalogsChanged: 0, sourcesRemoved: 0 }
+
+    const preferredSource = String(matchRow?.source || '').trim().toLowerCase()
+    const catalogs = await Database.seriesReviewCatalogModel.findAll({
+      where: {
+        libraryId
+      }
+    })
+
+    let catalogsChanged = 0
+    let sourcesRemoved = 0
+
+    for (const catalog of catalogs) {
+      const result = this.stripCatalogSourceEvidence(catalog.entries, sourceSeriesUrl, { source: preferredSource })
+      if (!result.changed) continue
+
+      catalog.entries = result.entries
+      await catalog.save()
+      catalogsChanged += 1
+      sourcesRemoved += result.removedCount
+    }
+
+    return {
+      catalogsChanged,
+      sourcesRemoved
     }
   }
 

@@ -1063,6 +1063,28 @@ describe('SeriesReviewManager', () => {
     linkRow.lastImportedAt = new Date()
     await linkRow.save()
 
+    const catalogImport = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Alpha Saga',
+        trustStatus: 'trusted',
+        entries: [
+          {
+            title: 'Alpha Start',
+            sequenceLabel: '1',
+            authors: ['Author A'],
+            sources: [
+              {
+                source: 'fictiondb',
+                label: 'FDB',
+                confidence: 0.98,
+                evidenceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm'
+              }
+            ]
+          }
+        ]
+      }
+    ])
+
     await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
       {
         libraryItemId: libraryItem.id,
@@ -1104,6 +1126,12 @@ describe('SeriesReviewManager', () => {
       }
     })
     expect(activeSuggestions).to.have.length(0)
+
+    const updatedCatalogDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, catalogImport.catalogs[0].id)
+    expect(updatedCatalogDetail.catalog.evidenceLinks).to.deep.equal([])
+
+    const updatedCatalogRow = await Database.seriesReviewCatalogModel.findByPk(catalogImport.catalogs[0].id)
+    expect(updatedCatalogRow.entries[0].sources).to.deep.equal([])
   })
 
   it('backfills legacy saved local links into the persistent source-link table on first series-review access', async () => {
