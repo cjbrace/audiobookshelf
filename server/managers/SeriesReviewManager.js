@@ -450,30 +450,7 @@ class SeriesReviewManager {
   }
 
   buildLocalSeriesMatchPayload(matchRow, { localBooks = [], resolvedCatalogId = null } = {}) {
-    const evidenceSnapshot = matchRow?.evidenceSnapshot && typeof matchRow.evidenceSnapshot === 'object' && !Array.isArray(matchRow.evidenceSnapshot) ? matchRow.evidenceSnapshot : {}
-    return {
-      id: matchRow.id,
-      localDecisionKey: matchRow.localDecisionKey,
-      localSeriesName: matchRow.localSeriesName,
-      source: matchRow.source,
-      sourceSeriesName: matchRow.sourceSeriesName,
-      sourceAuthor: matchRow.sourceAuthor || evidenceSnapshot.sourceAuthor || '',
-      sourceUrl: matchRow.sourceSeriesUrl,
-      sourceLinkUrl: evidenceSnapshot.sourceLinkUrl || matchRow.sourceSeriesUrl,
-      sourceIdentifier: evidenceSnapshot.sourceIdentifier || matchRow.sourceSeriesUrl,
-      sourceAsin: evidenceSnapshot.sourceAsin || '',
-      sourceRegion: evidenceSnapshot.sourceRegion || '',
-      matchingBooks: Array.isArray(evidenceSnapshot.matchingBooks) ? evidenceSnapshot.matchingBooks : [],
-      sampleBooks: Array.isArray(evidenceSnapshot.sampleBooks) ? evidenceSnapshot.sampleBooks : [],
-      sequenceIncomplete: !!evidenceSnapshot.sequenceIncomplete,
-      sequenceStatusNote: typeof evidenceSnapshot.sequenceStatusNote === 'string' ? evidenceSnapshot.sequenceStatusNote : '',
-      evidenceSnapshot,
-      localBooks,
-      resolvedCatalogId: resolvedCatalogId || null,
-      canRemove: !resolvedCatalogId,
-      createdAt: matchRow.createdAt,
-      updatedAt: matchRow.updatedAt
-    }
+    return this.buildSeriesSourceLinkPayload(matchRow, { localBooks, resolvedCatalogId })
   }
 
   getSourceRoleMeta(source) {
@@ -1177,17 +1154,23 @@ class SeriesReviewManager {
     return booksBySeriesId
   }
 
-  async getLocalSeriesMatchRowsForLibrary(libraryId, options = {}) {
+  async getSeriesSourceLinkRowsForLibrary(libraryId, options = {}) {
     const where = { libraryId }
     if (options?.localDecisionKey) where.localDecisionKey = options.localDecisionKey
     if (options?.sourceSeriesUrl) where.sourceSeriesUrl = options.sourceSeriesUrl
     if (Array.isArray(options?.sourceSeriesUrls) && options.sourceSeriesUrls.length) {
       where.sourceSeriesUrl = { [Op.in]: options.sourceSeriesUrls }
     }
-    return Database.seriesReviewLocalSeriesMatchModel.findAll({
+    if (options?.activeOnly === true) where.isActive = true
+    if (options?.activeOnly === false) where.isActive = false
+    return Database.seriesReviewSeriesSourceLinkModel.findAll({
       where,
       order: [['updatedAt', 'DESC']]
     })
+  }
+
+  async getLocalSeriesMatchRowsForLibrary(libraryId, options = {}) {
+    return this.getSeriesSourceLinkRowsForLibrary(libraryId, options)
   }
 
   buildCatalogSourceUrlMap(catalogs = []) {
@@ -1202,7 +1185,7 @@ class SeriesReviewManager {
 
   async getResolvedCatalogIdForLocalDecisionKey(libraryId, decisionKey, catalogs = null) {
     if (!decisionKey) return null
-    const matchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId, { localDecisionKey: decisionKey })
+    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { localDecisionKey: decisionKey, activeOnly: true })
     if (!matchRows.length) return null
 
     const allCatalogs = Array.isArray(catalogs) ? catalogs : await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
@@ -1214,12 +1197,112 @@ class SeriesReviewManager {
     return null
   }
 
+  getSeriesSourceLinkBookCount(evidenceSnapshot) {
+    const matchingBooks = Array.isArray(evidenceSnapshot?.matchingBooks) ? evidenceSnapshot.matchingBooks : []
+    const seen = new Set()
+    let count = 0
+    matchingBooks.forEach((book) => {
+      const key = String(book?.libraryItemId || book?.localTitle || book?.sourceTitle || '').trim()
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      count += 1
+    })
+    return count
+  }
+
+  getSeriesSourceLinkCoverageStatus(linkRow, localBooks = [], evidenceSnapshot = null) {
+    if (!linkRow?.isActive) return 'previously_linked'
+    const snapshot = evidenceSnapshot && typeof evidenceSnapshot === 'object' && !Array.isArray(evidenceSnapshot) ? evidenceSnapshot : linkRow?.evidenceSnapshot || {}
+    const snapshotLinkedBookCount = this.getSeriesSourceLinkBookCount(snapshot)
+    const storedLinkedBookCount = Number.isFinite(Number(linkRow?.linkedBookCount)) ? Number(linkRow.linkedBookCount) : 0
+    const linkedBookCount = snapshotLinkedBookCount || storedLinkedBookCount
+    const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number.isFinite(Number(linkRow?.totalBookCount)) ? Number(linkRow.totalBookCount) : 0
+    if (totalBookCount > 0 && linkedBookCount >= totalBookCount) return 'linked'
+    return 'partial'
+  }
+
+  buildSeriesSourceLinkPayload(linkRow, { localBooks = [], resolvedCatalogId = null, evidenceSnapshot = null } = {}) {
+    const snapshot = evidenceSnapshot && typeof evidenceSnapshot === 'object' && !Array.isArray(evidenceSnapshot) ? evidenceSnapshot : linkRow?.evidenceSnapshot || {}
+    const linkedBookCount = this.getSeriesSourceLinkBookCount(snapshot) || Number(linkRow?.linkedBookCount || 0)
+    const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number(linkRow?.totalBookCount || 0)
+    const coverageStatus = this.getSeriesSourceLinkCoverageStatus(linkRow, localBooks, snapshot)
+    return {
+      id: linkRow.id,
+      localDecisionKey: linkRow.localDecisionKey,
+      localSeriesName: linkRow.localSeriesName,
+      source: linkRow.source,
+      sourceSeriesName: linkRow.sourceSeriesName,
+      sourceAuthor: linkRow.sourceAuthor || snapshot.sourceAuthor || '',
+      sourceUrl: linkRow.sourceSeriesUrl,
+      sourceLinkUrl: snapshot.sourceLinkUrl || linkRow.sourceSeriesUrl,
+      sourceIdentifier: snapshot.sourceIdentifier || linkRow.sourceSeriesUrl,
+      sourceAsin: snapshot.sourceAsin || '',
+      sourceRegion: snapshot.sourceRegion || '',
+      matchingBooks: Array.isArray(snapshot.matchingBooks) ? snapshot.matchingBooks : [],
+      sampleBooks: Array.isArray(snapshot.sampleBooks) ? snapshot.sampleBooks : [],
+      sequenceIncomplete: !!snapshot.sequenceIncomplete,
+      sequenceStatusNote: typeof snapshot.sequenceStatusNote === 'string' ? snapshot.sequenceStatusNote : '',
+      evidenceSnapshot: snapshot,
+      localBooks,
+      linkedBookCount,
+      totalBookCount,
+      coverageStatus,
+      isActive: linkRow.isActive !== false,
+      unlinkedAt: linkRow.unlinkedAt || null,
+      unlinkedByUserId: linkRow.unlinkedByUserId || null,
+      resolvedCatalogId: resolvedCatalogId || null,
+      canRemove: linkRow.isActive !== false,
+      createdAt: linkRow.createdAt,
+      updatedAt: linkRow.updatedAt
+    }
+  }
+
+  buildManualLookupResultWithSeriesSourceLinkState(result, { activeLink = null, inactiveLink = null } = {}) {
+    const payload = {
+      ...result,
+      linkState: 'candidate',
+      linkStateLabel: 'Link',
+      canLink: true,
+      savedLinkId: null,
+      savedLinkCoverageStatus: null,
+      savedLinkIsActive: false,
+      savedLinkPreviouslyLinked: false
+    }
+
+    const sourceSeriesUrl = String(result?.sourceSeriesUrl || result?.sourceUrl || result?.sourceIdentifier || '').trim()
+    if (!sourceSeriesUrl) return payload
+
+    if (activeLink) {
+      const coverageStatus = this.getSeriesSourceLinkCoverageStatus(activeLink, activeLink.localBooks || [], activeLink.evidenceSnapshot || result?.evidenceSnapshot || {})
+      payload.savedLinkId = activeLink.id
+      payload.savedLinkCoverageStatus = coverageStatus
+      payload.savedLinkIsActive = true
+      payload.linkState = coverageStatus === 'linked' ? 'linked' : 'partial'
+      payload.linkStateLabel = coverageStatus === 'linked' ? 'Linked' : 'Partial'
+      payload.canLink = coverageStatus !== 'linked'
+      payload.savedLinkPreviouslyLinked = false
+      return payload
+    }
+
+    if (inactiveLink) {
+      payload.savedLinkId = inactiveLink.id
+      payload.savedLinkCoverageStatus = 'previously_linked'
+      payload.savedLinkIsActive = false
+      payload.savedLinkPreviouslyLinked = true
+      payload.linkState = 'previously_linked'
+      payload.linkStateLabel = 'Previously Linked'
+      payload.canLink = true
+    }
+
+    return payload
+  }
+
   async getLocalSeriesMatchesForLibrary(libraryId, options = {}) {
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
     const catalogs = options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
     const sourceUrlMap = options?.sourceUrlMap || this.buildCatalogSourceUrlMap(catalogs)
-    const matchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
+    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
     const results = []
 
     for (const matchRow of matchRows) {
@@ -1229,7 +1312,7 @@ class SeriesReviewManager {
         : []
       const resolvedCatalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl) || null
       if (!options?.includeResolved && resolvedCatalogId) continue
-      results.push(this.buildLocalSeriesMatchPayload(matchRow, { localBooks, resolvedCatalogId }))
+      results.push(this.buildSeriesSourceLinkPayload(matchRow, { localBooks, resolvedCatalogId }))
     }
 
     return results.sort((a, b) => {
@@ -1245,6 +1328,7 @@ class SeriesReviewManager {
     ;(Array.isArray(matchRows) ? matchRows : []).forEach((matchRow) => {
       const sourceSeriesUrl = String(matchRow?.sourceSeriesUrl || '').trim()
       if (!sourceSeriesUrl) return
+      if (matchRow?.isActive === false) return
       const group = localSeriesGroups.get(matchRow.localDecisionKey)
       if (!group?.seriesRows?.length) return
       if (!linkedSeriesRowsBySourceUrl.has(sourceSeriesUrl)) linkedSeriesRowsBySourceUrl.set(sourceSeriesUrl, [])
@@ -1280,7 +1364,7 @@ class SeriesReviewManager {
 
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
-    const matchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId, { sourceSeriesUrls })
+    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { sourceSeriesUrls, activeOnly: true })
     const linkedSeriesRows = []
     const seen = new Set()
 
@@ -1362,7 +1446,12 @@ class SeriesReviewManager {
 
     const sourceAuthor = this.normalizeSeriesName(payload?.sourceAuthor || payload?.evidenceSnapshot?.sourceAuthor || '')
     const evidenceSnapshot = payload?.evidenceSnapshot && typeof payload.evidenceSnapshot === 'object' && !Array.isArray(payload.evidenceSnapshot) ? payload.evidenceSnapshot : {}
-    const existing = await Database.seriesReviewLocalSeriesMatchModel.findOne({
+    const context = catalogId ? await this.buildManualLookupContextForCatalog(libraryId, catalogId) : null
+    const localBooks = Array.isArray(context?.localBooks) ? context.localBooks : []
+    const linkedBookCount = this.getSeriesSourceLinkBookCount(evidenceSnapshot)
+    const totalBookCount = localBooks.length
+    const coverageStatus = totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
+    const existing = await Database.seriesReviewSeriesSourceLinkModel.findOne({
       where: {
         libraryId,
         localDecisionKey: decisionKey,
@@ -1376,10 +1465,16 @@ class SeriesReviewManager {
       existing.sourceSeriesName = sourceSeriesName
       existing.sourceAuthor = sourceAuthor || null
       existing.sourceSeriesUrl = sourceSeriesUrl
+      existing.coverageStatus = coverageStatus
+      existing.linkedBookCount = linkedBookCount
+      existing.totalBookCount = totalBookCount
       existing.evidenceSnapshot = evidenceSnapshot
+      existing.isActive = true
+      existing.unlinkedAt = null
+      existing.unlinkedByUserId = null
       await existing.save()
     } else {
-      await Database.seriesReviewLocalSeriesMatchModel.create({
+      await Database.seriesReviewSeriesSourceLinkModel.create({
         libraryId,
         localDecisionKey: decisionKey,
         localSeriesName: seriesName,
@@ -1387,6 +1482,9 @@ class SeriesReviewManager {
         sourceSeriesName,
         sourceAuthor: sourceAuthor || null,
         sourceSeriesUrl,
+        coverageStatus,
+        linkedBookCount,
+        totalBookCount,
         evidenceSnapshot
       })
     }
@@ -1405,7 +1503,7 @@ class SeriesReviewManager {
   async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId) {
     const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
     if (!context) throw new Error('Manual source lookup is not available for that series')
-    const matchRow = await Database.seriesReviewLocalSeriesMatchModel.findOne({
+    const matchRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
       where: {
         id: matchId,
         libraryId,
@@ -1413,7 +1511,9 @@ class SeriesReviewManager {
       }
     })
     if (!matchRow) throw new Error('Saved local source link was not found')
-    await matchRow.destroy()
+    matchRow.isActive = false
+    matchRow.unlinkedAt = new Date()
+    await matchRow.save()
     return this.getCatalogDetailForLibrary(libraryId, catalogId)
   }
 
@@ -1429,13 +1529,13 @@ class SeriesReviewManager {
     for (const selection of requestedSelections) {
       const matchId = String(selection?.matchId || '').trim()
       if (!matchId) continue
-      const matchRow = await Database.seriesReviewLocalSeriesMatchModel.findOne({
+      const matchRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
         where: {
           id: matchId,
           libraryId
         }
       })
-      if (!matchRow) {
+      if (!matchRow || matchRow.isActive === false) {
         throw new Error('Saved local source link was not found')
       }
       if (!forceRefresh && sourceUrlMap.has(matchRow.sourceSeriesUrl)) continue
@@ -1478,7 +1578,7 @@ class SeriesReviewManager {
 
   async refreshLocalSeriesMatchesForLibrary(libraryId, matchIds = [], options = {}) {
     const allowedIds = Array.isArray(matchIds) && matchIds.length ? new Set(matchIds.map((value) => String(value || '').trim()).filter(Boolean)) : null
-    const matchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
+    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
     const selections = matchRows
       .filter((matchRow) => !allowedIds || allowedIds.has(matchRow.id))
       .map((matchRow) => ({
@@ -1518,7 +1618,7 @@ class SeriesReviewManager {
       [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
     )
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
-    const localMatchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
+    const localMatchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
     const resolvedLocalDecisionKeys = new Set(localMatchRows.filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl)).map((matchRow) => matchRow.localDecisionKey))
     const manualLinkedSeriesRowsBySourceUrl = this.buildManualLinkedSeriesRowsBySourceUrl(localSeriesGroups, localMatchRows)
 
@@ -1559,6 +1659,41 @@ class SeriesReviewManager {
       const isLocallyLinked = catalogEntryUrls.some((sourceUrl) => manualLinkedSeriesRowsBySourceUrl.has(sourceUrl))
       const matchingSeriesRows = localSeriesGroups.get(resolver.getDecisionKey(catalog.seriesName))?.seriesRows || []
       const localBooks = collectLocalBooksForSeriesRows(matchingSeriesRows)
+      const slotMap = new Map()
+      localBooks.forEach((book) => {
+        const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+        if (!coveredSlots.length) return
+        coveredSlots.forEach((coveredSlot) => {
+          const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
+          if (!slot) return
+          slot.locallyCovered = true
+          slot.localBooks.push({
+            libraryItemId: book.libraryItemId,
+            title: book.title,
+            relPath: book.relPath,
+            sequence: book.sequence,
+            authors: book.authors || []
+          })
+        })
+      })
+      const summaryEntries = this.normalizeCatalogEntries(catalog.entries)
+      summaryEntries.forEach((entry) => {
+        const coveredSlots = entry.coveredSlots.length ? entry.coveredSlots : [entry.sequenceLabel].filter(Boolean)
+        coveredSlots.forEach((coveredSlot) => {
+          const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
+          if (!slot) return
+          slot.sourceCovered = true
+          slot.choices.push({
+            entryKey: entry.entryKey,
+            title: entry.title,
+            authors: entry.authors,
+            publishedDate: entry.publishedDate || null,
+            sequenceLabel: entry.sequenceLabel,
+            sources: this.buildCatalogSourceSupport(entry.sources)
+          })
+        })
+      })
+      const summaryCounts = this.buildCatalogSummaryCounts(slotMap, catalog.selectionBySlot || {}, localBooks, summaryEntries)
       const displayBucket = this.getCatalogDisplayBucket({
         trustStatus: catalog.trustStatus,
         visibilityStatus: catalog.visibilityStatus,
@@ -1567,7 +1702,6 @@ class SeriesReviewManager {
       })
       if (!includeDismissed && displayBucket === 'dismissed') continue
       if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'local_only' && displayBucket !== 'locally_linked' && displayBucket !== 'dismissed') continue
-      const summaryEntries = this.normalizeCatalogEntries(catalog.entries)
       const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
       detailSummaries.push({
         ...this.buildCatalogViewPayload({
@@ -1584,10 +1718,10 @@ class SeriesReviewManager {
         }),
         authorLine: authorMeta.authorLine,
         authorSearchText: authorMeta.authorSearchText,
-        missingCount: 0,
-        disputedCount: 0,
+        missingCount: summaryCounts.missingCount,
+        disputedCount: summaryCounts.disputedCount,
         localBookCount: localBooks.length,
-        unsequencedCount: 0
+        unsequencedCount: summaryCounts.unsequencedCount
       })
     }
 
@@ -1596,6 +1730,24 @@ class SeriesReviewManager {
       if (!group?.seriesName || catalogDecisionKeys.has(group.decisionKey)) continue
       const localBooks = collectLocalBooksForSeriesRows(group.seriesRows)
       if (!localBooks.length) continue
+      const slotMap = new Map()
+      localBooks.forEach((book) => {
+        const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+        if (!coveredSlots.length) return
+        coveredSlots.forEach((coveredSlot) => {
+          const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
+          if (!slot) return
+          slot.locallyCovered = true
+          slot.localBooks.push({
+            libraryItemId: book.libraryItemId,
+            title: book.title,
+            relPath: book.relPath,
+            sequence: book.sequence,
+            authors: book.authors || []
+          })
+        })
+      })
+      const summaryCounts = this.buildCatalogSummaryCounts(slotMap, {}, localBooks, [])
       detailSummaries.push({
         ...this.buildCatalogViewPayload({
           id: group.catalogId,
@@ -1607,10 +1759,10 @@ class SeriesReviewManager {
           displayBucket: 'local_only',
           canDismiss: false
         }),
-        missingCount: 0,
-        disputedCount: 0,
+        missingCount: summaryCounts.missingCount,
+        disputedCount: summaryCounts.disputedCount,
         localBookCount: localBooks.length,
-        unsequencedCount: 0
+        unsequencedCount: summaryCounts.unsequencedCount
       })
     }
 
@@ -1982,6 +2134,15 @@ class SeriesReviewManager {
     }
   }
 
+  buildCatalogSummaryCounts(slotMap, selectionBySlot, localBooks, entries = []) {
+    const finalized = this.finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries)
+    return {
+      missingCount: finalized.slots.filter((slot) => slot.status === 'missing').length,
+      disputedCount: finalized.slots.filter((slot) => slot.status === 'disputed').length,
+      unsequencedCount: finalized.unsequencedSourceEntries.length
+    }
+  }
+
   async getCatalogDetailForLibrary(libraryId, catalogId, options = {}) {
     await this.ensureSeriesReviewCatalogSchema()
     const localOnlyDecisionKey = this.parseLocalOnlyCatalogId(catalogId)
@@ -2084,6 +2245,7 @@ class SeriesReviewManager {
         }),
         selectionBySlot: catalog.selectionBySlot || {},
         localSeriesMatches,
+        savedSeriesLinks: localSeriesMatches,
         canDismiss: true
       },
       localBooks,
@@ -2165,6 +2327,7 @@ class SeriesReviewManager {
         }),
         selectionBySlot: {},
         localSeriesMatches: localSeriesMatches.filter((matchRow) => matchRow.localDecisionKey === decisionKey),
+        savedSeriesLinks: localSeriesMatches.filter((matchRow) => matchRow.localDecisionKey === decisionKey),
         canDismiss: false
       },
       localBooks,

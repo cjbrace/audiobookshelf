@@ -293,7 +293,21 @@ describe('SeriesReviewController', () => {
       localDecisionKey: 'alpha saga',
       localBooks: [{ libraryItemId: 'item-1', title: 'Alpha Start' }]
     })
-    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({ results: [{ sourceSeriesName: 'Alpha Saga' }] })
+    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({
+      results: [{ sourceSeriesName: 'Alpha Saga', sourceSeriesUrl: 'https://example.com/alpha' }]
+    })
+    sinon.stub(SeriesReviewManager, 'getSeriesSourceLinkRowsForLibrary').resolves([
+      {
+        id: 'link-1',
+        localDecisionKey: 'alpha saga',
+        localSeriesName: 'Alpha Saga',
+        source: 'fictiondb',
+        sourceSeriesName: 'Alpha Saga',
+        sourceSeriesUrl: 'https://example.com/alpha',
+        evidenceSnapshot: { matchingBooks: [{ libraryItemId: 'item-1' }] },
+        isActive: true
+      }
+    ])
 
     const req = {
       user: { isAdminOrUp: true },
@@ -310,12 +324,19 @@ describe('SeriesReviewController', () => {
     await SeriesReviewController.lookupManualCatalogSources(req, res)
 
     expect(SeriesReviewManager.buildManualLookupContextForCatalog.calledOnceWithExactly('library-1', 'local-series:alpha')).to.be.true
+    expect(SeriesReviewManager.getSeriesSourceLinkRowsForLibrary.calledOnceWithExactly('library-1', { localDecisionKey: 'alpha saga' })).to.be.true
     expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
       local_series_name: 'Alpha Saga',
       local_decision_key: 'alpha saga',
       local_books: [{ libraryItemId: 'item-1', title: 'Alpha Start' }]
     })).to.be.true
-    expect(res.json.calledOnceWithExactly({ results: [{ sourceSeriesName: 'Alpha Saga' }] })).to.be.true
+    expect(res.json.calledOnce).to.be.true
+    expect(res.json.firstCall.args[0].results[0]).to.include({
+      sourceSeriesName: 'Alpha Saga',
+      linkState: 'linked',
+      linkStateLabel: 'Linked',
+      canLink: false
+    })
   })
 
   it('lists saved local catalog matches for batch import', async () => {

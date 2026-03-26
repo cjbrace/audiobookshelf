@@ -88,7 +88,37 @@ class SeriesReviewController {
         local_decision_key: context.localDecisionKey,
         local_books: context.localBooks
       })
-      return res.json(response)
+      const linkRows = await SeriesReviewManager.getSeriesSourceLinkRowsForLibrary(req.library.id, {
+        localDecisionKey: context.localDecisionKey
+      })
+      const activeLinksByUrl = new Map()
+      const inactiveLinksByUrl = new Map()
+      linkRows.forEach((linkRow) => {
+        const linkPayload = SeriesReviewManager.buildSeriesSourceLinkPayload(linkRow, {
+          localBooks: context.localBooks
+        })
+        const sourceSeriesUrl = String(linkPayload?.sourceUrl || '').trim()
+        if (!sourceSeriesUrl) return
+        if (linkPayload.isActive === false) {
+          if (!inactiveLinksByUrl.has(sourceSeriesUrl)) inactiveLinksByUrl.set(sourceSeriesUrl, linkPayload)
+          return
+        }
+        activeLinksByUrl.set(sourceSeriesUrl, linkPayload)
+      })
+      const results = Array.isArray(response?.results) ? response.results : []
+      const annotatedResults = results.map((result) => {
+        const sourceSeriesUrl = String(result?.sourceSeriesUrl || result?.sourceUrl || result?.sourceIdentifier || '').trim()
+        const activeLink = activeLinksByUrl.get(sourceSeriesUrl) || null
+        const inactiveLink = activeLink ? null : inactiveLinksByUrl.get(sourceSeriesUrl) || null
+        return SeriesReviewManager.buildManualLookupResultWithSeriesSourceLinkState(result, {
+          activeLink,
+          inactiveLink
+        })
+      })
+      return res.json({
+        ...response,
+        results: annotatedResults
+      })
     } catch (error) {
       const statusCode = Number(error?.statusCode || 0)
       if (statusCode >= 400) {
@@ -193,7 +223,14 @@ class SeriesReviewController {
         local_books: localBooks
       })
       const results = Array.isArray(lookup?.results) ? lookup.results : []
-      const preferredSource = String(catalogDetail.catalog?.evidenceLinks?.[0]?.source || '').trim().toLowerCase()
+      const preferredSource = String(
+        catalogDetail.catalog?.savedSeriesLinks?.[0]?.source ||
+          catalogDetail.catalog?.localSeriesMatches?.[0]?.source ||
+          catalogDetail.catalog?.evidenceLinks?.[0]?.source ||
+          ''
+      )
+        .trim()
+        .toLowerCase()
       const selectedResult = results.find((result) => String(result?.source || '').trim().toLowerCase() === preferredSource) || results[0] || null
       if (!selectedResult) {
         return res.json({

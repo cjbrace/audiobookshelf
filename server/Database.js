@@ -197,6 +197,11 @@ class Database {
     return this.models.seriesReviewCatalog
   }
 
+  /** @type {typeof import('./models/SeriesReviewSeriesSourceLink')} */
+  get seriesReviewSeriesSourceLinkModel() {
+    return this.models.seriesReviewSeriesSourceLink
+  }
+
   /** @type {typeof import('./models/SeriesReviewLocalSeriesMatch')} */
   get seriesReviewLocalSeriesMatchModel() {
     return this.models.seriesReviewLocalSeriesMatch
@@ -397,6 +402,7 @@ class Database {
     require('./models/SeriesReviewSuggestion').init(this.sequelize)
     require('./models/SeriesReviewAction').init(this.sequelize)
     require('./models/SeriesReviewCatalog').init(this.sequelize)
+    require('./models/SeriesReviewSeriesSourceLink').init(this.sequelize)
     require('./models/SeriesReviewLocalSeriesMatch').init(this.sequelize)
     require('./models/SeriesReviewNameControl').init(this.sequelize)
 

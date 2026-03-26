@@ -442,6 +442,13 @@
                               <span v-if="contribution.confidence !== null && contribution.confidence !== undefined" class="text-gray-400">
                                 conf: {{ formatConfidence(contribution.confidence) }}
                               </span>
+                              <span
+                                v-if="getSeriesLinkStateLabel(match)"
+                                class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                                :class="getSeriesLinkStateClass(match)"
+                              >
+                                {{ getSeriesLinkStateLabel(match) }}
+                              </span>
                             </div>
                             <a
                               v-if="contribution.evidenceUrl"
@@ -884,7 +891,7 @@
                             :loading="catalogLocalMatchRemovingKey === match.id"
                             @click="removeLocalCatalogMatch(match)"
                           >
-                            Remove link
+                            Unlink
                           </ui-btn>
                         </div>
                         <div v-if="match.matchingBooks.length" class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2 text-sm text-gray-200">
@@ -917,6 +924,13 @@
                               <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
                                 {{ getManualSourceCode(result) }} · {{ getManualSourceDisplayName(result) }}
                               </span>
+                              <span
+                                v-if="getSeriesLinkStateLabel(result)"
+                                class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                                :class="getSeriesLinkStateClass(result)"
+                              >
+                                {{ getSeriesLinkStateLabel(result) }}
+                              </span>
                             </div>
                             <p class="text-lg font-semibold text-white">{{ result.sourceSeriesName }}</p>
                             <p v-if="result.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ result.sourceAuthor }}</p>
@@ -929,9 +943,12 @@
                               {{ getManualSourceText(result) }}
                             </p>
                           </div>
-                          <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
-                            Score {{ result.score }}
-                          </span>
+                          <div class="flex flex-col items-end gap-1">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
+                              Score {{ result.score }}
+                            </span>
+                            <span v-if="result.linkState === 'previously_linked'" class="text-xs text-amber-200">Previously linked</span>
+                          </div>
                         </div>
 
                         <div v-if="result.matchingBooks.length">
@@ -974,11 +991,12 @@
 
                         <div class="flex justify-end">
                           <ui-btn
-                            color="bg-success/80"
+                            :color="result.linkState === 'linked' ? 'bg-red-500/80' : 'bg-success/80'"
                             :loading="catalogManualLookupSavingKey === getManualLookupResultKey(result)"
+                            :disabled="selectedCatalogDetailBusy || result.linkState === 'linked'"
                             @click="saveLocalCatalogMatch(result)"
                           >
-                            Save Link
+                            {{ getSeriesLinkActionLabel(result) }}
                           </ui-btn>
                         </div>
                       </div>
@@ -1457,7 +1475,7 @@ export default {
       return this.selectedCatalogDetail?.catalog?.displayBucket !== 'dismissed' && !!this.selectedCatalogDetail?.localBooks?.length
     },
     selectedCatalogLocalMatches() {
-      return this.selectedCatalogDetail?.catalog?.localSeriesMatches || []
+      return this.selectedCatalogDetail?.catalog?.savedSeriesLinks || this.selectedCatalogDetail?.catalog?.localSeriesMatches || []
     },
     unresolvedLocalCatalogMatches() {
       return (this.localCatalogMatches || []).filter((match) => !match.resolvedCatalogId)
@@ -1528,6 +1546,23 @@ export default {
     },
     getManualSequenceStatus(entry) {
       return String(entry?.sequenceStatusNote || entry?.evidenceSnapshot?.sequenceStatusNote || '').trim()
+    },
+    getSeriesLinkStateLabel(entry) {
+      if (entry?.linkStateLabel) return entry.linkStateLabel
+      if (entry?.coverageStatus === 'linked') return 'Linked'
+      if (entry?.coverageStatus === 'previously_linked') return 'Previously Linked'
+      if (entry?.coverageStatus === 'partial') return 'Partial'
+      return ''
+    },
+    getSeriesLinkStateClass(entry) {
+      const state = String(entry?.linkState || entry?.coverageStatus || '').toLowerCase()
+      if (state === 'linked') return 'border-red-300/35 bg-red-500/10 text-red-100'
+      if (state === 'partial') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
+      if (state === 'previously_linked') return 'border-yellow-300/35 bg-yellow-500/10 text-yellow-100'
+      return 'border-sky-300/35 bg-sky-400/10 text-sky-50'
+    },
+    getSeriesLinkActionLabel(entry) {
+      return entry?.linkState === 'linked' ? 'Linked' : 'Link'
     },
     getManualLookupResultKey(entry) {
       return `${entry?.source || 'source'}:${entry?.sourceSeriesUrl || entry?.sourceUrl || entry?.sourceIdentifier || entry?.sourceSeriesName || ''}`
