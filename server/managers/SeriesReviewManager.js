@@ -1538,7 +1538,8 @@ class SeriesReviewManager {
         localBooksCache,
         expandedSeriesCache,
         preloadedSeriesBooksBySeriesId,
-        manualLinkedSeriesRowsBySourceUrl
+        manualLinkedSeriesRowsBySourceUrl,
+        skipLocalSeriesMatches: true
       })
       if (!detail) continue
       const displayBucket = detail.catalog.displayBucket
