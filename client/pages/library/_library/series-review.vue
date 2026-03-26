@@ -439,22 +439,8 @@
                                 {{ contribution.seriesName }}
                                 <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
                               </span>
-                              <span
-                                v-if="getSeriesLinkStateLabel(match)"
-                                class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
-                                :class="getSeriesLinkStateClass(match)"
-                              >
-                                {{ getSeriesLinkStateLabel(match) }}
-                              </span>
                               <span v-if="contribution.confidence !== null && contribution.confidence !== undefined" class="text-gray-400">
                                 conf: {{ formatConfidence(contribution.confidence) }}
-                              </span>
-                              <span
-                                v-if="getSeriesLinkStateLabel(match)"
-                                class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
-                                :class="getSeriesLinkStateClass(match)"
-                              >
-                                {{ getSeriesLinkStateLabel(match) }}
                               </span>
                             </div>
                             <a
@@ -878,6 +864,13 @@
                             <div class="flex flex-wrap items-center gap-2">
                               <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
                                 {{ getManualSourceCode(match) }} · {{ getManualSourceDisplayName(match) }}
+                              </span>
+                              <span
+                                v-if="getSeriesLinkStateLabel(match)"
+                                class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
+                                :class="getSeriesLinkStateClass(match)"
+                              >
+                                {{ getSeriesLinkStateLabel(match) }}
                               </span>
                             </div>
                             <p class="text-lg font-semibold text-white">{{ match.sourceSeriesName }}</p>
