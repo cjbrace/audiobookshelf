@@ -1506,7 +1506,6 @@ class SeriesReviewManager {
       where,
       order: [['seriesName', 'ASC']]
     })
-    if (!catalogs.length) return []
     const allCatalogs = includeDismissed
       ? catalogs
       : await Database.seriesReviewCatalogModel.findAll({
@@ -1514,10 +1513,40 @@ class SeriesReviewManager {
           order: [['seriesName', 'ASC']]
         })
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+    const preloadedSeriesBooksBySeriesId = await this.getSeriesBooksBySeriesIds(
+      libraryId,
+      [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
+    )
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
     const localMatchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
     const resolvedLocalDecisionKeys = new Set(localMatchRows.filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl)).map((matchRow) => matchRow.localDecisionKey))
     const manualLinkedSeriesRowsBySourceUrl = this.buildManualLinkedSeriesRowsBySourceUrl(localSeriesGroups, localMatchRows)
+
+    const collectLocalBooksForSeriesRows = (seriesRows = []) => {
+      const localBooks = []
+      const seen = new Set()
+      ;(Array.isArray(seriesRows) ? seriesRows : []).forEach((series) => {
+        ;(preloadedSeriesBooksBySeriesId.get(series.id) || []).forEach((book) => {
+          if (!book?.libraryItemId || seen.has(book.libraryItemId)) return
+          seen.add(book.libraryItemId)
+          localBooks.push({
+            libraryItemId: book.libraryItemId,
+            title: book.title || '',
+            relPath: book.relPath || '',
+            authors: Array.isArray(book.authors) ? book.authors : [],
+            sequence: this.normalizeSequence(book.sequence || null),
+            seriesName: series.name
+          })
+        })
+      })
+
+      return localBooks.sort((a, b) => {
+        const aSeq = a.sequence || 'zzzz'
+        const bSeq = b.sequence || 'zzzz'
+        if (aSeq !== bSeq) return aSeq.localeCompare(bSeq, undefined, { numeric: true })
+        return a.title.localeCompare(b.title)
+      })
+    }
 
     const detailSummaries = []
     const catalogDecisionKeys = new Set(
@@ -1528,10 +1557,12 @@ class SeriesReviewManager {
     for (const catalog of catalogs) {
       const catalogEntryUrls = this.getCatalogSourceUrls(catalog.entries || [])
       const isLocallyLinked = catalogEntryUrls.some((sourceUrl) => manualLinkedSeriesRowsBySourceUrl.has(sourceUrl))
+      const matchingSeriesRows = localSeriesGroups.get(resolver.getDecisionKey(catalog.seriesName))?.seriesRows || []
+      const localBooks = collectLocalBooksForSeriesRows(matchingSeriesRows)
       const displayBucket = this.getCatalogDisplayBucket({
         trustStatus: catalog.trustStatus,
         visibilityStatus: catalog.visibilityStatus,
-        localBookCount: 0,
+        localBookCount: localBooks.length,
         isLocallyLinked
       })
       if (!includeDismissed && displayBucket === 'dismissed') continue
@@ -1546,7 +1577,7 @@ class SeriesReviewManager {
           visibilityStatus: catalog.visibilityStatus,
           dismissedAt: catalog.dismissedAt || null,
           entries: catalog.entries || [],
-          localBooks: [],
+          localBooks,
           displayBucket,
           isLocallyLinked,
           canDismiss: true
@@ -1555,7 +1586,7 @@ class SeriesReviewManager {
         authorSearchText: authorMeta.authorSearchText,
         missingCount: 0,
         disputedCount: 0,
-        localBookCount: 0,
+        localBookCount: localBooks.length,
         unsequencedCount: 0
       })
     }
@@ -1563,20 +1594,23 @@ class SeriesReviewManager {
     for (const group of localSeriesGroups.values()) {
       if (resolvedLocalDecisionKeys.has(group.decisionKey)) continue
       if (!group?.seriesName || catalogDecisionKeys.has(group.decisionKey)) continue
-      const detail = await this.getCatalogDetailForLibrary(libraryId, group.catalogId, {
-        resolver,
-        localSeriesGroups,
-        skipResolvedLookup: true,
-        skipLocalSeriesMatches: true,
-        manualLinkedSeriesRowsBySourceUrl
-      })
-      if (!detail?.localBooks?.length) continue
+      const localBooks = collectLocalBooksForSeriesRows(group.seriesRows)
+      if (!localBooks.length) continue
       detailSummaries.push({
-        ...detail.catalog,
+        ...this.buildCatalogViewPayload({
+          id: group.catalogId,
+          seriesName: group.seriesName,
+          trustStatus: 'local_only',
+          visibilityStatus: 'visible',
+          entries: [],
+          localBooks,
+          displayBucket: 'local_only',
+          canDismiss: false
+        }),
         missingCount: 0,
         disputedCount: 0,
-        localBookCount: detail.localBooks.length,
-        unsequencedCount: detail.unsequencedBooks.length
+        localBookCount: localBooks.length,
+        unsequencedCount: 0
       })
     }
 
