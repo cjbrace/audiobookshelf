@@ -13,7 +13,8 @@ function parseArgs(argv) {
     dryRun: false,
     limit: 0,
     outputJson: '',
-    progressEvery: 10
+    progressEvery: 1,
+    workers: 4
   }
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -31,7 +32,9 @@ function parseArgs(argv) {
     } else if (arg === '--output-json') {
       out.outputJson = argv[++index] || ''
     } else if (arg === '--progress-every') {
-      out.progressEvery = Number(argv[++index] || 0) || 0
+      out.progressEvery = Math.max(0, Number(argv[++index] || 0) || 0)
+    } else if (arg === '--workers') {
+      out.workers = Math.max(1, Number(argv[++index] || 0) || 0)
     } else {
       throw new Error(`Unknown argument: ${arg}`)
     }
@@ -178,10 +181,175 @@ function groupSourcesByUrl(entries) {
   return [...groups.values()]
 }
 
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const queue = Array.isArray(items) ? items : []
+  const workerCount = Math.max(1, Number(concurrency || 1) || 1)
+  const results = new Array(queue.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (true) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      if (currentIndex >= queue.length) return
+      results[currentIndex] = await mapper(queue[currentIndex], currentIndex)
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return results
+}
+
+function chunkArray(items, size) {
+  const list = Array.isArray(items) ? items : []
+  const chunkSize = Math.max(1, Number(size || 1) || 1)
+  const chunks = []
+  for (let index = 0; index < list.length; index += chunkSize) {
+    chunks.push(list.slice(index, index + chunkSize))
+  }
+  return chunks
+}
+
+async function bulkInsertSeriesSourceLinks(rows) {
+  const inserts = Array.isArray(rows) ? rows.filter(Boolean) : []
+  if (!inserts.length) return 0
+  let inserted = 0
+  await Database.sequelize.transaction(async (transaction) => {
+    for (const chunk of chunkArray(inserts, 100)) {
+      await Database.seriesReviewSeriesSourceLinkModel.bulkCreate(chunk, {
+        ignoreDuplicates: true,
+        transaction
+      })
+      inserted += chunk.length
+    }
+  })
+  return inserted
+}
+
 async function ensureConfigPaths(configPath, metadataPath) {
   global.Source = 'docker'
   global.ConfigPath = Path.resolve(configPath)
   global.MetadataPath = Path.resolve(metadataPath)
+}
+
+async function processCatalog(library, resolver, localSeriesGroups, preloadedSeriesBooksBySeriesId, catalog, index, args, inactiveKeys) {
+  const catalogSeriesName = SeriesReviewManager.normalizeSeriesName(catalog.seriesName || '')
+  const decisionKey = resolver.getDecisionKey(catalogSeriesName)
+  const group = localSeriesGroups.get(decisionKey) || null
+  const normalizedEntries = SeriesReviewManager.normalizeCatalogEntries(catalog.entries || [])
+  const sourceGroups = group?.seriesName ? groupSourcesByUrl(normalizedEntries) : []
+  const localBooks = group?.seriesName
+    ? await SeriesReviewManager.getLocalCatalogBooks(library.id, group.seriesName, {
+        resolver,
+        matchingSeries: group.seriesRows,
+        preloadedSeriesBooksBySeriesId
+      })
+    : []
+  const localBookIndexes = buildLocalBookIndexes(localBooks)
+  const catalogSummary = {
+    catalogId: catalog.id,
+    seriesName: catalogSeriesName,
+    sourceLinksSeen: 0,
+    sourceLinksSaved: 0,
+    sourceLinksSkippedInactive: 0,
+    sourceLinksSkippedUnmatched: 0,
+    sourceLinks: []
+  }
+  const rowsToInsert = []
+
+  process.stderr.write(
+    `[catalog_start] ${library.name || library.id}: ${catalogSeriesName} sources=${sourceGroups.length} books=${localBooks.length}\n`
+  )
+
+  try {
+    for (let groupIndex = 0; groupIndex < sourceGroups.length; groupIndex += 1) {
+      const groupEntry = sourceGroups[groupIndex]
+      process.stderr.write(
+        `[catalog_source] ${library.name || library.id}: ${catalogSeriesName} ${groupIndex + 1}/${sourceGroups.length} url=${groupEntry.url}\n`
+      )
+
+      const matchingBooks = []
+      const seenBookIds = new Set()
+      for (const { entry, source } of groupEntry.entries) {
+        const booksForEntry = buildMatchingBooks(entry, source, localBooks, localBookIndexes)
+        booksForEntry.forEach((book) => {
+          const bookId = String(book.libraryItemId || '')
+          if (!bookId || seenBookIds.has(bookId)) return
+          seenBookIds.add(bookId)
+          matchingBooks.push(book)
+        })
+      }
+
+      if (!matchingBooks.length) {
+        catalogSummary.sourceLinksSkippedUnmatched += 1
+        continue
+      }
+
+      const targetUrl = groupEntry.url
+      const inactiveKey = `${decisionKey}::${targetUrl}`
+      if (inactiveKeys.has(inactiveKey)) {
+        catalogSummary.sourceLinksSkippedInactive += 1
+        continue
+      }
+
+      const source = groupEntry.evidenceSource || groupEntry.entries[0]?.source || {}
+      const evidenceSnapshot = buildEvidenceSnapshot(catalogSeriesName, source, matchingBooks)
+      evidenceSnapshot.sequenceIncomplete = matchingBooks.length < localBooks.length
+      evidenceSnapshot.sequenceStatusNote = evidenceSnapshot.sequenceIncomplete ? 'Partial source coverage from current catalog entries' : ''
+
+      const payload = {
+        source: String(source.source || '').trim().toLowerCase() || 'fictiondb',
+        sourceSeriesName: deriveSourceSeriesName(source, catalogSeriesName),
+        sourceAuthor: deriveSourceAuthor(catalogSeriesName, source),
+        sourceSeriesUrl: targetUrl,
+        evidenceSnapshot
+      }
+
+      rowsToInsert.push({
+        libraryId: library.id,
+        localDecisionKey: decisionKey,
+        localSeriesName: catalogSeriesName,
+        source: payload.source,
+        sourceSeriesName: payload.sourceSeriesName,
+        sourceAuthor: payload.sourceAuthor || null,
+        sourceSeriesUrl: payload.sourceSeriesUrl,
+        coverageStatus: evidenceSnapshot.sequenceIncomplete ? 'partial' : 'linked',
+        linkedBookCount: matchingBooks.length,
+        totalBookCount: localBooks.length,
+        evidenceSnapshot,
+        isActive: true,
+        unlinkedAt: null,
+        unlinkedByUserId: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      })
+
+      catalogSummary.sourceLinksSeen += 1
+      catalogSummary.sourceLinksSaved += 1
+      catalogSummary.sourceLinks.push({
+        source: payload.source,
+        sourceSeriesUrl: targetUrl,
+        sourceSeriesName: payload.sourceSeriesName,
+        coverage: evidenceSnapshot.sequenceIncomplete ? 'partial' : 'linked',
+        matchingBookCount: matchingBooks.length,
+        totalBookCount: localBooks.length
+      })
+    }
+  } catch (error) {
+    catalogSummary.error = String(error?.message || error)
+    process.stderr.write(`[catalog_error] ${library.name || library.id} ${catalog.id}: ${catalogSummary.error}\n`)
+  }
+
+  process.stderr.write(
+    `[catalog_done] ${library.name || library.id}: ${catalogSeriesName} seen=${catalogSummary.sourceLinksSeen} ` +
+      `saved=${catalogSummary.sourceLinksSaved} inactive=${catalogSummary.sourceLinksSkippedInactive} ` +
+      `unmatched=${catalogSummary.sourceLinksSkippedUnmatched}\n`
+  )
+
+  return {
+    catalogSummary,
+    rowsToInsert
+  }
 }
 
 async function main() {
@@ -231,6 +399,9 @@ async function main() {
       },
       order: [['seriesName', 'ASC']]
     })
+    const localSeriesGroups = await SeriesReviewManager.getLocalSeriesGroupsForLibrary(library.id, resolver)
+    const seriesIds = [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
+    const preloadedSeriesBooksBySeriesId = await SeriesReviewManager.getSeriesBooksBySeriesIds(library.id, seriesIds)
     const existingRows = await Database.seriesReviewSeriesSourceLinkModel.findAll({
       where: {
         libraryId: library.id
@@ -241,6 +412,10 @@ async function main() {
       existingRows
         .filter((row) => row && row.isActive === false)
         .map((row) => `${String(row.localDecisionKey || '').trim()}::${String(row.sourceSeriesUrl || '').trim()}`)
+    )
+
+    process.stderr.write(
+      `[library_start] ${library.name || library.id}: ${catalogs.length} catalogs, mode=${args.dryRun ? 'dry-run' : 'write'} workers=${args.workers}\n`
     )
 
     const librarySummary = {
@@ -255,115 +430,31 @@ async function main() {
       catalogs: []
     }
 
-    process.stderr.write(
-      `[library_start] ${library.name || library.id}: ${catalogs.length} catalogs, mode=${args.dryRun ? 'dry-run' : 'write'}\n`
+    const catalogResults = await mapWithConcurrency(
+      catalogs,
+      args.workers,
+      async (catalog, index) => processCatalog(library, resolver, localSeriesGroups, preloadedSeriesBooksBySeriesId, catalog, index, args, inactiveKeys)
     )
 
-    for (const catalog of catalogs) {
-      const catalogSeriesName = SeriesReviewManager.normalizeSeriesName(catalog.seriesName || '')
-      const decisionKey = resolver.getDecisionKey(catalogSeriesName)
-      const normalizedEntries = SeriesReviewManager.normalizeCatalogEntries(catalog.entries || [])
-      const localBooks = await SeriesReviewManager.getLocalCatalogBooks(library.id, catalogSeriesName, {
-        resolver
-      })
-      const localBookIndexes = buildLocalBookIndexes(localBooks)
-      const sourceGroups = groupSourcesByUrl(normalizedEntries)
-      const catalogSummary = {
-        catalogId: catalog.id,
-        seriesName: catalogSeriesName,
-        sourceLinksSeen: 0,
-        sourceLinksSaved: 0,
-        sourceLinksSkippedInactive: 0,
-        sourceLinksSkippedUnmatched: 0,
-        sourceLinks: []
-      }
+    for (const result of catalogResults) {
+      if (!result?.catalogSummary) continue
+      librarySummary.catalogsSeen += 1
+      librarySummary.sourceLinksSeen += result.catalogSummary.sourceLinksSeen || 0
+      librarySummary.sourceLinksSaved += result.catalogSummary.sourceLinksSaved || 0
+      librarySummary.sourceLinksSkippedInactive += result.catalogSummary.sourceLinksSkippedInactive || 0
+      librarySummary.sourceLinksSkippedUnmatched += result.catalogSummary.sourceLinksSkippedUnmatched || 0
+      librarySummary.catalogs.push(result.catalogSummary)
+      summary.totals.catalogsSeen += 1
+      summary.totals.sourceLinksSeen += result.catalogSummary.sourceLinksSeen || 0
+      summary.totals.sourceLinksSaved += result.catalogSummary.sourceLinksSaved || 0
+      summary.totals.sourceLinksSkippedInactive += result.catalogSummary.sourceLinksSkippedInactive || 0
+      summary.totals.sourceLinksSkippedUnmatched += result.catalogSummary.sourceLinksSkippedUnmatched || 0
+      if (result.catalogSummary.error) summary.totals.catalogsFailed += 1
+    }
 
-      try {
-        for (const group of sourceGroups) {
-          const matchingBooks = []
-          const seenBookIds = new Set()
-          for (const { entry, source } of group.entries) {
-            const booksForEntry = buildMatchingBooks(entry, source, localBooks, localBookIndexes)
-            booksForEntry.forEach((book) => {
-              const bookId = String(book.libraryItemId || '')
-              if (!bookId || seenBookIds.has(bookId)) return
-              seenBookIds.add(bookId)
-              matchingBooks.push(book)
-            })
-          }
-
-          if (!matchingBooks.length) {
-            catalogSummary.sourceLinksSkippedUnmatched += 1
-            librarySummary.sourceLinksSkippedUnmatched += 1
-            summary.totals.sourceLinksSkippedUnmatched += 1
-            continue
-          }
-
-          const targetUrl = group.url
-          const inactiveKey = `${decisionKey}::${targetUrl}`
-          if (inactiveKeys.has(inactiveKey)) {
-            catalogSummary.sourceLinksSkippedInactive += 1
-            librarySummary.sourceLinksSkippedInactive += 1
-            summary.totals.sourceLinksSkippedInactive += 1
-            continue
-          }
-
-          const source = group.evidenceSource || group.entries[0]?.source || {}
-          const evidenceSnapshot = buildEvidenceSnapshot(catalogSeriesName, source, matchingBooks)
-          evidenceSnapshot.sequenceIncomplete = matchingBooks.length < localBooks.length
-          evidenceSnapshot.sequenceStatusNote = evidenceSnapshot.sequenceIncomplete ? 'Partial source coverage from current catalog entries' : ''
-
-          const payload = {
-            source: String(source.source || '').trim().toLowerCase() || 'fictiondb',
-            sourceSeriesName: deriveSourceSeriesName(source, catalogSeriesName),
-            sourceAuthor: deriveSourceAuthor(catalogSeriesName, source),
-            sourceSeriesUrl: targetUrl,
-            evidenceSnapshot
-          }
-
-          if (!args.dryRun) {
-            await SeriesReviewManager.saveLocalSeriesMatchForSeriesName(
-              library.id,
-              catalogSeriesName,
-              decisionKey,
-              payload,
-              catalog.id
-            )
-          }
-
-          catalogSummary.sourceLinksSeen += 1
-          catalogSummary.sourceLinksSaved += 1
-          librarySummary.sourceLinksSeen += 1
-          librarySummary.sourceLinksSaved += 1
-          summary.totals.sourceLinksSeen += 1
-          summary.totals.sourceLinksSaved += 1
-          catalogSummary.sourceLinks.push({
-            source: payload.source,
-            sourceSeriesUrl: targetUrl,
-            sourceSeriesName: payload.sourceSeriesName,
-            coverage: evidenceSnapshot.sequenceIncomplete ? 'partial' : 'linked',
-            matchingBookCount: matchingBooks.length,
-            totalBookCount: localBooks.length
-          })
-        }
-
-        librarySummary.catalogsSeen += 1
-        summary.totals.catalogsSeen += 1
-        librarySummary.catalogs.push(catalogSummary)
-        if (args.progressEvery > 0 && librarySummary.catalogsSeen % args.progressEvery === 0) {
-          process.stderr.write(
-            `[catalog_progress] ${library.name || library.id}: ${librarySummary.catalogsSeen}/${catalogs.length} ` +
-              `seen=${librarySummary.sourceLinksSeen} saved=${librarySummary.sourceLinksSaved} ` +
-              `inactive=${librarySummary.sourceLinksSkippedInactive} unmatched=${librarySummary.sourceLinksSkippedUnmatched}\n`
-          )
-        }
-      } catch (error) {
-        catalogSummary.error = String(error?.message || error)
-        librarySummary.catalogsFailed += 1
-        summary.totals.catalogsFailed += 1
-        librarySummary.catalogs.push(catalogSummary)
-        process.stderr.write(`[catalog_error] ${library.name || library.id} ${catalog.id}: ${catalogSummary.error}\n`)
-      }
+    const rowsToInsert = catalogResults.flatMap((result) => result?.rowsToInsert || [])
+    if (!args.dryRun && rowsToInsert.length) {
+      await bulkInsertSeriesSourceLinks(rowsToInsert)
     }
 
     process.stderr.write(
