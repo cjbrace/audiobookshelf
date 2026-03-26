@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const Path = require('path')
-const { Op } = require('../server/node_modules/sequelize')
+const { Op } = require('../node_modules/sequelize')
 
 const Database = require('../server/Database')
 const SeriesReviewManager = require('../server/managers/SeriesReviewManager')
