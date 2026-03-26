@@ -1292,6 +1292,28 @@ class SeriesReviewManager {
     return this.normalizeKeyPart(value || '')
   }
 
+  getCatalogEntryTitleKeys(value, seriesName = '') {
+    const keys = new Set()
+    const original = String(value || '').trim()
+    if (!original) return []
+
+    const addKey = (candidate) => {
+      const key = this.getCatalogEntryTitleKey(candidate)
+      if (key) keys.add(key)
+    }
+
+    addKey(original)
+
+    const normalizedSeriesName = String(seriesName || '').trim()
+    if (normalizedSeriesName) {
+      const escapedSeriesName = normalizedSeriesName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const stripped = original.replace(new RegExp(`^${escapedSeriesName}(?:\\s*[:\\-]\\s*|\\s+)`, 'i'), '').trim()
+      if (stripped && stripped !== original) addKey(stripped)
+    }
+
+    return [...keys]
+  }
+
   buildSeriesReviewCatalogPayload(catalog, action = null) {
     return {
       id: catalog.id,
@@ -2226,7 +2248,9 @@ class SeriesReviewManager {
           })
         })
       })
-      const summaryCounts = this.buildCatalogSummaryCounts(slotMap, catalog.selectionBySlot || {}, localBooks, summaryEntries)
+      const summaryCounts = this.buildCatalogSummaryCounts(slotMap, catalog.selectionBySlot || {}, localBooks, summaryEntries, {
+        seriesName: catalog.seriesName
+      })
       const displayBucket = this.getCatalogDisplayBucket({
         trustStatus: catalog.trustStatus,
         visibilityStatus: catalog.visibilityStatus,
@@ -2280,7 +2304,9 @@ class SeriesReviewManager {
           })
         })
       })
-      const summaryCounts = this.buildCatalogSummaryCounts(slotMap, {}, localBooks, [])
+      const summaryCounts = this.buildCatalogSummaryCounts(slotMap, {}, localBooks, [], {
+        seriesName: group.seriesName
+      })
       detailSummaries.push({
         ...this.buildCatalogViewPayload({
           id: group.catalogId,
@@ -2554,6 +2580,19 @@ class SeriesReviewManager {
   }
 
   finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = [], options = {}) {
+    const titleKeysFor = (value) => this.getCatalogEntryTitleKeys(value, options?.seriesName || '')
+    const unsequencedEntrySourceSupportByTitleKey = new Map()
+
+    entries
+      .filter((entry) => !entry.coveredSlots.length)
+      .forEach((entry) => {
+        const sourceSupport = this.buildCatalogSourceSupport(entry.sources)
+        titleKeysFor(entry.title).forEach((key) => {
+          if (!key || unsequencedEntrySourceSupportByTitleKey.has(key)) return
+          unsequencedEntrySourceSupportByTitleKey.set(key, sourceSupport)
+        })
+      })
+
     const integerSlots = []
     for (const slot of slotMap.keys()) {
       if (this.isIntegerCatalogSlot(slot)) integerSlots.push(Number(slot))
@@ -2593,7 +2632,10 @@ class SeriesReviewManager {
         slot.expectedTitle = slot.localBooks[0].title
         slot.expectedAuthors = (slot.localBooks[0].authors || []).map((author) => author?.name || author).filter(Boolean)
         slot.expectedPublishedDate = null
-        slot.sourceSupport = []
+        slot.sourceSupport = titleKeysFor(slot.localBooks[0].title).flatMap((key) => unsequencedEntrySourceSupportByTitleKey.get(key) || []).filter((source, index, list) => {
+          const identity = `${source.source}:${source.evidenceUrl || ''}:${source.label || ''}`
+          return list.findIndex((candidate) => `${candidate.source}:${candidate.evidenceUrl || ''}:${candidate.label || ''}` === identity) === index
+        })
       }
 
       if (slot.choices.length > 1 && !selectedChoice) {
@@ -2610,35 +2652,38 @@ class SeriesReviewManager {
     const unsequencedBooks = localBooks.filter((book) => !book.sequence)
     const unsequencedLocalBooksByTitle = new Map()
     unsequencedBooks.forEach((book) => {
-      const key = this.getCatalogEntryTitleKey(book.title)
-      if (!key) return
-      if (!unsequencedLocalBooksByTitle.has(key)) unsequencedLocalBooksByTitle.set(key, [])
-      unsequencedLocalBooksByTitle.get(key).push({
-        libraryItemId: book.libraryItemId,
-        title: book.title,
-        relPath: book.relPath,
-        sequence: book.sequence
+      titleKeysFor(book.title).forEach((key) => {
+        if (!key) return
+        if (!unsequencedLocalBooksByTitle.has(key)) unsequencedLocalBooksByTitle.set(key, [])
+        unsequencedLocalBooksByTitle.get(key).push({
+          libraryItemId: book.libraryItemId,
+          title: book.title,
+          relPath: book.relPath,
+          sequence: book.sequence
+        })
       })
     })
     const coveredTitleKeys = new Set()
     localBooks
       .filter((book) => !!book.sequence)
       .forEach((book) => {
-        const key = this.getCatalogEntryTitleKey(book.title)
-        if (key) coveredTitleKeys.add(key)
+        titleKeysFor(book.title).forEach((key) => {
+          if (key) coveredTitleKeys.add(key)
+        })
       })
     slots.forEach((slot) => {
       ;(slot.choices || []).forEach((choice) => {
-        const key = this.getCatalogEntryTitleKey(choice.title)
-        if (key) coveredTitleKeys.add(key)
+        titleKeysFor(choice.title).forEach((key) => {
+          if (key) coveredTitleKeys.add(key)
+        })
       })
     })
 
     const unsequencedSourceEntries = entries
       .filter((entry) => !entry.coveredSlots.length)
       .filter((entry) => {
-        const key = this.getCatalogEntryTitleKey(entry.title)
-        return key && !coveredTitleKeys.has(key)
+        const keys = titleKeysFor(entry.title)
+        return keys.length && !keys.some((key) => coveredTitleKeys.has(key))
       })
       .map((entry) => ({
         rowKey: `unsequenced:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
@@ -2653,7 +2698,9 @@ class SeriesReviewManager {
         publishedDate: entry.publishedDate || null,
         sequenceLabel: entry.sequenceLabel || null,
         sourceSupport: this.buildCatalogSourceSupport(entry.sources),
-        localBooks: unsequencedLocalBooksByTitle.get(this.getCatalogEntryTitleKey(entry.title)) || [],
+        localBooks: titleKeysFor(entry.title).flatMap((key) => unsequencedLocalBooksByTitle.get(key) || []).filter((book, index, list) => {
+          return list.findIndex((candidate) => candidate.libraryItemId === book.libraryItemId) === index
+        }),
         choices: [],
         selectedEntryKey: null,
         status: 'unsequenced'
@@ -2667,8 +2714,8 @@ class SeriesReviewManager {
     }
   }
 
-  buildCatalogSummaryCounts(slotMap, selectionBySlot, localBooks, entries = []) {
-    const finalized = this.finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries)
+  buildCatalogSummaryCounts(slotMap, selectionBySlot, localBooks, entries = [], options = {}) {
+    const finalized = this.finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries, options)
     return {
       missingCount: finalized.slots.filter((slot) => slot.status === 'missing').length,
       disputedCount: finalized.slots.filter((slot) => slot.status === 'disputed').length,
@@ -2759,7 +2806,9 @@ class SeriesReviewManager {
       })
     })
 
-    const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks, entries)
+    const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks, entries, {
+      seriesName: catalog.seriesName
+    })
 
     return {
       catalog: {
@@ -2832,7 +2881,10 @@ class SeriesReviewManager {
       })
     })
 
-    const finalized = this.finalizeCatalogSlots(slotMap, {}, localBooks, [], { fillIntegerGaps: false })
+    const finalized = this.finalizeCatalogSlots(slotMap, {}, localBooks, [], {
+      fillIntegerGaps: false,
+      seriesName: group.seriesName
+    })
     let localSeriesMatches = []
     if (!options?.skipLocalSeriesMatches) {
       const effectiveCatalogs = allCatalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))

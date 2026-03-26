@@ -1542,6 +1542,44 @@ describe('SeriesReviewManager', () => {
     expect(audibleSupport.rawEvidence).to.deep.equal({ source_ref: 'audible:us:B00ABC1234' })
   })
 
+  it('attaches unsequenced source support to covered local slots when local titles carry the series prefix', async () => {
+    await createBookFixture({
+      title: 'HALO: The Fall of Reach',
+      currentSeries: [{ name: 'Halo', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'HALO: The Flood',
+      currentSeries: [{ name: 'Halo', sequence: '2' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Halo',
+        entries: [
+          {
+            title: 'The Fall of Reach',
+            authors: ['Nylund, Eric'],
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/halo~13242.htm' }]
+          },
+          {
+            title: 'Halo: The Flood',
+            authors: ['Dietz, William C.'],
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.92, evidenceUrl: 'https://www.fictiondb.com/series/halo~13242.htm' }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const slot1 = detail.slots.find((slot) => slot.slot === '1')
+    const slot2 = detail.slots.find((slot) => slot.slot === '2')
+    expect(slot1).to.exist
+    expect(slot2).to.exist
+    expect((slot1.sourceSupport || []).map((support) => support.source)).to.deep.equal(['fictiondb'])
+    expect((slot2.sourceSupport || []).map((support) => support.source)).to.deep.equal(['fictiondb'])
+    expect(detail.unsequencedSourceEntries.map((entry) => entry.title)).to.deep.equal([])
+  })
+
   it('keeps source-only unsequenced continuation entries visible in catalog detail', async () => {
     await createBookFixture({
       title: 'Dune',
