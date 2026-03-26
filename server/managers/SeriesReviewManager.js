@@ -1513,12 +1513,6 @@ class SeriesReviewManager {
           order: [['seriesName', 'ASC']]
         })
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
-    const localBooksCache = new Map()
-    const expandedSeriesCache = new Map()
-    const preloadedSeriesBooksBySeriesId = await this.getSeriesBooksBySeriesIds(
-      libraryId,
-      [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
-    )
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
     const localMatchRows = await this.getLocalSeriesMatchRowsForLibrary(libraryId)
     const resolvedLocalDecisionKeys = new Set(localMatchRows.filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl)).map((matchRow) => matchRow.localDecisionKey))
@@ -1531,26 +1525,37 @@ class SeriesReviewManager {
         .filter(Boolean)
     )
     for (const catalog of catalogs) {
-      const detail = await this.getCatalogDetailForLibrary(libraryId, catalog.id, {
-        catalogRow: catalog,
-        resolver,
-        localSeriesGroups,
-        localBooksCache,
-        expandedSeriesCache,
-        preloadedSeriesBooksBySeriesId,
-        manualLinkedSeriesRowsBySourceUrl,
-        skipLocalSeriesMatches: true
+      const catalogEntryUrls = this.getCatalogSourceUrls(catalog.entries || [])
+      const isLocallyLinked = catalogEntryUrls.some((sourceUrl) => manualLinkedSeriesRowsBySourceUrl.has(sourceUrl))
+      const displayBucket = this.getCatalogDisplayBucket({
+        trustStatus: catalog.trustStatus,
+        visibilityStatus: catalog.visibilityStatus,
+        localBookCount: 0,
+        isLocallyLinked
       })
-      if (!detail) continue
-      const displayBucket = detail.catalog.displayBucket
       if (!includeDismissed && displayBucket === 'dismissed') continue
       if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'local_only' && displayBucket !== 'locally_linked' && displayBucket !== 'dismissed') continue
+      const summaryEntries = this.normalizeCatalogEntries(catalog.entries)
+      const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
       detailSummaries.push({
-        ...detail.catalog,
-        missingCount: detail.slots.filter((slot) => slot.status === 'missing').length,
-        disputedCount: detail.slots.filter((slot) => slot.status === 'disputed').length,
-        localBookCount: detail.localBooks.length,
-        unsequencedCount: detail.unsequencedBooks.length
+        ...this.buildCatalogViewPayload({
+          id: catalog.id,
+          seriesName: catalog.seriesName,
+          trustStatus: catalog.trustStatus,
+          visibilityStatus: catalog.visibilityStatus,
+          dismissedAt: catalog.dismissedAt || null,
+          entries: catalog.entries || [],
+          localBooks: [],
+          displayBucket,
+          isLocallyLinked,
+          canDismiss: true
+        }),
+        authorLine: authorMeta.authorLine,
+        authorSearchText: authorMeta.authorSearchText,
+        missingCount: 0,
+        disputedCount: 0,
+        localBookCount: 0,
+        unsequencedCount: 0
       })
     }
 
@@ -1562,9 +1567,6 @@ class SeriesReviewManager {
         localSeriesGroups,
         skipResolvedLookup: true,
         skipLocalSeriesMatches: true,
-        localBooksCache,
-        expandedSeriesCache,
-        preloadedSeriesBooksBySeriesId,
         manualLinkedSeriesRowsBySourceUrl
       })
       if (!detail?.localBooks?.length) continue
