@@ -2,8 +2,8 @@
 const Path = require('path')
 const { Op } = require('../../node_modules/sequelize')
 
-const Database = require('../server/Database')
-const SeriesReviewManager = require('../server/managers/SeriesReviewManager')
+const Database = require('../Database')
+const SeriesReviewManager = require('../managers/SeriesReviewManager')
 
 function parseArgs(argv) {
   const out = {
