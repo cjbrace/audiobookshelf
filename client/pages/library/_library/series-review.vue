@@ -34,6 +34,7 @@
             color="bg-bg border border-white/20"
             small
             :loading="localCatalogRefreshLoading"
+            :disabled="selectedCatalogDetailBusy"
             @click="refreshLocalCatalogMatches"
           >
             Refresh This Link
@@ -166,7 +167,12 @@
           </div>
         </div>
 
-        <div v-if="activeTab === 'catalog' && localCatalogMatchesExpanded" class="bg-black/20 rounded-lg p-3 border border-white/10 mb-4 space-y-3">
+        <div
+          v-if="activeTab === 'catalog' && localCatalogMatchesExpanded"
+          class="bg-black/20 rounded-lg p-3 border border-white/10 mb-4 space-y-3 transition-opacity"
+          :class="selectedCatalogDetailBusy ? 'opacity-50 pointer-events-none select-none' : ''"
+          :aria-busy="selectedCatalogDetailBusy ? 'true' : 'false'"
+        >
           <div class="flex flex-wrap items-start gap-3">
             <div class="grow min-w-[18rem]">
               <p class="text-sm uppercase tracking-wide text-gray-400">Lookup Link Import</p>
@@ -782,10 +788,18 @@
                   </button>
                 </div>
 
-                <div v-if="selectedCatalogDetail" class="rounded border border-white/15 bg-black/15 p-4 space-y-4">
+                <div
+                  v-if="selectedCatalogDetail"
+                  class="rounded border border-white/15 bg-black/15 p-4 space-y-4 transition-opacity"
+                  :class="selectedCatalogDetailBusy ? 'opacity-50 pointer-events-none select-none' : ''"
+                  :aria-busy="selectedCatalogDetailBusy ? 'true' : 'false'"
+                >
                   <div class="flex flex-wrap items-start gap-3">
                     <div class="grow min-w-[18rem]">
                       <h2 class="text-2xl font-semibold">{{ selectedCatalogHeading }}</h2>
+                      <p v-if="selectedCatalogDetailBusy" class="mt-1 text-xs text-amber-200">
+                        Loading the newly selected series. Actions are disabled until the detail panel catches up.
+                      </p>
                     </div>
                     <span
                       class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
@@ -1431,6 +1445,14 @@ export default {
       const authorLine = this.selectedCatalogAuthorLine
       return authorLine ? `${this.selectedCatalogDetail.catalog.seriesName} - ${authorLine}` : `${this.selectedCatalogDetail.catalog.seriesName}`
     },
+    selectedCatalogDetailReady() {
+      const selectedCatalogId = String(this.selectedCatalogId || '').trim()
+      const detailCatalogId = String(this.selectedCatalogDetail?.catalog?.id || '').trim()
+      return !!selectedCatalogId && !!detailCatalogId && selectedCatalogId === detailCatalogId
+    },
+    selectedCatalogDetailBusy() {
+      return !!this.selectedCatalogId && !this.selectedCatalogDetailReady
+    },
     canUseManualCatalogLookup() {
       return this.selectedCatalogDetail?.catalog?.displayBucket !== 'dismissed' && !!this.selectedCatalogDetail?.localBooks?.length
     },
@@ -2017,32 +2039,35 @@ export default {
       }
     },
     async lookupManualCatalogSources() {
-      if (!this.selectedCatalogDetail?.catalog?.id) return
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
       this.catalogManualLookupLoading = true
       this.catalogManualLookupError = ''
       try {
         const response = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/manual-lookup`
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/manual-lookup`
         )
+        if (this.selectedCatalogId !== catalogId) return
         this.catalogManualLookupResults = response.results || []
-        this.catalogManualLookupCatalogId = this.selectedCatalogDetail.catalog.id
+        this.catalogManualLookupCatalogId = catalogId
         if (!this.catalogManualLookupResults.length) {
           this.catalogManualLookupError = 'No source-series candidates matched this local series context'
         }
       } catch (error) {
         const message = error?.response?.data || 'Failed to look up source-series candidates'
-        this.catalogManualLookupError = message
+        if (this.selectedCatalogId === catalogId) this.catalogManualLookupError = message
         this.$toast.error(message)
       } finally {
         this.catalogManualLookupLoading = false
       }
     },
     async saveLocalCatalogMatch(result) {
-      if (!this.selectedCatalogDetail?.catalog?.id) return
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
       this.catalogManualLookupSavingKey = this.getManualLookupResultKey(result)
       try {
         const detail = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/local-match`,
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/local-match`,
           {
             source: result.source,
             sourceSeriesName: result.sourceSeriesName,
@@ -2052,6 +2077,7 @@ export default {
             evidenceSnapshot: result.evidenceSnapshot || {}
           }
         )
+        if (this.selectedCatalogId !== catalogId) return
         this.selectedCatalogDetail = detail
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
@@ -2064,12 +2090,14 @@ export default {
       }
     },
     async removeLocalCatalogMatch(match) {
-      if (!this.selectedCatalogDetail?.catalog?.id) return
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
       this.catalogLocalMatchRemovingKey = match.id
       try {
         const detail = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/local-match/${match.id}/remove`
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/local-match/${match.id}/remove`
         )
+        if (this.selectedCatalogId !== catalogId) return
         this.invalidateSeriesReviewCaches()
         await this.loadCatalogs({ preferCache: false })
         this.selectedCatalogDetail = detail
@@ -2114,12 +2142,15 @@ export default {
       }
     },
     async refreshLocalCatalogMatches() {
+      if (!this.selectedCatalogDetailReady) return
       this.localCatalogRefreshLoading = true
+      const catalogId = this.selectedCatalogDetail.catalog.id
       try {
         const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/local-matches/refresh`, {
-          catalogId: this.selectedCatalogDetail?.catalog?.id || ''
+          catalogId
         })
         const summary = response.summary || {}
+        if (this.selectedCatalogId !== catalogId) return
         this.$toast.success(
           `Refreshed ${summary.selected_matches || 0} match${(summary.selected_matches || 0) === 1 ? '' : 'es'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
         )
@@ -2133,17 +2164,19 @@ export default {
       }
     },
     async chooseCatalogSlot(choice, row) {
-      if (!this.selectedCatalogDetail) return
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
       const rowKey = this.getCatalogRowKey(row)
-      this.catalogChoiceLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${rowKey}:${choice.entryKey}`
+      this.catalogChoiceLoadingKey = `${catalogId}:${rowKey}:${choice.entryKey}`
       try {
         this.selectedCatalogDetail = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/slot-choice`,
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/slot-choice`,
           {
             slot: rowKey,
             entryKey: choice.entryKey
           }
         )
+        if (this.selectedCatalogId !== catalogId) return
         this.$set(this.catalogDetailCache, this.selectedCatalogDetail.catalog.id, this.selectedCatalogDetail)
         this.persistCatalogCaches()
         this.$delete(this.catalogCandidateResultsBySlot, rowKey)
@@ -2156,16 +2189,18 @@ export default {
       }
     },
     async findCatalogCandidates(row) {
-      if (!this.selectedCatalogDetail) return
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
       const rowKey = this.getCatalogRowKey(row)
-      this.catalogCandidateSearchLoadingKey = `${this.selectedCatalogDetail.catalog.id}:${rowKey}`
+      this.catalogCandidateSearchLoadingKey = `${catalogId}:${rowKey}`
       try {
         const response = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/find-candidates`,
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/find-candidates`,
           {
             slot: rowKey
           }
         )
+        if (this.selectedCatalogId !== catalogId) return
         this.$set(this.catalogCandidateResultsBySlot, rowKey, response)
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to find candidates')
@@ -2174,17 +2209,19 @@ export default {
       }
     },
     async queueCatalogCandidate(row, candidate) {
-      if (!this.selectedCatalogDetail) return
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
       const rowKey = this.getCatalogRowKey(row)
       this.catalogCandidateQueueLoadingKey = `${rowKey}:${candidate.libraryItemId}`
       try {
         const response = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${this.selectedCatalogDetail.catalog.id}/queue-candidate`,
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/queue-candidate`,
           {
             slot: rowKey,
             libraryItemId: candidate.libraryItemId
           }
         )
+        if (this.selectedCatalogId !== catalogId) return
         this.$toast.success(`Queued ${response.title} for review`)
         this.$delete(this.catalogCandidateResultsBySlot, rowKey)
         this.$delete(this.catalogCandidateFilterBySlot, rowKey)
@@ -2195,9 +2232,11 @@ export default {
       }
     },
     async dismissCatalog(catalog) {
+      if (!this.selectedCatalogDetailReady) return
       this.catalogVisibilityLoadingKey = catalog.id
       try {
         const detail = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalog.id}/dismiss`)
+        if (this.selectedCatalogId !== catalog.id) return
         this.$set(this.catalogDetailCache, catalog.id, detail)
         this.persistCatalogCaches()
         this.$toast.success('Series hidden from future scans and default detail view')
@@ -2209,9 +2248,11 @@ export default {
       }
     },
     async undismissCatalog(catalog) {
+      if (!this.selectedCatalogDetailReady) return
       this.catalogVisibilityLoadingKey = catalog.id
       try {
         const detail = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalog.id}/undismiss`)
+        if (this.selectedCatalogId !== catalog.id) return
         this.$set(this.catalogDetailCache, catalog.id, detail)
         this.persistCatalogCaches()
         this.$toast.success('Series restored')
