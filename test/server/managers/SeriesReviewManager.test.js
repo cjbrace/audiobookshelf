@@ -901,6 +901,70 @@ describe('SeriesReviewManager', () => {
     expect(batchMatches[0].localBooks).to.have.length(1)
   })
 
+  it('stores multiple saved source-series links on a sourced catalog detail', async () => {
+    await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Alpha Saga',
+        entries: [
+          {
+            title: 'Alpha Start',
+            authors: ['Author A'],
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/alpha-saga-author-a~123.htm' }]
+          }
+        ]
+      }
+    ])
+    const sourcedCatalogId = importResult.catalogs[0].id
+
+    const firstDetail = await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, sourcedCatalogId, {
+      source: 'fictiondb',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }],
+        sampleBooks: [{ title: 'Alpha Start', sequence: '1' }]
+      }
+    })
+    expect(firstDetail.catalog.localSeriesMatches).to.have.length(1)
+    expect(firstDetail.catalog.localSeriesMatches[0].source).to.equal('fictiondb')
+
+    const secondDetail = await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, sourcedCatalogId, {
+      source: 'audible',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceUrl: 'https://www.audible.co.uk/series/Alpha-Saga-Audiobooks/B0ALPHA001',
+      evidenceSnapshot: {
+        source: 'audible',
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceUrl: 'https://www.audible.co.uk/series/Alpha-Saga-Audiobooks/B0ALPHA001',
+        sourceLinkUrl: 'https://www.audible.co.uk/series/Alpha-Saga-Audiobooks/B0ALPHA001',
+        sourceIdentifier: 'ASIN B0ALPHA001',
+        sourceAsin: 'B0ALPHA001',
+        sourceRegion: 'UK',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }]
+      }
+    })
+
+    expect(secondDetail.catalog.localSeriesMatches).to.have.length(2)
+    expect(secondDetail.catalog.localSeriesMatches.map((match) => match.source).sort()).to.deep.equal(['audible', 'fictiondb'])
+
+    const batchMatches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(library.id, { includeResolved: true })
+    expect(batchMatches).to.have.length(2)
+    expect(batchMatches.map((match) => match.source).sort()).to.deep.equal(['audible', 'fictiondb'])
+  })
+
   it('hides resolved local-only series and applies saved local links to imported catalog coverage', async () => {
     await createBookFixture({
       title: 'Alpha Start',

@@ -42,6 +42,30 @@ class SeriesReviewManager {
         allowNull: true
       })
     }
+
+    await this.ensureSeriesReviewLocalSeriesMatchSchemaInner()
+  }
+
+  async ensureSeriesReviewLocalSeriesMatchSchemaInner() {
+    const queryInterface = Database.sequelize.getQueryInterface()
+    const tableName = 'seriesReviewLocalSeriesMatches'
+    const desiredIndexName = 'seriesReviewLocalSeriesMatch_library_local_decision_key_source_series_url'
+    const legacyIndexName = 'seriesReviewLocalSeriesMatch_library_local_decision_key'
+    const indexes = await queryInterface.showIndex(tableName)
+    if (indexes.some((index) => index.name === desiredIndexName)) return
+
+    try {
+      await queryInterface.removeIndex(tableName, legacyIndexName)
+    } catch (error) {
+      if (!String(error?.message || '').includes('no such index')) {
+        Logger.debug?.('[SeriesReviewManager] Failed to remove legacy local series match index', error)
+      }
+    }
+
+    await queryInterface.addIndex(tableName, ['libraryId', 'localDecisionKey', 'sourceSeriesUrl'], {
+      unique: true,
+      name: desiredIndexName
+    })
   }
 
   normalizeSeriesName(value) {
@@ -1274,23 +1298,36 @@ class SeriesReviewManager {
   }
 
   async buildManualLookupContextForCatalog(libraryId, catalogId) {
-    const decisionKey = this.parseLocalOnlyCatalogId(catalogId)
-    if (!decisionKey) {
-      throw new Error('Manual source lookup is only available for local unresolved series')
-    }
-
     const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
-    const group = localSeriesGroups.get(decisionKey)
+    const localOnlyDecisionKey = this.parseLocalOnlyCatalogId(catalogId)
+    let group = localOnlyDecisionKey ? localSeriesGroups.get(localOnlyDecisionKey) : null
+    let seriesName = group?.seriesName || ''
+
+    if (!group) {
+      const catalog = await Database.seriesReviewCatalogModel.findOne({
+        where: {
+          id: catalogId,
+          libraryId
+        }
+      })
+      if (!catalog || catalog.visibilityStatus === 'dismissed') return null
+      seriesName = this.normalizeSeriesName(catalog.seriesName || '')
+      if (!seriesName) return null
+      const catalogDecisionKey = resolver.getDecisionKey(seriesName)
+      group = localSeriesGroups.get(catalogDecisionKey) || null
+    }
+
     if (!group?.seriesName) return null
 
     const localBooks = await this.getLocalCatalogBooks(libraryId, group.seriesName, {
       resolver,
       matchingSeries: group.seriesRows
     })
+    if (!localBooks.length) return null
     return {
-      localSeriesName: group.seriesName,
-      localDecisionKey: decisionKey,
+      localSeriesName: seriesName || group.seriesName,
+      localDecisionKey: localOnlyDecisionKey || resolver.getDecisionKey(seriesName || group.seriesName),
       localBooks: localBooks.map((book) => ({
         libraryItemId: book.libraryItemId,
         title: book.title,
@@ -1328,7 +1365,8 @@ class SeriesReviewManager {
     const existing = await Database.seriesReviewLocalSeriesMatchModel.findOne({
       where: {
         libraryId,
-        localDecisionKey: decisionKey
+        localDecisionKey: decisionKey,
+        sourceSeriesUrl
       }
     })
 
@@ -1365,13 +1403,13 @@ class SeriesReviewManager {
   }
 
   async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId) {
-    const decisionKey = this.parseLocalOnlyCatalogId(catalogId)
-    if (!decisionKey) throw new Error('Manual source lookup is only available for local unresolved series')
+    const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
+    if (!context) throw new Error('Manual source lookup is not available for that series')
     const matchRow = await Database.seriesReviewLocalSeriesMatchModel.findOne({
       where: {
         id: matchId,
         libraryId,
-        localDecisionKey: decisionKey
+        localDecisionKey: context.localDecisionKey
       }
     })
     if (!matchRow) throw new Error('Saved local source link was not found')
@@ -1913,7 +1951,7 @@ class SeriesReviewManager {
       return this.getLocalOnlyCatalogDetailForLibrary(libraryId, localOnlyDecisionKey, options)
     }
 
-    const resolver = options?.resolver || null
+    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const catalog =
       options?.catalogRow?.id === catalogId && options?.catalogRow?.libraryId === libraryId
         ? options.catalogRow
@@ -1926,6 +1964,7 @@ class SeriesReviewManager {
     if (!catalog) return null
 
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver || undefined))
+    const effectiveCatalogs = options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
     const matchedSeriesRows = await this.getMatchingSeriesRowsForCatalog(libraryId, catalog.seriesName, {
       resolver: resolver || null,
       seriesRows: [...localSeriesGroups.values()].flatMap((group) => group.seriesRows || [])
@@ -1940,6 +1979,19 @@ class SeriesReviewManager {
       localBooksCache: options?.localBooksCache,
       expandedSeriesCache: options?.expandedSeriesCache
     })
+    const decisionKey = resolver?.getDecisionKey(catalog.seriesName) || ''
+    let localSeriesMatches = []
+    if (!options?.skipLocalSeriesMatches) {
+      localSeriesMatches = await this.getLocalSeriesMatchesForLibrary(libraryId, {
+        resolver,
+        localSeriesGroups,
+        catalogs: effectiveCatalogs,
+        includeResolved: true
+      })
+      if (decisionKey) {
+        localSeriesMatches = localSeriesMatches.filter((matchRow) => matchRow.localDecisionKey === decisionKey)
+      }
+    }
     const slotMap = new Map()
 
     localBooks.forEach((book) => {
@@ -1993,7 +2045,7 @@ class SeriesReviewManager {
           canDismiss: true
         }),
         selectionBySlot: catalog.selectionBySlot || {},
-        localSeriesMatches: [],
+        localSeriesMatches,
         canDismiss: true
       },
       localBooks,

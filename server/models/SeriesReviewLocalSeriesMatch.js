@@ -48,9 +48,9 @@ class SeriesReviewLocalSeriesMatch extends Model {
         modelName: 'seriesReviewLocalSeriesMatch',
         indexes: [
           {
-            name: 'seriesReviewLocalSeriesMatch_library_local_decision_key',
+            name: 'seriesReviewLocalSeriesMatch_library_local_decision_key_source_series_url',
             unique: true,
-            fields: ['libraryId', 'localDecisionKey']
+            fields: ['libraryId', 'localDecisionKey', 'sourceSeriesUrl']
           },
           {
             fields: ['libraryId', 'sourceSeriesUrl']
