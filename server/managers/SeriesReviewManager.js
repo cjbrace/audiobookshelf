@@ -1402,7 +1402,10 @@ class SeriesReviewManager {
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
     const catalogs = options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
     const sourceUrlMap = options?.sourceUrlMap || this.buildCatalogSourceUrlMap(catalogs)
-    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
+    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, {
+      activeOnly: true,
+      localDecisionKey: options?.localDecisionKey || null
+    })
     const results = []
 
     for (const matchRow of matchRows) {
@@ -2285,11 +2288,9 @@ class SeriesReviewManager {
         resolver,
         localSeriesGroups,
         catalogs: effectiveCatalogs,
-        includeResolved: true
+        includeResolved: true,
+        localDecisionKey: decisionKey
       })
-      if (decisionKey) {
-        localSeriesMatches = localSeriesMatches.filter((matchRow) => matchRow.localDecisionKey === decisionKey)
-      }
     }
     const slotMap = new Map()
 
@@ -2410,7 +2411,8 @@ class SeriesReviewManager {
         localSeriesGroups,
         catalogs: effectiveCatalogs,
         sourceUrlMap: this.buildCatalogSourceUrlMap(effectiveCatalogs),
-        includeResolved: true
+        includeResolved: true,
+        localDecisionKey: decisionKey
       })
     }
     return {
@@ -2426,8 +2428,8 @@ class SeriesReviewManager {
           canDismiss: false
         }),
         selectionBySlot: {},
-        localSeriesMatches: localSeriesMatches.filter((matchRow) => matchRow.localDecisionKey === decisionKey),
-        savedSeriesLinks: localSeriesMatches.filter((matchRow) => matchRow.localDecisionKey === decisionKey),
+        localSeriesMatches,
+        savedSeriesLinks: localSeriesMatches,
         canDismiss: false
       },
       localBooks,
