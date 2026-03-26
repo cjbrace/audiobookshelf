@@ -52,6 +52,15 @@ class SeriesReviewSeriesSourceLink extends Model {
           allowNull: false,
           defaultValue: 0
         },
+        importStatus: {
+          type: DataTypes.STRING,
+          allowNull: false,
+          defaultValue: 'imported'
+        },
+        lastImportedAt: {
+          type: DataTypes.DATE,
+          allowNull: true
+        },
         evidenceSnapshot: {
           type: DataTypes.JSON,
           allowNull: false,

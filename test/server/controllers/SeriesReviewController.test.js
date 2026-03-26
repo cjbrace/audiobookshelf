@@ -356,8 +356,32 @@ describe('SeriesReviewController', () => {
 
     await SeriesReviewController.getLocalCatalogMatches(req, res)
 
-    expect(SeriesReviewManager.getLocalSeriesMatchesForLibrary.calledOnceWithExactly('library-1', { includeResolved: false })).to.be.true
+    expect(SeriesReviewManager.getLocalSeriesMatchesForLibrary.calledOnceWithExactly('library-1', { includeResolved: false, pendingOnly: false })).to.be.true
     expect(res.json.calledOnceWithExactly({ matches: [{ id: 'match-1' }] })).to.be.true
+  })
+
+  it('lists pending saved local catalog matches including resolved rows for batch import', async () => {
+    sinon.stub(SeriesReviewManager, 'getLocalSeriesMatchesForLibrary').resolves([{ id: 'match-2' }])
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      query: {
+        includeResolved: '1',
+        pendingOnly: '1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.getLocalCatalogMatches(req, res)
+
+    expect(SeriesReviewManager.getLocalSeriesMatchesForLibrary.calledOnceWithExactly('library-1', { includeResolved: true, pendingOnly: true })).to.be.true
+    expect(res.json.calledOnceWithExactly({ matches: [{ id: 'match-2' }] })).to.be.true
   })
 
   it('saves a selected local source-series link', async () => {
@@ -411,6 +435,7 @@ describe('SeriesReviewController', () => {
       ]
     })
     sinon.stub(SeriesReviewManager, 'saveLocalSeriesMatchForSeriesName').resolves({ id: 'match-1' })
+    sinon.stub(SeriesReviewManager, 'markSeriesSourceLinksImported').resolves(1)
     sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1, queue_rows_updated: 1 } })
 
     const req = {
@@ -435,11 +460,16 @@ describe('SeriesReviewController', () => {
       evidenceSnapshot: { sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }
     }, 'local-series:android-x')).to.be.true
     expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnce).to.be.true
+    expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', {
+      localDecisionKey: 'android x',
+      sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU'
+    })).to.be.true
     expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1, queue_rows_updated: 1 } })).to.be.true
   })
 
   it('imports selected saved local source-series links', async () => {
     sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
+    sinon.stub(SeriesReviewManager, 'markSeriesSourceLinksImported').resolves(1)
     sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1 } })
 
     const req = {
@@ -458,7 +488,36 @@ describe('SeriesReviewController', () => {
 
     expect(SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary.calledOnceWithExactly('library-1', [{ matchId: 'match-1', includedLibraryItemIds: ['item-1'] }])).to.be.true
     expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }])).to.be.true
+    expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', { matchIds: ['match-1'] })).to.be.true
     expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1 } })).to.be.true
+  })
+
+  it('returns an empty summary when no pending saved local source-series links are ready to import', async () => {
+    sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([])
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      body: { matches: [{ matchId: 'match-1', includedLibraryItemIds: ['item-1'] }] }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.importLocalCatalogMatches(req, res)
+
+    expect(res.json.calledOnceWithExactly({
+      library_id: 'library-1',
+      summary: {
+        selected_matches: 0,
+        queue_rows_updated: 0,
+        series_catalogs_created: 0,
+        series_catalogs_updated: 0
+      }
+    })).to.be.true
   })
 
   it('imports catalog rows for the library', async () => {

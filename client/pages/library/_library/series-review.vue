@@ -179,17 +179,17 @@
               <p class="text-base text-gray-100 mt-1">Import only the saved lookup links. Untick individual books before running the batch.</p>
             </div>
             <div class="text-sm text-gray-300">
-              Saved matches: {{ unresolvedLocalCatalogMatches.length }}
+              Saved matches: {{ pendingLocalCatalogMatches.length }}
             </div>
           </div>
 
-          <div v-if="!unresolvedLocalCatalogMatches.length && !localCatalogMatchesLoading" class="rounded border border-white/10 bg-black/15 px-3 py-4 text-sm text-gray-400">
+          <div v-if="!pendingLocalCatalogMatches.length && !localCatalogMatchesLoading" class="rounded border border-white/10 bg-black/15 px-3 py-4 text-sm text-gray-400">
             No saved lookup links are waiting for import.
           </div>
 
           <div v-else class="space-y-3">
             <div
-              v-for="match in unresolvedLocalCatalogMatches"
+              v-for="match in pendingLocalCatalogMatches"
               :key="'local-match-batch:' + match.id"
               class="rounded border border-white/10 bg-black/15 p-3 space-y-3"
             >
@@ -1477,11 +1477,11 @@ export default {
     selectedCatalogLocalMatches() {
       return this.selectedCatalogDetail?.catalog?.savedSeriesLinks || this.selectedCatalogDetail?.catalog?.localSeriesMatches || []
     },
-    unresolvedLocalCatalogMatches() {
-      return (this.localCatalogMatches || []).filter((match) => !match.resolvedCatalogId)
+    pendingLocalCatalogMatches() {
+      return (this.localCatalogMatches || []).filter((match) => !!match.pendingImport)
     },
     selectedLocalCatalogMatchCount() {
-      return this.unresolvedLocalCatalogMatches.filter((match) => (this.localCatalogMatchSelectionById[match.id] || []).length).length
+      return this.pendingLocalCatalogMatches.filter((match) => (this.localCatalogMatchSelectionById[match.id] || []).length).length
     }
   },
   mounted() {
@@ -2003,7 +2003,6 @@ export default {
     initializeLocalCatalogMatchSelections(matches) {
       const nextSelections = { ...this.localCatalogMatchSelectionById }
       ;(matches || []).forEach((match) => {
-        if (match.resolvedCatalogId) return
         const existing = nextSelections[match.id]
         const availableIds = (match.localBooks || []).map((book) => book.libraryItemId)
         if (existing && existing.length) {
@@ -2017,7 +2016,7 @@ export default {
     async loadLocalCatalogMatches({ silent = false } = {}) {
       this.localCatalogMatchesLoading = true
       try {
-        const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/local-matches`)
+        const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/local-matches?includeResolved=1&pendingOnly=1`)
         this.localCatalogMatches = response.matches || []
         this.initializeLocalCatalogMatchSelections(this.localCatalogMatches)
       } catch (error) {
@@ -2148,7 +2147,7 @@ export default {
       }
     },
     async importSelectedLocalCatalogMatches() {
-      const matches = this.unresolvedLocalCatalogMatches
+      const matches = this.pendingLocalCatalogMatches
         .map((match) => ({
           matchId: match.id,
           includedLibraryItemIds: this.localCatalogMatchSelectionById[match.id] || []

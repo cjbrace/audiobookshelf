@@ -894,11 +894,13 @@ describe('SeriesReviewManager', () => {
     expect(detail.catalog.localSeriesMatches).to.have.length(1)
     expect(detail.catalog.localSeriesMatches[0].sourceSeriesName).to.equal('The Alpha Saga')
     expect(detail.catalog.localSeriesMatches[0].sourceUrl).to.equal('https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm')
+    expect(detail.catalog.localSeriesMatches[0].pendingImport).to.equal(true)
 
     const batchMatches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(library.id)
     expect(batchMatches).to.have.length(1)
     expect(batchMatches[0].localSeriesName).to.equal('Alpha Saga')
     expect(batchMatches[0].localBooks).to.have.length(1)
+    expect(batchMatches[0].pendingImport).to.equal(true)
   })
 
   it('stores multiple saved source-series links on a sourced catalog detail', async () => {
@@ -963,6 +965,145 @@ describe('SeriesReviewManager', () => {
     const batchMatches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(library.id, { includeResolved: true })
     expect(batchMatches).to.have.length(2)
     expect(batchMatches.map((match) => match.source).sort()).to.deep.equal(['audible', 'fictiondb'])
+    expect(batchMatches.every((match) => match.pendingImport)).to.equal(true)
+  })
+
+  it('keeps pending saved links visible for batch import even when they already resolve to a catalog', async () => {
+    await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+
+    const detail = await SeriesReviewManager.saveLocalSeriesMatchForSeriesName(library.id, 'Alpha Saga', '', {
+      source: 'fictiondb',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }],
+        sampleBooks: [{ title: 'Alpha Start', sequence: '1' }]
+      }
+    })
+    expect(detail.catalog.localSeriesMatches[0].pendingImport).to.equal(true)
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Alpha Saga',
+        entries: [
+          {
+            title: 'Alpha Start',
+            authors: ['Author A'],
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm' }]
+          }
+        ]
+      }
+    ])
+
+    const pendingMatches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(library.id, {
+      includeResolved: true,
+      pendingOnly: true
+    })
+    expect(pendingMatches).to.have.length(1)
+    expect(pendingMatches[0].resolvedCatalogId).to.equal(importResult.catalogs[0].id)
+    expect(pendingMatches[0].pendingImport).to.equal(true)
+
+    await SeriesReviewManager.markSeriesSourceLinksImported(library.id, {
+      matchIds: [pendingMatches[0].id]
+    })
+
+    const pendingAfterImport = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(library.id, {
+      includeResolved: true,
+      pendingOnly: true
+    })
+    expect(pendingAfterImport).to.have.length(0)
+
+    const allMatches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(library.id, {
+      includeResolved: true
+    })
+    expect(allMatches).to.have.length(1)
+    expect(allMatches[0].pendingImport).to.equal(false)
+    expect(allMatches[0].importStatus).to.equal('imported')
+    expect(allMatches[0].lastImportedAt).to.exist
+  })
+
+  it('fully removes imported source-link artifacts when a saved link is removed', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+    await stubExpandedLibraryItems()
+
+    await SeriesReviewManager.saveLocalSeriesMatchForSeriesName(library.id, 'Alpha Saga', '', {
+      source: 'fictiondb',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }],
+        sampleBooks: [{ title: 'Alpha Start', sequence: '1' }]
+      }
+    })
+
+    const linkRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
+      where: {
+        libraryId: library.id,
+        sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm'
+      }
+    })
+    linkRow.importStatus = 'imported'
+    linkRow.lastImportedAt = new Date()
+    await linkRow.save()
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          {
+            source: 'fictiondb',
+            label: 'FDB',
+            seriesName: 'The Alpha Saga',
+            sequence: '1',
+            confidence: 0.98,
+            evidenceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+            rawEvidence: {
+              localSeriesImport: {
+                sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm'
+              }
+            }
+          }
+        ]
+      }
+    ])
+
+    const queueBeforeApply = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const suggestion = queueBeforeApply[0].suggestions.find((candidate) => candidate.suggestedName === 'The Alpha Saga')
+    await SeriesReviewManager.applySuggestion(suggestion.id, user.id, 'add')
+
+    await SeriesReviewManager.removeLocalSeriesMatchForLibrary(library.id, SeriesReviewManager.buildLocalOnlyCatalogId('alpha saga'), linkRow.id, user.id)
+
+    const updatedLinkRow = await Database.seriesReviewSeriesSourceLinkModel.findByPk(linkRow.id)
+    expect(updatedLinkRow.isActive).to.equal(false)
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.series).to.deep.equal([])
+
+    const activeSuggestions = await Database.seriesReviewSuggestionModel.findAll({
+      where: {
+        libraryId: library.id,
+        libraryItemId: libraryItem.id,
+        isActive: true
+      }
+    })
+    expect(activeSuggestions).to.have.length(0)
   })
 
   it('backfills legacy saved local links into the persistent source-link table on first series-review access', async () => {

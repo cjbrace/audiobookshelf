@@ -157,7 +157,7 @@ class SeriesReviewController {
 
     let detail
     try {
-      detail = await SeriesReviewManager.removeLocalSeriesMatchForLibrary(req.library.id, req.params.catalogId, req.params.matchId)
+      detail = await SeriesReviewManager.removeLocalSeriesMatchForLibrary(req.library.id, req.params.catalogId, req.params.matchId, req.user.id)
     } catch (error) {
       return handleActionError(res, error)
     }
@@ -170,7 +170,8 @@ class SeriesReviewController {
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
 
     const includeResolved = req.query.includeResolved === '1'
-    const matches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(req.library.id, { includeResolved })
+    const pendingOnly = req.query.pendingOnly === '1'
+    const matches = await SeriesReviewManager.getLocalSeriesMatchesForLibrary(req.library.id, { includeResolved, pendingOnly })
     res.json({ matches })
   }
 
@@ -181,7 +182,21 @@ class SeriesReviewController {
     let matches
     try {
       matches = await SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary(req.library.id, req.body?.matches)
+      if (!matches.length) {
+        return res.json({
+          library_id: req.library.id,
+          summary: {
+            selected_matches: 0,
+            queue_rows_updated: 0,
+            series_catalogs_created: 0,
+            series_catalogs_updated: 0
+          }
+        })
+      }
       const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, {
+        matchIds: matches.map((match) => match.matchId)
+      })
       return res.json(result)
     } catch (error) {
       const statusCode = Number(error?.statusCode || 0)
@@ -273,6 +288,10 @@ class SeriesReviewController {
         }
       ]
       const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, {
+        localDecisionKey: SeriesReviewManager.normalizeDecisionKey(String(catalogDetail.catalog?.seriesName || '').trim()),
+        sourceSeriesUrl: selectedResult.sourceSeriesUrl || selectedResult.sourceUrl || ''
+      })
       return res.json(result)
     } catch (error) {
       const statusCode = Number(error?.statusCode || 0)

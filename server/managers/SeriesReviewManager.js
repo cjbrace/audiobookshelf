@@ -105,6 +105,24 @@ class SeriesReviewManager {
     }
     if (!tableDescription) return
 
+    const DataTypes = queryInterface.sequelize.Sequelize.DataTypes
+    if (!tableDescription.importStatus) {
+      await queryInterface.addColumn(tableName, 'importStatus', {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: 'imported'
+      })
+      await queryInterface.sequelize.query("UPDATE seriesReviewSeriesSourceLinks SET importStatus = 'imported' WHERE importStatus IS NULL OR TRIM(importStatus) = ''")
+    }
+
+    if (!tableDescription.lastImportedAt) {
+      await queryInterface.addColumn(tableName, 'lastImportedAt', {
+        type: DataTypes.DATE,
+        allowNull: true
+      })
+      await queryInterface.sequelize.query('UPDATE seriesReviewSeriesSourceLinks SET lastImportedAt = COALESCE(updatedAt, createdAt) WHERE isActive = 1 AND lastImportedAt IS NULL')
+    }
+
     const existingCount = await Database.seriesReviewSeriesSourceLinkModel.count()
     const legacyRows = await Database.seriesReviewLocalSeriesMatchModel.findAll({
       order: [['updatedAt', 'DESC']],
@@ -120,9 +138,9 @@ class SeriesReviewManager {
       const coverageStatus = linkedBookCount > 0 ? 'linked' : 'partial'
       await Database.sequelize.query(
         `INSERT OR IGNORE INTO seriesReviewSeriesSourceLinks
-          (id, libraryId, localDecisionKey, localSeriesName, source, sourceSeriesName, sourceAuthor, sourceSeriesUrl, coverageStatus, linkedBookCount, totalBookCount, evidenceSnapshot, isActive, unlinkedAt, unlinkedByUserId, createdAt, updatedAt)
+          (id, libraryId, localDecisionKey, localSeriesName, source, sourceSeriesName, sourceAuthor, sourceSeriesUrl, coverageStatus, linkedBookCount, totalBookCount, importStatus, lastImportedAt, evidenceSnapshot, isActive, unlinkedAt, unlinkedByUserId, createdAt, updatedAt)
          VALUES
-          (:id, :libraryId, :localDecisionKey, :localSeriesName, :source, :sourceSeriesName, :sourceAuthor, :sourceSeriesUrl, :coverageStatus, :linkedBookCount, :totalBookCount, :evidenceSnapshot, 1, NULL, NULL, :createdAt, :updatedAt)`,
+          (:id, :libraryId, :localDecisionKey, :localSeriesName, :source, :sourceSeriesName, :sourceAuthor, :sourceSeriesUrl, :coverageStatus, :linkedBookCount, :totalBookCount, 'imported', :lastImportedAt, :evidenceSnapshot, 1, NULL, NULL, :createdAt, :updatedAt)`,
         {
           replacements: {
             id: row.id,
@@ -136,6 +154,7 @@ class SeriesReviewManager {
             coverageStatus,
             linkedBookCount,
             totalBookCount: linkedBookCount,
+            lastImportedAt: row.updatedAt || row.createdAt || now,
             evidenceSnapshot: JSON.stringify(evidenceSnapshot || {}),
             createdAt: row.createdAt || now,
             updatedAt: row.updatedAt || now
@@ -1495,6 +1514,7 @@ class SeriesReviewManager {
     const linkedBookCount = this.getSeriesSourceLinkBookCount(snapshot) || Number(linkRow?.linkedBookCount || 0)
     const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number(linkRow?.totalBookCount || 0)
     const coverageStatus = this.getSeriesSourceLinkCoverageStatus(linkRow, localBooks, snapshot)
+    const importStatus = String(linkRow?.importStatus || 'imported').trim().toLowerCase() === 'pending' ? 'pending' : 'imported'
     return {
       id: linkRow.id,
       localDecisionKey: linkRow.localDecisionKey,
@@ -1516,6 +1536,9 @@ class SeriesReviewManager {
       linkedBookCount,
       totalBookCount,
       coverageStatus,
+      importStatus,
+      pendingImport: importStatus === 'pending',
+      lastImportedAt: linkRow?.lastImportedAt || null,
       isActive: linkRow.isActive !== false,
       unlinkedAt: linkRow.unlinkedAt || null,
       unlinkedByUserId: linkRow.unlinkedByUserId || null,
@@ -1588,6 +1611,7 @@ class SeriesReviewManager {
         ? await this.getLocalCatalogBooks(libraryId, group.seriesName, { resolver, matchingSeries: group.seriesRows })
         : []
       const resolvedCatalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl) || null
+      if (options?.pendingOnly && String(matchRow.importStatus || 'imported').trim().toLowerCase() !== 'pending') continue
       if (!options?.includeResolved && resolvedCatalogId) continue
       results.push(this.buildSeriesSourceLinkPayload(matchRow, { localBooks, resolvedCatalogId }))
     }
@@ -1745,6 +1769,8 @@ class SeriesReviewManager {
       existing.coverageStatus = coverageStatus
       existing.linkedBookCount = linkedBookCount
       existing.totalBookCount = totalBookCount
+      existing.importStatus = 'pending'
+      existing.lastImportedAt = null
       existing.evidenceSnapshot = evidenceSnapshot
       existing.isActive = true
       existing.unlinkedAt = null
@@ -1762,6 +1788,8 @@ class SeriesReviewManager {
         coverageStatus,
         linkedBookCount,
         totalBookCount,
+        importStatus: 'pending',
+        lastImportedAt: null,
         evidenceSnapshot
       })
     }
@@ -1777,7 +1805,7 @@ class SeriesReviewManager {
     })
   }
 
-  async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId) {
+  async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId, userId = null) {
     const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
     if (!context) throw new Error('Manual source lookup is not available for that series')
     const matchRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
@@ -1788,8 +1816,11 @@ class SeriesReviewManager {
       }
     })
     if (!matchRow) throw new Error('Saved local source link was not found')
+    await this.cleanupImportedArtifactsForSeriesSourceLink(libraryId, matchRow, userId)
     matchRow.isActive = false
+    matchRow.importStatus = 'imported'
     matchRow.unlinkedAt = new Date()
+    matchRow.unlinkedByUserId = userId || null
     await matchRow.save()
     return this.getCatalogDetailForLibrary(libraryId, catalogId)
   }
@@ -1797,8 +1828,6 @@ class SeriesReviewManager {
   async buildLocalSeriesMatchImportPayloadForLibrary(libraryId, selections, options = {}) {
     const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
-    const catalogs = await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
-    const sourceUrlMap = this.buildCatalogSourceUrlMap(catalogs)
     const forceRefresh = !!options?.forceRefresh
     const requestedSelections = Array.isArray(selections) ? selections : []
     const matches = []
@@ -1815,7 +1844,7 @@ class SeriesReviewManager {
       if (!matchRow || matchRow.isActive === false) {
         throw new Error('Saved local source link was not found')
       }
-      if (!forceRefresh && sourceUrlMap.has(matchRow.sourceSeriesUrl)) continue
+      if (!forceRefresh && String(matchRow.importStatus || 'imported').trim().toLowerCase() !== 'pending') continue
 
       const group = localSeriesGroups.get(matchRow.localDecisionKey)
       if (!group?.seriesName) continue
@@ -1851,6 +1880,159 @@ class SeriesReviewManager {
     }
 
     return matches
+  }
+
+  async markSeriesSourceLinksImported(libraryId, options = {}) {
+    await this.ensureSeriesReviewSeriesSourceLinkSchemaInner()
+    const where = { libraryId }
+    let hasSelector = false
+
+    if (Array.isArray(options?.matchIds) && options.matchIds.length) {
+      where.id = {
+        [Op.in]: [...new Set(options.matchIds.map((value) => String(value || '').trim()).filter(Boolean))]
+      }
+      hasSelector = where.id[Op.in].length > 0
+    }
+    if (options?.localDecisionKey) {
+      where.localDecisionKey = String(options.localDecisionKey || '').trim()
+      hasSelector = true
+    }
+    if (options?.sourceSeriesUrl) {
+      where.sourceSeriesUrl = String(options.sourceSeriesUrl || '').trim()
+      hasSelector = true
+    }
+    if (!hasSelector) return 0
+
+    const rows = await Database.seriesReviewSeriesSourceLinkModel.findAll({ where })
+    if (!rows.length) return 0
+
+    const importedAt = new Date()
+    for (const row of rows) {
+      row.importStatus = 'imported'
+      row.lastImportedAt = importedAt
+      await row.save()
+    }
+    return rows.length
+  }
+
+  doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl) {
+    const normalizedSourceSeriesUrl = String(sourceSeriesUrl || '').trim()
+    if (!normalizedSourceSeriesUrl) return false
+    const evidenceUrl = String(contribution?.evidenceUrl || '').trim()
+    if (evidenceUrl === normalizedSourceSeriesUrl) return true
+    const importedUrl = String(contribution?.rawEvidence?.localSeriesImport?.sourceSeriesUrl || '').trim()
+    return importedUrl === normalizedSourceSeriesUrl
+  }
+
+  async unlinkSuggestionSeriesFromLibraryItem(libraryItem, suggestion, resolver = null) {
+    if (!libraryItem || !libraryItem.isBook || !suggestion) return null
+    const effectiveResolver = resolver || (await this.getSeriesNameControlResolverForLibrary(libraryItem.libraryId))
+    const currentSeries = Array.isArray(libraryItem.media.series) ? libraryItem.media.series : []
+    const matchingSeriesIds = currentSeries
+      .filter((series) => effectiveResolver.getDecisionKey(series.name) === effectiveResolver.getDecisionKey(suggestion.suggestedName))
+      .filter((series) => this.sequencesCompatible(series.bookSeries?.sequence || null, suggestion.suggestedSequence))
+      .map((series) => series.id)
+
+    if (!matchingSeriesIds.length) return null
+
+    const nextSeries = currentSeries
+      .filter((series) => !matchingSeriesIds.includes(series.id))
+      .map((series) => ({
+        name: series.name,
+        sequence: series.bookSeries?.sequence || null
+      }))
+
+    const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(nextSeries, libraryItem.libraryId)
+    await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
+    return Database.libraryItemModel.getExpandedById(libraryItem.id)
+  }
+
+  async rebuildSuggestionsForLibraryItems(libraryId, libraryItemIds = [], resolver = null) {
+    const ids = [...new Set((Array.isArray(libraryItemIds) ? libraryItemIds : []).map((value) => String(value || '').trim()).filter(Boolean))]
+    if (!ids.length) return
+
+    const activeSuggestions = await Database.seriesReviewSuggestionModel.findAll({
+      where: {
+        libraryId,
+        libraryItemId: {
+          [Op.in]: ids
+        },
+        isActive: true
+      }
+    })
+
+    const rowsByLibraryItem = new Map()
+    activeSuggestions.forEach((suggestion) => {
+      if (!rowsByLibraryItem.has(suggestion.libraryItemId)) {
+        rowsByLibraryItem.set(suggestion.libraryItemId, [])
+      }
+      rowsByLibraryItem.get(suggestion.libraryItemId).push(...(Array.isArray(suggestion.contributions) ? suggestion.contributions : []))
+    })
+
+    const rows = [...rowsByLibraryItem.entries()].map(([libraryItemId, sourceSuggestions]) => ({
+      libraryItemId,
+      sourceSuggestions
+    }))
+    if (!rows.length) return
+
+    await this.importSuggestionsForLibrary(libraryId, rows, {
+      resolver: resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    })
+  }
+
+  async cleanupImportedArtifactsForSeriesSourceLink(libraryId, matchRow, userId = null) {
+    const sourceSeriesUrl = String(matchRow?.sourceSeriesUrl || '').trim()
+    if (!sourceSeriesUrl) return
+
+    const suggestions = await Database.seriesReviewSuggestionModel.findAll({
+      where: {
+        libraryId,
+        isActive: true
+      }
+    })
+    if (!suggestions.length) return
+
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    const affectedLibraryItemIds = new Set()
+    const libraryItemsById = new Map()
+
+    for (const suggestion of suggestions) {
+      const contributions = Array.isArray(suggestion.contributions) ? suggestion.contributions : []
+      const removedContributions = contributions.filter((contribution) => this.doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl))
+      if (!removedContributions.length) continue
+
+      affectedLibraryItemIds.add(suggestion.libraryItemId)
+      const remainingContributions = contributions.filter((contribution) => !this.doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl))
+      const removedSeriesSupport = removedContributions.some((contribution) => !contribution?.noSeries)
+      const remainingSeriesSupport = remainingContributions.some((contribution) => !contribution?.noSeries)
+
+      if (suggestion.kind === 'series' && removedSeriesSupport && !remainingSeriesSupport && ['linked', 'applied', 'manual_override'].includes(suggestion.state)) {
+        let libraryItem = libraryItemsById.get(suggestion.libraryItemId)
+        if (!libraryItem) {
+          libraryItem = await Database.libraryItemModel.getExpandedById(suggestion.libraryItemId)
+          if (libraryItem) libraryItemsById.set(suggestion.libraryItemId, libraryItem)
+        }
+        if (libraryItem?.isBook) {
+          const updatedLibraryItem = await this.unlinkSuggestionSeriesFromLibraryItem(libraryItem, suggestion, resolver)
+          if (updatedLibraryItem) libraryItemsById.set(suggestion.libraryItemId, updatedLibraryItem)
+        }
+      }
+
+      suggestion.contributions = remainingContributions
+      suggestion.decisionAction = null
+      suggestion.decisionSeriesId = null
+      suggestion.decidedAt = null
+      suggestion.decidedByUserId = userId || null
+      suggestion.state = 'pending'
+      if (!remainingContributions.length) {
+        suggestion.isActive = false
+      }
+      await suggestion.save()
+    }
+
+    if (affectedLibraryItemIds.size) {
+      await this.rebuildSuggestionsForLibraryItems(libraryId, [...affectedLibraryItemIds], resolver)
+    }
   }
 
   async refreshLocalSeriesMatchesForLibrary(libraryId, matchIds = [], options = {}) {
@@ -3708,25 +3890,10 @@ class SeriesReviewManager {
     if (!libraryItem || !libraryItem.isBook) return null
 
     const resolver = await this.getSeriesNameControlResolverForLibrary(suggestion.libraryId)
-    const currentSeries = Array.isArray(libraryItem.media.series) ? libraryItem.media.series : []
-    const matchingSeriesIds = currentSeries
-      .filter((series) => resolver.getDecisionKey(series.name) === resolver.getDecisionKey(suggestion.suggestedName))
-      .filter((series) => this.sequencesCompatible(series.bookSeries?.sequence || null, suggestion.suggestedSequence))
-      .map((series) => series.id)
-
-    if (!matchingSeriesIds.length) {
+    const updatedLibraryItem = await this.unlinkSuggestionSeriesFromLibraryItem(libraryItem, suggestion, resolver)
+    if (!updatedLibraryItem) {
       throw new Error('No linked series entry was found on the book')
     }
-
-    const nextSeries = currentSeries
-      .filter((series) => !matchingSeriesIds.includes(series.id))
-      .map((series) => ({
-        name: series.name,
-        sequence: series.bookSeries?.sequence || null
-      }))
-
-    const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(nextSeries, libraryItem.libraryId)
-    await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
 
     suggestion.state = 'pending'
     suggestion.decisionAction = null
@@ -3737,7 +3904,7 @@ class SeriesReviewManager {
 
     return {
       suggestion,
-      libraryItem: await Database.libraryItemModel.getExpandedById(libraryItem.id)
+      libraryItem: updatedLibraryItem
     }
   }
 }
