@@ -13,6 +13,8 @@ function parseArgs(argv) {
     dryRun: false,
     limit: 0,
     outputJson: '',
+    source: '',
+    replaceSource: '',
     progressEvery: 1,
     workers: 4
   }
@@ -31,6 +33,10 @@ function parseArgs(argv) {
       out.limit = Number(argv[++index] || 0) || 0
     } else if (arg === '--output-json') {
       out.outputJson = argv[++index] || ''
+    } else if (arg === '--source') {
+      out.source = String(argv[++index] || '').trim().toLowerCase()
+    } else if (arg === '--replace-source') {
+      out.replaceSource = String(argv[++index] || '').trim().toLowerCase()
     } else if (arg === '--progress-every') {
       out.progressEvery = Math.max(0, Number(argv[++index] || 0) || 0)
     } else if (arg === '--workers') {
@@ -45,6 +51,10 @@ function parseArgs(argv) {
 
 function normalizeUrl(value) {
   return String(value || '').trim()
+}
+
+function normalizeSourceKey(value) {
+  return String(value || '').trim().toLowerCase()
 }
 
 function normalizeTitle(value) {
@@ -156,26 +166,29 @@ function buildEvidenceSnapshot(catalogSeriesName, source, matchingBooks) {
   }
 }
 
-function groupSourcesByUrl(entries) {
+function groupSourcesByUrl(entries, { fallbackSeriesName = '', sourceFilter = '' } = {}) {
   const groups = new Map()
   ;(Array.isArray(entries) ? entries : []).forEach((entry) => {
     ;(Array.isArray(entry?.sources) ? entry.sources : []).forEach((source) => {
-      const url = normalizeUrl(source?.evidenceUrl || '')
+      const normalizedSource = SeriesReviewManager.cleanCatalogSource(source, { fallbackSeriesName })
+      const sourceKey = normalizeSourceKey(normalizedSource?.source || '')
+      if (sourceFilter && sourceKey !== sourceFilter) return
+      const url = normalizeUrl(normalizedSource?.evidenceUrl || '')
       if (!url) return
       if (!groups.has(url)) {
         groups.set(url, {
           url,
-          source: String(source?.source || '').trim().toLowerCase(),
-          label: source?.label || '',
-          evidenceSource: source,
+          source: sourceKey,
+          label: normalizedSource?.label || '',
+          evidenceSource: normalizedSource,
           entries: []
         })
       }
       const group = groups.get(url)
-      if (!group.source && source?.source) group.source = String(source.source).trim().toLowerCase()
-      if (!group.label && source?.label) group.label = source.label
-      if (!group.evidenceSource?.rawEvidence && source?.rawEvidence) group.evidenceSource = source
-      group.entries.push({ entry, source })
+      if (!group.source && normalizedSource?.source) group.source = sourceKey
+      if (!group.label && normalizedSource?.label) group.label = normalizedSource.label
+      if (!group.evidenceSource?.rawEvidence && normalizedSource?.rawEvidence) group.evidenceSource = normalizedSource
+      group.entries.push({ entry, source: normalizedSource })
     })
   })
   return [...groups.values()]
@@ -232,12 +245,28 @@ async function ensureConfigPaths(configPath, metadataPath) {
   global.MetadataPath = Path.resolve(metadataPath)
 }
 
+async function deleteExistingSeriesSourceLinks(libraryId, sourceFilter) {
+  const normalizedSource = normalizeSourceKey(sourceFilter)
+  if (!normalizedSource) return 0
+  return Database.seriesReviewSeriesSourceLinkModel.destroy({
+    where: {
+      libraryId,
+      source: normalizedSource
+    }
+  })
+}
+
 async function processCatalog(library, resolver, localSeriesGroups, preloadedSeriesBooksBySeriesId, catalog, index, args, inactiveKeys) {
   const catalogSeriesName = SeriesReviewManager.normalizeSeriesName(catalog.seriesName || '')
   const decisionKey = resolver.getDecisionKey(catalogSeriesName)
   const group = localSeriesGroups.get(decisionKey) || null
   const normalizedEntries = SeriesReviewManager.normalizeCatalogEntries(catalog.entries || [])
-  const sourceGroups = group?.seriesName ? groupSourcesByUrl(normalizedEntries) : []
+  const sourceGroups = group?.seriesName
+    ? groupSourcesByUrl(normalizedEntries, {
+        fallbackSeriesName: catalogSeriesName,
+        sourceFilter: normalizeSourceKey(args.source || args.replaceSource || '')
+      })
+    : []
   const localBooks = group?.seriesName
     ? await SeriesReviewManager.getLocalCatalogBooks(library.id, group.seriesName, {
         resolver,
@@ -367,6 +396,7 @@ async function main() {
       librariesSeen: 0,
       catalogsSeen: 0,
       catalogsFailed: 0,
+      rowsDeleted: 0,
       sourceLinksSeen: 0,
       sourceLinksSaved: 0,
       sourceLinksSkippedInactive: 0,
@@ -413,6 +443,10 @@ async function main() {
         .filter((row) => row && row.isActive === false)
         .map((row) => `${String(row.localDecisionKey || '').trim()}::${String(row.sourceSeriesUrl || '').trim()}`)
     )
+
+    if (!args.dryRun && normalizeSourceKey(args.replaceSource || '')) {
+      summary.totals.rowsDeleted += await deleteExistingSeriesSourceLinks(library.id, args.replaceSource)
+    }
 
     process.stderr.write(
       `[library_start] ${library.name || library.id}: ${catalogs.length} catalogs, mode=${args.dryRun ? 'dry-run' : 'write'} workers=${args.workers}\n`

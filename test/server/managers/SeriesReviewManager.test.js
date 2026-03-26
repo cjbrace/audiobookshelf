@@ -1000,6 +1000,51 @@ describe('SeriesReviewManager', () => {
     expect(backfilledRows[0].coverageStatus).to.equal('linked')
   })
 
+  it('canonicalizes audible product evidence urls to the series page when raw provider series metadata exists', async () => {
+    const cleaned = SeriesReviewManager.cleanCatalogSource({
+      source: 'audible',
+      label: 'AUD',
+      confidence: 0.88,
+      evidenceUrl: 'https://www.audible.co.uk/pd/B0BOOK0001',
+      sourceRef: 'audible:uk:B0BOOK0001:audible',
+      providerMeta: { provider_name: 'audible_audnexus', region_used: 'uk' },
+      rawEvidence: {
+        asin: 'B0BOOK0001',
+        region: 'uk',
+        audible: {
+          series: [
+            {
+              asin: 'B0SERIES99',
+              sequence: '2',
+              title: 'The Example Saga',
+              url: '/pd/The-Example-Saga-Audiobook/B0SERIES99'
+            }
+          ]
+        }
+      }
+    })
+
+    expect(cleaned.evidenceUrl).to.equal('https://www.audible.co.uk/series/The-Example-Saga-Audiobooks/B0SERIES99')
+    expect(cleaned.rawEvidence.audible.series[0].url).to.equal('https://www.audible.co.uk/series/The-Example-Saga-Audiobooks/B0SERIES99')
+  })
+
+  it('preserves audible product evidence urls when no canonical series metadata is available', async () => {
+    const cleaned = SeriesReviewManager.cleanCatalogSource({
+      source: 'audible',
+      label: 'AUD',
+      confidence: 0.77,
+      evidenceUrl: 'https://www.audible.co.uk/pd/B0BOOK0002',
+      rawEvidence: {
+        localSeriesImport: {
+          sourceSeriesUrl: 'https://www.audible.co.uk/pd/B0BOOK0002',
+          sourceSeriesName: 'Standalone Import'
+        }
+      }
+    })
+
+    expect(cleaned.evidenceUrl).to.equal('https://www.audible.co.uk/pd/B0BOOK0002')
+  })
+
   it('hides resolved local-only series and applies saved local links to imported catalog coverage', async () => {
     await createBookFixture({
       title: 'Alpha Start',

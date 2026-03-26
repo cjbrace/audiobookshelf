@@ -389,6 +389,173 @@ class SeriesReviewManager {
       .replace(/^-+|-+$/g, '')
   }
 
+  formatAudibleSeriesUrlSlug(value) {
+    return this.normalizeSeriesName(value)
+      .replace(/[^A-Za-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+  }
+
+  normalizeExternalUrl(value) {
+    const urlText = String(value || '').trim()
+    if (!urlText) return ''
+    try {
+      const parsed = new URL(urlText)
+      parsed.search = ''
+      parsed.hash = ''
+      return parsed.toString()
+    } catch {
+      return urlText
+    }
+  }
+
+  getAudibleRegionTld(region) {
+    switch (this.normalizeSeriesName(region).toLowerCase()) {
+      case 'us':
+        return 'com'
+      case 'uk':
+        return 'co.uk'
+      case 'ca':
+        return 'ca'
+      case 'au':
+        return 'com.au'
+      case 'de':
+        return 'de'
+      case 'fr':
+        return 'fr'
+      case 'it':
+        return 'it'
+      case 'es':
+        return 'es'
+      case 'jp':
+        return 'co.jp'
+      case 'in':
+        return 'in'
+      default:
+        return ''
+    }
+  }
+
+  getAudibleRegionFromUrl(url) {
+    try {
+      const host = new URL(String(url || '').trim()).host.toLowerCase()
+      if (host.endsWith('audible.com')) return 'us'
+      if (host.endsWith('audible.co.uk')) return 'uk'
+      if (host.endsWith('audible.ca')) return 'ca'
+      if (host.endsWith('audible.com.au')) return 'au'
+      if (host.endsWith('audible.de')) return 'de'
+      if (host.endsWith('audible.fr')) return 'fr'
+      if (host.endsWith('audible.it')) return 'it'
+      if (host.endsWith('audible.es')) return 'es'
+      if (host.endsWith('audible.co.jp')) return 'jp'
+      if (host.endsWith('audible.in')) return 'in'
+    } catch {}
+    return ''
+  }
+
+  buildAudibleSeriesUrl(region, seriesAsin, seriesName) {
+    const normalizedRegion = this.normalizeSeriesName(region).toLowerCase()
+    const normalizedAsin = this.normalizeSeriesName(seriesAsin).toUpperCase()
+    const normalizedSeriesName = this.normalizeSeriesName(seriesName)
+    const tld = this.getAudibleRegionTld(normalizedRegion)
+    const slug = this.formatAudibleSeriesUrlSlug(normalizedSeriesName)
+    if (!tld || !normalizedAsin || !slug) return ''
+    return `https://www.audible.${tld}/series/${slug}-Audiobooks/${normalizedAsin}`
+  }
+
+  getCatalogSourceCanonicalEvidenceUrl(source, fallbackSeriesName = '') {
+    const sourceKey = this.normalizeSeriesName(source?.source || '').toLowerCase()
+    const existingUrl = this.normalizeExternalUrl(source?.evidenceUrl || '')
+    if (!existingUrl) return ''
+    if (sourceKey !== 'audible') return existingUrl
+    if (existingUrl.includes('/series/')) return existingUrl
+
+    const rawEvidence = source?.rawEvidence && typeof source.rawEvidence === 'object' && !Array.isArray(source.rawEvidence) ? source.rawEvidence : null
+    const providerMeta = source?.providerMeta && typeof source.providerMeta === 'object' && !Array.isArray(source.providerMeta) ? source.providerMeta : null
+    const localSeriesImport =
+      rawEvidence?.localSeriesImport && typeof rawEvidence.localSeriesImport === 'object' && !Array.isArray(rawEvidence.localSeriesImport)
+        ? rawEvidence.localSeriesImport
+        : null
+    const localImportSnapshot =
+      localSeriesImport?.evidenceSnapshot && typeof localSeriesImport.evidenceSnapshot === 'object' && !Array.isArray(localSeriesImport.evidenceSnapshot)
+        ? localSeriesImport.evidenceSnapshot
+        : null
+    const directSeriesUrlCandidates = [
+      localSeriesImport?.sourceSeriesUrl,
+      localImportSnapshot?.sourceSeriesUrl,
+      localImportSnapshot?.sourceUrl,
+      rawEvidence?.sourceSeriesUrl,
+      providerMeta?.sourceSeriesUrl
+    ]
+      .map((value) => this.normalizeExternalUrl(value))
+      .filter(Boolean)
+    const directSeriesUrl = directSeriesUrlCandidates.find((value) => value.includes('/series/'))
+    if (directSeriesUrl) return directSeriesUrl
+
+    const audibleSeriesBucket = Array.isArray(rawEvidence?.audible?.series) ? rawEvidence.audible.series : []
+    const audibleSeries = audibleSeriesBucket.find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry.asin || entry.title || entry.name)) || null
+    const seriesAsin = this.normalizeSeriesName(audibleSeries?.asin || '')
+    const seriesName = this.normalizeSeriesName(
+      audibleSeries?.title ||
+        audibleSeries?.name ||
+        rawEvidence?.sourceSeriesName ||
+        localSeriesImport?.sourceSeriesName ||
+        localImportSnapshot?.sourceSeriesName ||
+        providerMeta?.sourceSeriesName ||
+        providerMeta?.seriesName ||
+        fallbackSeriesName
+    )
+    const region = this.normalizeSeriesName(
+      rawEvidence?.region ||
+        localImportSnapshot?.sourceRegion ||
+        localSeriesImport?.sourceRegion ||
+        providerMeta?.region_used ||
+        providerMeta?.region ||
+        this.getAudibleRegionFromUrl(existingUrl)
+    ).toLowerCase()
+    const derivedUrl = this.buildAudibleSeriesUrl(region, seriesAsin, seriesName)
+    return derivedUrl || existingUrl
+  }
+
+  canonicalizeCatalogSource(input, options = {}) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return input
+    const fallbackSeriesName = this.normalizeSeriesName(options?.fallbackSeriesName || '')
+    const canonicalUrl = this.getCatalogSourceCanonicalEvidenceUrl(input, fallbackSeriesName)
+    if (!canonicalUrl) return input
+    if (canonicalUrl === input.evidenceUrl) return input
+
+    const previousUrl = input.evidenceUrl
+    input.evidenceUrl = canonicalUrl
+
+    if (input.source === 'audible' && input.rawEvidence && typeof input.rawEvidence === 'object' && !Array.isArray(input.rawEvidence)) {
+      const localSeriesImport =
+        input.rawEvidence.localSeriesImport && typeof input.rawEvidence.localSeriesImport === 'object' && !Array.isArray(input.rawEvidence.localSeriesImport)
+          ? input.rawEvidence.localSeriesImport
+          : null
+      if (localSeriesImport) {
+        if (localSeriesImport.sourceSeriesUrl) localSeriesImport.sourceSeriesUrl = canonicalUrl
+        if (
+          localSeriesImport.evidenceSnapshot &&
+          typeof localSeriesImport.evidenceSnapshot === 'object' &&
+          !Array.isArray(localSeriesImport.evidenceSnapshot)
+        ) {
+          if (localSeriesImport.evidenceSnapshot.sourceSeriesUrl) localSeriesImport.evidenceSnapshot.sourceSeriesUrl = canonicalUrl
+          if (localSeriesImport.evidenceSnapshot.sourceUrl) localSeriesImport.evidenceSnapshot.sourceUrl = canonicalUrl
+          if (localSeriesImport.evidenceSnapshot.sourceLinkUrl) localSeriesImport.evidenceSnapshot.sourceLinkUrl = canonicalUrl
+          if (localSeriesImport.evidenceSnapshot.sourceIdentifier === previousUrl) {
+            localSeriesImport.evidenceSnapshot.sourceIdentifier = canonicalUrl
+          }
+        }
+      }
+      const audibleSeriesBucket = Array.isArray(input.rawEvidence.audible?.series) ? input.rawEvidence.audible.series : []
+      audibleSeriesBucket.forEach((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return
+        if (entry.url) entry.url = canonicalUrl
+      })
+    }
+
+    return input
+  }
+
   formatSlugDisplayName(value) {
     return String(value || '')
       .split('-')
@@ -906,7 +1073,7 @@ class SeriesReviewManager {
     }
   }
 
-  cleanCatalogSource(input) {
+  cleanCatalogSource(input, options = {}) {
     const source = String(input?.source || '')
       .trim()
       .toLowerCase()
@@ -914,18 +1081,25 @@ class SeriesReviewManager {
 
     const confidenceValue = Number(input?.confidence)
     const sourceRef = typeof input?.sourceRef === 'string' ? input.sourceRef.trim() || null : null
-    const providerMeta = input?.providerMeta && typeof input.providerMeta === 'object' && !Array.isArray(input.providerMeta) ? input.providerMeta : null
-    const rawEvidence = input?.rawEvidence && typeof input.rawEvidence === 'object' && !Array.isArray(input.rawEvidence) ? input.rawEvidence : null
-    return {
+    const providerMeta =
+      input?.providerMeta && typeof input.providerMeta === 'object' && !Array.isArray(input.providerMeta)
+        ? JSON.parse(JSON.stringify(input.providerMeta))
+        : null
+    const rawEvidence =
+      input?.rawEvidence && typeof input.rawEvidence === 'object' && !Array.isArray(input.rawEvidence)
+        ? JSON.parse(JSON.stringify(input.rawEvidence))
+        : null
+    const cleaned = {
       source,
       label: String(input?.label || source).trim() || source,
       confidence: Number.isFinite(confidenceValue) ? Number(confidenceValue.toFixed(3)) : null,
-      evidenceUrl: typeof input?.evidenceUrl === 'string' ? input.evidenceUrl.trim() || null : null,
+      evidenceUrl: this.normalizeExternalUrl(input?.evidenceUrl || '') || null,
       notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null,
       sourceRef,
       providerMeta,
       rawEvidence
     }
+    return this.canonicalizeCatalogSource(cleaned, options)
   }
 
   normalizeCatalogSlotToken(value) {
