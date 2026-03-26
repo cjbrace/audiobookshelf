@@ -1506,6 +1506,7 @@ class SeriesReviewManager {
       where,
       order: [['seriesName', 'ASC']]
     })
+    if (!catalogs.length) return []
     const allCatalogs = includeDismissed
       ? catalogs
       : await Database.seriesReviewCatalogModel.findAll({
