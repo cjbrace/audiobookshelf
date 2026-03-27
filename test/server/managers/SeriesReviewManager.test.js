@@ -1631,6 +1631,7 @@ describe('SeriesReviewManager', () => {
     expect(slot5.status).to.equal('disputed')
     expect(slot5.choices).to.have.length(2)
     expect(detail.unsequencedBooks.map((book) => book.title)).to.deep.equal(['Expanse Stories'])
+    expect(detail.rows.some((row) => row.rowType === 'unsequenced' && row.title === 'Expanse Stories')).to.equal(true)
   })
 
   it('keeps omnibus range entries out of core slot disputes and coverage counts', async () => {
@@ -1878,6 +1879,69 @@ describe('SeriesReviewManager', () => {
     expect(pendingRows).to.have.length(1)
     expect(pendingRows[0].suggestions[0].suggestedName).to.equal('Dune')
     expect(pendingRows[0].suggestions[0].suggestedSequence).to.equal(null)
+  })
+
+  it('keeps local-only unsequenced books in the main actionable rows', async () => {
+    await createBookFixture({
+      title: 'Expanse Stories',
+      currentSeries: [{ name: 'The Expanse', sequence: '' }]
+    })
+    await createBookFixture({
+      title: 'Expanse Stories Companion',
+      relPath: 'Corey, James S. A./Expanse Stories Companion',
+      authors: ['James S. A. Corey']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Expanse',
+        entries: [
+          {
+            title: 'Leviathan Wakes',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const row = detail.rows.find((candidate) => candidate.rowType === 'unsequenced' && candidate.title === 'Expanse Stories')
+
+    expect(row).to.exist
+    expect(row.localBooks).to.have.length(1)
+    expect(row.localBooks[0].title).to.equal('Expanse Stories')
+
+    const candidates = await SeriesReviewManager.findCatalogSlotCandidates(library.id, importResult.catalogs[0].id, row.slot)
+    expect(candidates.rowType).to.equal('unsequenced')
+    expect(candidates.expectedTitle).to.equal('Expanse Stories')
+  })
+
+  it('keeps local-only omnibus books in the main actionable rows', async () => {
+    await createBookFixture({
+      title: 'Android X: The Complete Series',
+      currentSeries: [{ name: 'Android X', sequence: '1-3' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Android X',
+        entries: [
+          {
+            title: 'Android Paradox',
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93 }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const row = detail.rows.find((candidate) => candidate.rowType === 'omnibus' && candidate.title === 'Android X: The Complete Series')
+
+    expect(row).to.exist
+    expect(row.localBooks).to.have.length(1)
+    expect(row.localBooks[0].sequence).to.equal('1-3')
   })
 
   it('stores preferred slot interpretations for disputed catalog slots', async () => {

@@ -2934,16 +2934,18 @@ class SeriesReviewManager {
     const titleKeysFor = (value) => this.getCatalogEntryTitleKeys(value, options?.seriesName || '')
     const unsequencedEntrySourceSupportByTitleKey = new Map()
     const omnibusLocalBooksByTitleKey = new Map()
+    const buildLocalBookPayload = (book) => ({
+      libraryItemId: book.libraryItemId,
+      title: book.title,
+      relPath: book.relPath,
+      sequence: book.sequence,
+      authors: Array.isArray(book?.authors) ? book.authors : []
+    })
     const pushLocalBookByTitleKey = (targetMap, book) => {
       titleKeysFor(book?.title).forEach((key) => {
         if (!key) return
         if (!targetMap.has(key)) targetMap.set(key, [])
-        targetMap.get(key).push({
-          libraryItemId: book.libraryItemId,
-          title: book.title,
-          relPath: book.relPath,
-          sequence: book.sequence
-        })
+        targetMap.get(key).push(buildLocalBookPayload(book))
       })
     }
 
@@ -3011,7 +3013,7 @@ class SeriesReviewManager {
       if (slot.choices.length > 1 && !selectedChoice) {
         slot.status = 'disputed'
       } else if (slot.isDecimal) {
-        slot.status = slot.locallyCovered ? 'covered' : 'decimal'
+        slot.status = slot.sourceCovered ? 'covered' : 'decimal'
       } else if (!slot.locallyCovered) {
         slot.status = 'missing'
       } else {
@@ -3076,6 +3078,31 @@ class SeriesReviewManager {
         status: 'unsequenced'
       }))
       .sort((a, b) => a.title.localeCompare(b.title))
+    const matchedUnsequencedLocalIds = new Set(unsequencedSourceEntries.flatMap((row) => (Array.isArray(row.localBooks) ? row.localBooks : []).map((book) => book.libraryItemId)))
+    const localOnlyUnsequencedRows = unsequencedBooks
+      .filter((book) => !matchedUnsequencedLocalIds.has(book.libraryItemId))
+      .map((book) => ({
+        rowKey: `unsequenced-local:${this.normalizeKeyPart(book.libraryItemId || book.title).replace(/\s+/g, '')}`,
+        rowType: 'unsequenced',
+        slot: `unsequenced-local:${this.normalizeKeyPart(book.libraryItemId || book.title).replace(/\s+/g, '')}`,
+        entryKey: null,
+        title: book.title,
+        expectedTitle: book.title,
+        expectedAuthors: (Array.isArray(book.authors) ? book.authors : []).map((author) => author?.name || author).filter(Boolean),
+        expectedPublishedDate: null,
+        authors: (Array.isArray(book.authors) ? book.authors : []).map((author) => author?.name || author).filter(Boolean),
+        publishedDate: null,
+        sequenceLabel: null,
+        sourceSupport: titleKeysFor(book.title).flatMap((key) => unsequencedEntrySourceSupportByTitleKey.get(key) || []).filter((source, index, list) => {
+          const identity = `${source.source}:${source.evidenceUrl || ''}:${source.label || ''}`
+          return list.findIndex((candidate) => `${candidate.source}:${candidate.evidenceUrl || ''}:${candidate.label || ''}` === identity) === index
+        }),
+        localBooks: [buildLocalBookPayload(book)],
+        choices: [],
+        selectedEntryKey: null,
+        status: 'unsequenced'
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title))
     const omnibusRows = entries
       .filter((entry) => entry.isOmnibus)
       .map((entry) => ({
@@ -3099,12 +3126,35 @@ class SeriesReviewManager {
         status: 'omnibus'
       }))
       .sort((a, b) => String(a.sequenceLabel || '').localeCompare(String(b.sequenceLabel || ''), undefined, { numeric: true }) || a.title.localeCompare(b.title))
+    const matchedOmnibusLocalIds = new Set(omnibusRows.flatMap((row) => (Array.isArray(row.localBooks) ? row.localBooks : []).map((book) => book.libraryItemId)))
+    const localOnlyOmnibusRows = (Array.isArray(localBooks) ? localBooks : [])
+      .filter((book) => this.isOmnibusCatalogSequenceLabel(book?.sequence || ''))
+      .filter((book) => !matchedOmnibusLocalIds.has(book.libraryItemId))
+      .map((book) => ({
+        rowKey: `omnibus-local:${this.normalizeKeyPart(book.libraryItemId || book.title).replace(/\s+/g, '')}`,
+        rowType: 'omnibus',
+        slot: String(book.sequence || 'omnibus').trim() || 'omnibus',
+        entryKey: null,
+        title: book.title,
+        expectedTitle: book.title,
+        expectedAuthors: (Array.isArray(book.authors) ? book.authors : []).map((author) => author?.name || author).filter(Boolean),
+        expectedPublishedDate: null,
+        authors: (Array.isArray(book.authors) ? book.authors : []).map((author) => author?.name || author).filter(Boolean),
+        publishedDate: null,
+        sequenceLabel: String(book.sequence || '').trim() || null,
+        sourceSupport: [],
+        localBooks: [buildLocalBookPayload(book)],
+        choices: [],
+        selectedEntryKey: null,
+        status: 'omnibus'
+      }))
+      .sort((a, b) => String(a.sequenceLabel || '').localeCompare(String(b.sequenceLabel || ''), undefined, { numeric: true }) || a.title.localeCompare(b.title))
     return {
       slots,
       unsequencedBooks,
       unsequencedSourceEntries,
-      omnibusRows,
-      rows: [...slots, ...unsequencedSourceEntries, ...omnibusRows]
+      omnibusRows: [...omnibusRows, ...localOnlyOmnibusRows],
+      rows: [...slots, ...unsequencedSourceEntries, ...localOnlyUnsequencedRows, ...omnibusRows, ...localOnlyOmnibusRows]
     }
   }
 
@@ -3113,7 +3163,7 @@ class SeriesReviewManager {
     return {
       missingCount: finalized.slots.filter((slot) => slot.status === 'missing').length,
       disputedCount: finalized.slots.filter((slot) => slot.status === 'disputed').length,
-      unsequencedCount: finalized.unsequencedSourceEntries.length
+      unsequencedCount: finalized.rows.filter((row) => row.rowType === 'unsequenced').length
     }
   }
 

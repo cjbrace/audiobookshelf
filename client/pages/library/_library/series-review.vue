@@ -1214,7 +1214,7 @@
                             <td class="px-3 py-3">
                               <div class="flex flex-col items-end gap-2">
                                 <ui-btn
-                                  v-if="row.rowType === 'unsequenced' || row.status === 'missing' || row.status === 'disputed'"
+                                  v-if="canFindCatalogCandidates(row)"
                                   small
                                   color="bg-bg border border-white/20"
                                   class="w-36 justify-center text-center"
@@ -1313,15 +1313,6 @@
                         </template>
                       </tbody>
                     </table>
-                  </div>
-
-                  <div v-if="selectedCatalogDetail.unsequencedBooks.length" class="rounded border border-white/10 bg-black/20 p-3">
-                    <h3 class="text-base font-semibold">Unsequenced local books</h3>
-                    <div class="mt-2 space-y-1 text-sm text-gray-200">
-                      <p v-for="book in selectedCatalogDetail.unsequencedBooks" :key="'unseq:' + book.libraryItemId">
-                        {{ book.title }}
-                      </p>
-                    </div>
                   </div>
 
                 </div>
@@ -2371,6 +2362,11 @@ export default {
     getCatalogLocalCoverageEmptyText(row) {
       if (row?.rowType === 'omnibus') return 'No local omnibus matches this entry'
       return row?.rowType === 'unsequenced' ? 'No local book matches this entry' : 'No local book covers this slot'
+    },
+    canFindCatalogCandidates(row) {
+      if (!row) return false
+      if (row.rowType === 'unsequenced' || row.rowType === 'omnibus') return true
+      return row.status === 'missing' || row.status === 'disputed' || row.status === 'decimal'
     },
     getCatalogCandidateFilter(rowKey) {
       return this.catalogCandidateFilterBySlot[rowKey] || ''
