@@ -1786,17 +1786,49 @@ export default {
         return String(left?.title || '').localeCompare(String(right?.title || ''))
       })
     },
+    areEquivalentSourceSeriesBooks(left, right) {
+      const leftTitle = String(left?.title || '').trim()
+      const rightTitle = String(right?.title || '').trim()
+      const leftSequence = String(left?.sequence || '').trim()
+      const rightSequence = String(right?.sequence || '').trim()
+      if (!leftTitle || !rightTitle || leftSequence !== rightSequence) return false
+      const leftKeys = new Set(this.getSourceBookTitleKeys(leftTitle))
+      return this.getSourceBookTitleKeys(rightTitle).some((key) => leftKeys.has(key))
+    },
+    choosePreferredSourceSeriesBook(existing, candidate) {
+      if (!existing) return candidate
+      if (!candidate) return existing
+      const existingLocalMatched = !!existing.localMatched
+      const candidateLocalMatched = !!candidate.localMatched
+      if (candidateLocalMatched !== existingLocalMatched) return candidateLocalMatched ? candidate : existing
+
+      const existingAuthors = Array.isArray(existing.authors) ? existing.authors.length : 0
+      const candidateAuthors = Array.isArray(candidate.authors) ? candidate.authors.length : 0
+      if (candidateAuthors !== existingAuthors) return candidateAuthors > existingAuthors ? candidate : existing
+
+      const existingPublished = String(existing.publishedDate || '').trim()
+      const candidatePublished = String(candidate.publishedDate || '').trim()
+      if (!!candidatePublished !== !!existingPublished) return candidatePublished ? candidate : existing
+
+      const existingTitle = String(existing.title || '').trim()
+      const candidateTitle = String(candidate.title || '').trim()
+      if (candidateTitle.length !== existingTitle.length) return candidateTitle.length < existingTitle.length ? candidate : existing
+
+      return candidateTitle.localeCompare(existingTitle) < 0 ? candidate : existing
+    },
     dedupeSourceSeriesBooks(books) {
-      const seen = new Set()
-      return this.sortSourceSeriesBooks(
-        (books || []).filter((book) => {
-          const title = String(book?.title || '').trim()
-          const dedupeKey = `${this.normalizeSourceBookText(title)}::${String(book?.sequence || '').trim()}`
-          if (!title || seen.has(dedupeKey)) return false
-          seen.add(dedupeKey)
-          return true
-        })
-      )
+      const deduped = []
+      ;(books || []).forEach((book) => {
+        const title = String(book?.title || '').trim()
+        if (!title) return
+        const existingIndex = deduped.findIndex((candidate) => this.areEquivalentSourceSeriesBooks(candidate, book))
+        if (existingIndex === -1) {
+          deduped.push(book)
+          return
+        }
+        deduped.splice(existingIndex, 1, this.choosePreferredSourceSeriesBook(deduped[existingIndex], book))
+      })
+      return this.sortSourceSeriesBooks(deduped)
     },
     getCatalogSourceSeriesBooks(entry) {
       const targetUrl = this.normalizeSourceUrl(entry?.sourceUrl || entry?.sourceSeriesUrl || entry?.sourceLinkUrl || '')
