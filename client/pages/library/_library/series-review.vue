@@ -1614,7 +1614,6 @@ export default {
       this.errorMessage = ''
       await this.refreshActiveTab()
       if (tab === 'catalog') {
-        await this.loadLocalCatalogMatches({ silent: true })
         this.restoreCatalogListScroll()
       }
     },
@@ -2553,7 +2552,7 @@ export default {
       this.localCatalogMatchSelectionById = nextSelections
     },
     async loadLocalCatalogMatches({ silent = false } = {}) {
-      this.localCatalogMatchesLoading = true
+      if (!silent) this.localCatalogMatchesLoading = true
       try {
         const response = await this.$axios.$get(`/api/libraries/${this.$route.params.library}/series-review/local-matches?includeResolved=1&pendingOnly=1`)
         this.localCatalogMatches = response.matches || []
@@ -2561,7 +2560,7 @@ export default {
       } catch (error) {
         if (!silent) this.$toast.error(error?.response?.data || 'Failed to load locally matched series')
       } finally {
-        this.localCatalogMatchesLoading = false
+        if (!silent) this.localCatalogMatchesLoading = false
       }
     },
     async toggleLocalCatalogMatchesPanel() {
@@ -2638,7 +2637,6 @@ export default {
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.persistCatalogCaches()
-        await this.loadLocalCatalogMatches({ silent: true })
         await this.loadQueue()
         this.$toast.success('Series name updated')
       } catch (error) {
@@ -2691,7 +2689,6 @@ export default {
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.patchCatalogSummary(detail)
-        await this.loadLocalCatalogMatches({ silent: true })
         this.persistCatalogCaches()
         this.$toast.success('Saved local source link')
       } catch (error) {
@@ -2715,7 +2712,6 @@ export default {
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.persistCatalogCaches()
-        await this.loadLocalCatalogMatches({ silent: true })
         this.$toast.success('Removed local source link')
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to remove local source link')
@@ -2739,7 +2735,6 @@ export default {
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
         this.persistCatalogCaches()
-        await this.loadLocalCatalogMatches({ silent: true })
         await this.loadQueue()
         const summary = response.summary || {}
         this.$toast.success(
@@ -2864,6 +2859,8 @@ export default {
         this.$toast.success(`Queued ${response.title} for review`)
         this.$delete(this.catalogCandidateResultsBySlot, rowKey)
         this.$delete(this.catalogCandidateFilterBySlot, rowKey)
+        await this.loadQueue()
+        await this.selectCatalog(catalogId, { preferCache: false, skipLoading: true, updateView: true })
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to queue candidate for review')
       } finally {
