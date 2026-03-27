@@ -764,13 +764,19 @@
                   </div>
                   <button
                     v-for="catalog in filteredCatalogSeries"
+                    ref="catalogListItem"
                     :key="catalog.id"
                     type="button"
+                    :data-catalog-id="catalog.id"
                     class="w-full rounded border px-3 py-2 text-left transition"
                     :class="selectedCatalogId === catalog.id ? 'bg-sky-400/15 border-sky-300/35 text-sky-50' : 'bg-black/20 border-white/10 text-gray-200'"
                     @click="selectCatalog(catalog.id, { preferCache: true })"
+                    @keydown.down.prevent="selectAdjacentCatalog(1)"
+                    @keydown.up.prevent="selectAdjacentCatalog(-1)"
+                    @keydown.home.prevent="selectCatalogBoundary('first')"
+                    @keydown.end.prevent="selectCatalogBoundary('last')"
                   >
-                    <div class="flex items-start gap-2">
+                    <div class="min-w-0">
                       <div class="grow min-w-0">
                         <p class="font-medium">{{ catalog.seriesName }}</p>
                         <p v-if="catalog.authorLine" class="text-sm text-gray-500 mt-0.5">{{ catalog.authorLine }}</p>
@@ -778,12 +784,26 @@
                           {{ catalog.localBookCount }} local, {{ catalog.missingCount }} missing, {{ catalog.disputedCount }} disputed
                         </p>
                       </div>
-                      <span
-                        class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none"
-                        :class="getCatalogBucketPillClass(catalog.displayBucket)"
-                      >
-                        {{ catalog.displayLabel }}
-                      </span>
+                      <div class="mt-2 flex flex-wrap gap-2">
+                        <span
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none"
+                          :class="getCatalogBucketPillClass(catalog.displayBucket)"
+                        >
+                          {{ catalog.displayLabel }}
+                        </span>
+                        <span
+                          v-if="catalog.hasPendingLink"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-violet-300/35 bg-violet-500/10 text-violet-100"
+                        >
+                          Pending link
+                        </span>
+                        <span
+                          v-if="catalog.hasPartialLink"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-amber-300/35 bg-amber-500/10 text-amber-100"
+                        >
+                          Partial
+                        </span>
+                      </div>
                     </div>
                   </button>
                 </div>
@@ -910,16 +930,27 @@
                                 {{ getSeriesLinkStateLabel(match) }}
                               </span>
                             </div>
-                            <p class="text-lg font-semibold text-white">{{ match.sourceSeriesName }}</p>
-                            <p v-if="match.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ match.sourceAuthor }}</p>
-                            <p v-if="getManualSourceMeta(match)" class="text-xs text-gray-400 mt-1">{{ getManualSourceMeta(match) }}</p>
-                            <p v-if="getManualSequenceStatus(match)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(match) }}</p>
-                            <a v-if="getManualSourceHref(match)" :href="getManualSourceHref(match)" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
-                              {{ getManualSourceText(match) }}
-                            </a>
-                            <p v-else-if="getManualSourceText(match)" class="mt-1 text-sm text-gray-300 break-all">
-                              {{ getManualSourceText(match) }}
+                            <p v-if="showManualSourceSummary(match)" class="mt-1 text-base font-semibold text-white break-all">
+                              <span>{{ getManualSourceSeriesName(match) }}</span>
+                              <template v-if="getManualSourceLinkLabel(match) || getManualSourceCompactSuffix(match)">
+                                <span> - </span>
+                                <span v-if="getManualSourceLinkPrefix(match)">{{ getManualSourceLinkPrefix(match) }}</span>
+                                <a
+                                  v-if="getManualSourceHref(match) && getManualSourceLinkLabel(match)"
+                                  :href="getManualSourceHref(match)"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  class="text-sky-200 hover:underline"
+                                >
+                                  {{ getManualSourceLinkLabel(match) }}
+                                </a>
+                                <span v-else-if="getManualSourceLinkLabel(match)">{{ getManualSourceLinkLabel(match) }}</span>
+                                <span v-if="getManualSourceCompactSuffix(match)"> | {{ getManualSourceCompactSuffix(match) }}</span>
+                              </template>
                             </p>
+                            <p v-else class="text-lg font-semibold text-white">{{ getManualSourceSeriesName(match) }}</p>
+                            <p v-if="getManualSourceAuthor(match)" class="text-sm text-gray-300 mt-1">{{ getManualSourceAuthor(match) }}</p>
+                            <p v-if="getManualSequenceStatus(match)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(match) }}</p>
                           </div>
                           <div class="flex flex-wrap items-center gap-2">
                             <ui-btn
@@ -976,16 +1007,27 @@
                                 {{ getSeriesLinkStateLabel(result) }}
                               </span>
                             </div>
-                            <p class="text-lg font-semibold text-white">{{ result.sourceSeriesName }}</p>
-                            <p v-if="result.sourceAuthor" class="text-sm text-gray-300 mt-1">{{ result.sourceAuthor }}</p>
-                            <p v-if="getManualSourceMeta(result)" class="text-xs text-gray-400 mt-1">{{ getManualSourceMeta(result) }}</p>
-                            <p v-if="getManualSequenceStatus(result)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(result) }}</p>
-                            <a v-if="getManualSourceHref(result)" :href="getManualSourceHref(result)" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex text-sm text-sky-200 hover:underline break-all">
-                              {{ getManualSourceText(result) }}
-                            </a>
-                            <p v-else-if="getManualSourceText(result)" class="mt-1 text-sm text-gray-300 break-all">
-                              {{ getManualSourceText(result) }}
+                            <p v-if="showManualSourceSummary(result)" class="mt-1 text-base font-semibold text-white break-all">
+                              <span>{{ getManualSourceSeriesName(result) }}</span>
+                              <template v-if="getManualSourceLinkLabel(result) || getManualSourceCompactSuffix(result)">
+                                <span> - </span>
+                                <span v-if="getManualSourceLinkPrefix(result)">{{ getManualSourceLinkPrefix(result) }}</span>
+                                <a
+                                  v-if="getManualSourceHref(result) && getManualSourceLinkLabel(result)"
+                                  :href="getManualSourceHref(result)"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  class="text-sky-200 hover:underline"
+                                >
+                                  {{ getManualSourceLinkLabel(result) }}
+                                </a>
+                                <span v-else-if="getManualSourceLinkLabel(result)">{{ getManualSourceLinkLabel(result) }}</span>
+                                <span v-if="getManualSourceCompactSuffix(result)"> | {{ getManualSourceCompactSuffix(result) }}</span>
+                              </template>
                             </p>
+                            <p v-else class="text-lg font-semibold text-white">{{ getManualSourceSeriesName(result) }}</p>
+                            <p v-if="getManualSourceAuthor(result)" class="text-sm text-gray-300 mt-1">{{ getManualSourceAuthor(result) }}</p>
+                            <p v-if="getManualSequenceStatus(result)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(result) }}</p>
                           </div>
                           <div class="flex flex-col items-end gap-1">
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-300/35 bg-sky-400/10 text-xs text-sky-50">
@@ -1082,23 +1124,16 @@
                                   :key="getCatalogRowKey(row) + ':support:' + source.source + ':' + (source.evidenceUrl || '')"
                                   class="rounded border border-sky-300/35 bg-sky-400/10 px-2 py-1 text-xs text-sky-50"
                                 >
-                                  <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                    <span class="font-medium uppercase tracking-wide">{{ source.label || source.source }}</span>
-                                    <span class="text-sky-100/90">{{ getSourceDisplayName(source.source) }}</span>
-                                    <span v-if="source.confidence !== null && source.confidence !== undefined" class="text-sky-100/80">conf: {{ formatConfidence(source.confidence) }}</span>
-                                  </div>
                                   <a
                                     v-if="source.evidenceUrl"
-                                    class="mt-1 inline-flex text-sky-200 hover:underline break-all"
+                                    class="inline-flex font-medium text-sky-100 hover:underline"
                                     :href="source.evidenceUrl"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
-                                    Evidence link
+                                    {{ getSourceDisplayName(source.source) }}
                                   </a>
-                                  <p v-if="source.sourceRef" class="mt-1 text-[11px] text-sky-100/75 break-all">
-                                    ref: {{ source.sourceRef }}
-                                  </p>
+                                  <span v-else class="font-medium text-sky-100">{{ getSourceDisplayName(source.source) }}</span>
                                 </div>
                               </div>
                               <p v-else class="text-xs text-gray-500">No source support</p>
@@ -1544,12 +1579,36 @@ export default {
     formatConfidence(value) {
       return Number(value).toFixed(2)
     },
+    decodeHtmlEntities(value) {
+      let text = String(value || '')
+      if (!text || !text.includes('&')) return text
+      const replacements = {
+        '&amp;': '&',
+        '&apos;': "'",
+        '&#39;': "'",
+        '&quot;': '"',
+        '&lt;': '<',
+        '&gt;': '>'
+      }
+      for (let i = 0; i < 3; i += 1) {
+        const next = text.replace(/&(amp|apos|#39|quot|lt|gt);/gi, (entity) => replacements[entity.toLowerCase()] || entity)
+        if (next === text) break
+        text = next
+      }
+      return text
+    },
     getSourceDisplayName(source) {
       const key = String(source || '').toLowerCase()
       return SOURCE_LEGEND[key]?.name || source || 'Unknown source'
     },
     getManualSourceDisplayName(entry) {
       return entry?.sourceName || this.getSourceDisplayName(entry?.source)
+    },
+    getManualSourceSeriesName(entry) {
+      return this.decodeHtmlEntities(entry?.sourceSeriesName || '')
+    },
+    getManualSourceAuthor(entry) {
+      return this.decodeHtmlEntities(entry?.sourceAuthor || '')
     },
     getManualSourceCode(entry) {
       const key = String(entry?.source || '').toLowerCase()
@@ -1561,6 +1620,34 @@ export default {
     },
     getManualSourceText(entry) {
       return String(entry?.sourceIdentifier || entry?.sourceSeriesUrl || entry?.sourceUrl || '').trim()
+    },
+    getManualSourceLinkPrefix(entry) {
+      return String(entry?.source || '').trim().toLowerCase() === 'audible' && entry?.sourceAsin ? 'ASIN ' : ''
+    },
+    getSourceHrefSlug(href) {
+      const text = String(href || '').trim()
+      if (!text) return ''
+      try {
+        const parsed = new URL(text)
+        const slug = String(parsed.pathname || '').split('/').filter(Boolean).pop() || ''
+        return this.decodeHtmlEntities(slug.replace(/\.(?:html?)$/i, ''))
+      } catch {
+        const slug = text.split('/').filter(Boolean).pop() || ''
+        return this.decodeHtmlEntities(slug.replace(/\.(?:html?)$/i, ''))
+      }
+    },
+    getManualSourceLinkLabel(entry) {
+      const source = String(entry?.source || '').trim().toLowerCase()
+      if (source === 'audible' && entry?.sourceAsin) return String(entry.sourceAsin).trim()
+      if (source === 'fictiondb') return this.getSourceHrefSlug(this.getManualSourceHref(entry))
+      if (source === 'wikidata') return this.getSourceHrefSlug(this.getManualSourceHref(entry)) || this.decodeHtmlEntities(this.getManualSourceText(entry))
+      return this.getSourceHrefSlug(this.getManualSourceHref(entry)) || this.decodeHtmlEntities(this.getManualSourceText(entry))
+    },
+    getManualSourceCompactSuffix(entry) {
+      return entry?.sourceRegion ? String(entry.sourceRegion).toUpperCase() : ''
+    },
+    showManualSourceSummary(entry) {
+      return !!(this.getManualSourceSeriesName(entry) && (this.getManualSourceLinkLabel(entry) || this.getManualSourceCompactSuffix(entry)))
     },
     getManualSourceMeta(entry) {
       const parts = []
@@ -1575,7 +1662,7 @@ export default {
       return String(value || '').trim().replace(/\/+$/, '')
     },
     normalizeSourceBookText(value) {
-      return String(value || '')
+      return this.decodeHtmlEntities(value || '')
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, ' ')
         .trim()
@@ -1595,13 +1682,17 @@ export default {
       return [...candidates]
     },
     buildSourceSeriesBook(rawBook, entry = null) {
-      const title = String(rawBook?.title || rawBook?.sourceTitle || '').trim()
+      const title = this.decodeHtmlEntities(rawBook?.title || rawBook?.sourceTitle || '').trim()
       if (!title) return null
       return {
         title,
         sequence: String(rawBook?.sequence || rawBook?.sourceSequence || '').trim(),
         publishedDate: String(rawBook?.publishedDate || rawBook?.sourcePublishedDate || '').trim(),
-        authors: Array.isArray(rawBook?.authors) ? rawBook.authors.filter(Boolean) : Array.isArray(rawBook?.sourceAuthors) ? rawBook.sourceAuthors.filter(Boolean) : [],
+        authors: Array.isArray(rawBook?.authors)
+          ? rawBook.authors.filter(Boolean).map((author) => this.decodeHtmlEntities(author))
+          : Array.isArray(rawBook?.sourceAuthors)
+            ? rawBook.sourceAuthors.filter(Boolean).map((author) => this.decodeHtmlEntities(author))
+            : [],
         sourceUrl: String(rawBook?.sourceUrl || entry?.sourceUrl || entry?.sourceSeriesUrl || '').trim()
       }
     },
@@ -1641,13 +1732,17 @@ export default {
         })
         if (!supports.length) return
         const expected = this.getCatalogExpectedDisplay(row)
-        const title = String(expected?.title || '').trim()
+        const title = this.decodeHtmlEntities(expected?.title || '').trim()
         if (!title) return
         books.push({
           title,
           sequence: row?.rowType === 'unsequenced' ? '' : String(row?.slot || '').trim(),
           publishedDate: String(row?.expectedPublishedDate || row?.publishedDate || '').trim(),
-          authors: Array.isArray(row?.expectedAuthors) ? row.expectedAuthors.filter(Boolean) : Array.isArray(row?.authors) ? row.authors.filter(Boolean) : [],
+          authors: Array.isArray(row?.expectedAuthors)
+            ? row.expectedAuthors.filter(Boolean).map((author) => this.decodeHtmlEntities(author))
+            : Array.isArray(row?.authors)
+              ? row.authors.filter(Boolean).map((author) => this.decodeHtmlEntities(author))
+              : [],
           localMatched: Array.isArray(row?.localBooks) && row.localBooks.length > 0
         })
       })
@@ -1728,13 +1823,44 @@ export default {
     },
     getSeriesLinkStateClass(entry) {
       if (entry?.pendingImport || String(entry?.importStatus || '').toLowerCase() === 'pending') {
-        return 'border-sky-300/35 bg-sky-400/10 text-sky-50'
+        return 'border-violet-300/35 bg-violet-500/10 text-violet-100'
       }
       const state = String(entry?.linkState || entry?.coverageStatus || '').toLowerCase()
       if (state === 'linked') return 'border-red-300/35 bg-red-500/10 text-red-100'
       if (state === 'partial') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
       if (state === 'previously_linked') return 'border-yellow-300/35 bg-yellow-500/10 text-yellow-100'
       return 'border-sky-300/35 bg-sky-400/10 text-sky-50'
+    },
+    getCatalogListItemElements() {
+      const refs = this.$refs.catalogListItem
+      if (Array.isArray(refs)) return refs
+      return refs ? [refs] : []
+    },
+    focusCatalogListItem(catalogId) {
+      const targetId = String(catalogId || '').trim()
+      if (!targetId) return
+      this.$nextTick(() => {
+        const element = this.getCatalogListItemElements().find((candidate) => String(candidate?.getAttribute?.('data-catalog-id') || '').trim() === targetId)
+        if (element?.focus) element.focus()
+      })
+    },
+    async selectAdjacentCatalog(delta) {
+      const catalogs = this.filteredCatalogSeries || []
+      if (!catalogs.length) return
+      const currentIndex = Math.max(0, catalogs.findIndex((catalog) => catalog.id === this.selectedCatalogId))
+      const nextIndex = Math.min(catalogs.length - 1, Math.max(0, currentIndex + Number(delta || 0)))
+      const nextCatalog = catalogs[nextIndex]
+      if (!nextCatalog) return
+      await this.selectCatalog(nextCatalog.id, { preferCache: true })
+      this.focusCatalogListItem(nextCatalog.id)
+    },
+    async selectCatalogBoundary(boundary) {
+      const catalogs = this.filteredCatalogSeries || []
+      if (!catalogs.length) return
+      const nextCatalog = boundary === 'last' ? catalogs[catalogs.length - 1] : catalogs[0]
+      if (!nextCatalog) return
+      await this.selectCatalog(nextCatalog.id, { preferCache: true })
+      this.focusCatalogListItem(nextCatalog.id)
     },
     getSeriesLinkActionLabel(entry) {
       return entry?.linkState === 'linked' ? 'Linked' : 'Link'

@@ -1273,6 +1273,65 @@ describe('SeriesReviewManager', () => {
     expect(resolvedLocalOnlyDetail.catalog.displayBucket).to.equal('locally_linked')
   })
 
+  it('surfaces pending and partial saved-link summary flags on catalog list rows', async () => {
+    await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+    await createBookFixture({
+      title: 'Alpha Return',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '2' }],
+      authors: ['Author A']
+    })
+
+    const localCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const localCatalog = localCatalogs.find((catalog) => catalog.seriesName === 'Alpha Saga')
+    await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, localCatalog.id, {
+      source: 'fictiondb',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }],
+        sampleBooks: [{ title: 'Alpha Start', sequence: '1' }]
+      }
+    })
+
+    const pendingCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const pendingLocalCatalog = pendingCatalogs.find((catalog) => catalog.seriesName === 'Alpha Saga')
+    expect(pendingLocalCatalog.displayBucket).to.equal('local_only')
+    expect(pendingLocalCatalog.hasPendingLink).to.equal(true)
+    expect(pendingLocalCatalog.hasPartialLink).to.equal(true)
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Alpha Saga',
+        entries: [
+          {
+            title: 'Alpha Start',
+            authors: ['Author A'],
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm' }]
+          }
+        ]
+      }
+    ])
+    await SeriesReviewManager.markSeriesSourceLinksImported(library.id, {
+      localDecisionKey: 'alpha saga',
+      sourceSeriesUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm'
+    })
+
+    const linkedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const linkedCatalog = linkedCatalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
+    expect(linkedCatalog.displayBucket).to.equal('locally_linked')
+    expect(linkedCatalog.hasPendingLink).to.equal(false)
+    expect(linkedCatalog.hasPartialLink).to.equal(true)
+  })
+
   it('resolves audible manual links into the locally linked category', async () => {
     await createBookFixture({
       title: 'Gamma Start',

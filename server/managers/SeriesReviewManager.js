@@ -2379,6 +2379,22 @@ class SeriesReviewManager {
     )
     const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
     const localMatchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
+    const localMatchSummaryByCatalogId = new Map()
+    const localMatchSummaryByDecisionKey = new Map()
+    for (const matchRow of localMatchRows) {
+      const importStatus = String(matchRow.importStatus || 'imported').trim().toLowerCase()
+      const coverageStatus = String(matchRow.coverageStatus || '').trim().toLowerCase()
+      const catalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl) || null
+      const summaryTarget = catalogId
+        ? localMatchSummaryByCatalogId
+        : localMatchSummaryByDecisionKey
+      const summaryKey = catalogId || matchRow.localDecisionKey
+      if (!summaryKey) continue
+      const summary = summaryTarget.get(summaryKey) || { hasPendingLink: false, hasPartialLink: false }
+      if (importStatus === 'pending') summary.hasPendingLink = true
+      if (coverageStatus === 'partial') summary.hasPartialLink = true
+      summaryTarget.set(summaryKey, summary)
+    }
     const resolvedLocalDecisionKeys = new Set(localMatchRows.filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl)).map((matchRow) => matchRow.localDecisionKey))
     const manualLinkedSeriesRowsBySourceUrl = this.buildManualLinkedSeriesRowsBySourceUrl(localSeriesGroups, localMatchRows)
 
@@ -2478,6 +2494,7 @@ class SeriesReviewManager {
           isLocallyLinked,
           canDismiss: true
         }),
+        ...(localMatchSummaryByCatalogId.get(catalog.id) || { hasPendingLink: false, hasPartialLink: false }),
         authorLine: authorMeta.authorLine,
         authorSearchText: authorMeta.authorSearchText,
         missingCount: summaryCounts.missingCount,
@@ -2523,6 +2540,7 @@ class SeriesReviewManager {
           displayBucket: 'local_only',
           canDismiss: false
         }),
+        ...(localMatchSummaryByDecisionKey.get(group.decisionKey) || { hasPendingLink: false, hasPartialLink: false }),
         missingCount: summaryCounts.missingCount,
         disputedCount: summaryCounts.disputedCount,
         localBookCount: localBooks.length,
