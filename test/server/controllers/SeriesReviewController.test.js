@@ -467,6 +467,79 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1, queue_rows_updated: 1 } })).to.be.true
   })
 
+  it('rebuilds a saved local source-series link through the original manual import flow', async () => {
+    sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary')
+      .onFirstCall()
+      .resolves({
+        catalog: {
+          id: 'catalog-1',
+          savedSeriesLinks: [{ id: 'match-1' }]
+        }
+      })
+      .onSecondCall()
+      .resolves({ catalog: { id: 'catalog-1' }, rows: [] })
+    sinon.stub(SeriesReviewManager, 'getSeriesSourceLinkRowsForLibrary').resolves([{ id: 'match-1', sourceSeriesUrl: 'https://example.com/alpha', source: 'fictiondb' }])
+    sinon.stub(SeriesReviewManager, 'cleanupImportedArtifactsForSeriesSourceLink').resolves()
+    sinon.stub(SeriesReviewManager, 'cleanupCatalogEvidenceForSeriesSourceLink').resolves({ catalogsChanged: 1, sourcesRemoved: 1 })
+    sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
+    sinon.stub(SeriesReviewManager, 'markSeriesSourceLinksImported').resolves(1)
+    sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1, queue_rows_updated: 2 } })
+
+    const req = {
+      user: { id: 'admin-user', isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1', matchId: 'match-1' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.rebuildLocalCatalogMatch(req, res)
+
+    expect(SeriesReviewManager.cleanupImportedArtifactsForSeriesSourceLink.calledOnce).to.be.true
+    expect(SeriesReviewManager.cleanupCatalogEvidenceForSeriesSourceLink.calledOnce).to.be.true
+    expect(SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary.calledOnceWithExactly('library-1', [{ matchId: 'match-1', includedLibraryItemIds: [] }], { forceRefresh: true })).to.be.true
+    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }])).to.be.true
+    expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', { matchIds: ['match-1'] })).to.be.true
+    expect(res.json.calledOnceWithExactly({
+      detail: { catalog: { id: 'catalog-1' }, rows: [] },
+      summary: { selected_matches: 1, queue_rows_updated: 2 }
+    })).to.be.true
+  })
+
+  it('renames a catalog series through the catalog detail action', async () => {
+    sinon.stub(SeriesReviewManager, 'renameCatalogForLibrary').resolves({
+      detail: { catalog: { id: 'catalog-1', seriesName: 'Polity (Chrono)' } },
+      canonicalName: 'Polity (Chrono)',
+      renameResult: { changedCount: 2, conflictCount: 0 }
+    })
+
+    const req = {
+      user: { id: 'admin-user', isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1' },
+      body: { targetLabel: 'Polity (Chrono)' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.renameCatalog(req, res)
+
+    expect(SeriesReviewManager.renameCatalogForLibrary.calledOnceWithExactly('library-1', 'catalog-1', 'Polity (Chrono)', 'admin-user')).to.be.true
+    expect(res.json.calledOnceWithExactly({
+      detail: { catalog: { id: 'catalog-1', seriesName: 'Polity (Chrono)' } },
+      canonicalName: 'Polity (Chrono)',
+      renameResult: { changedCount: 2, conflictCount: 0 }
+    })).to.be.true
+  })
+
   it('imports selected saved local source-series links', async () => {
     sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
     sinon.stub(SeriesReviewManager, 'markSeriesSourceLinksImported').resolves(1)

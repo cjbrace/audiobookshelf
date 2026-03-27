@@ -1837,4 +1837,59 @@ describe('SeriesReviewManager', () => {
     const restoredDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, catalogId, 'visible')
     expect(restoredDetail.catalog.visibilityStatus).to.equal('visible')
   })
+
+  it('renames persisted series source links when a local series label is renamed', async () => {
+    const sourceUrl = 'https://www.fictiondb.com/series/polity~123.htm'
+    await Database.seriesReviewSeriesSourceLinkModel.create({
+      libraryId: library.id,
+      localDecisionKey: 'polity chronological',
+      localSeriesName: 'Polity (Chronological)',
+      source: 'fictiondb',
+      sourceSeriesName: 'Polity',
+      sourceSeriesUrl: sourceUrl,
+      evidenceSnapshot: {
+        matchingBooks: [
+          {
+            localTitle: 'Gridlinked',
+            sourceTitle: 'Gridlinked',
+            sourceSequence: '1'
+          }
+        ],
+        seriesBooks: [
+          {
+            title: 'Gridlinked',
+            sequence: '1'
+          }
+        ]
+      }
+    })
+
+    const result = await SeriesReviewManager.renameSeriesSourceLinksForLibrary(library.id, 'Polity (Chronological)', 'Polity (Chrono)')
+    expect(result.updatedCount).to.equal(1)
+    expect(result.mergedCount).to.equal(0)
+
+    const updatedRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
+      where: {
+        libraryId: library.id,
+        sourceSeriesUrl: sourceUrl
+      }
+    })
+    expect(updatedRow.localDecisionKey).to.equal('polity chrono')
+    expect(updatedRow.localSeriesName).to.equal('Polity (Chrono)')
+
+    const payload = SeriesReviewManager.buildSeriesSourceLinkPayload(updatedRow, {
+      localBooks: []
+    })
+    expect(payload.seriesBooks).to.deep.equal([
+      {
+        title: 'Gridlinked',
+        sequence: '1',
+        publishedDate: null,
+        authors: [],
+        sourceUrl: '',
+        sourceAsin: '',
+        sourceRegion: ''
+      }
+    ])
+  })
 })

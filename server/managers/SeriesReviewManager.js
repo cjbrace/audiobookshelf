@@ -1563,6 +1563,61 @@ class SeriesReviewManager {
     return count
   }
 
+  normalizeSeriesSourceBookEntry(book = {}) {
+    const title = this.normalizeSeriesName(book?.title || book?.sourceTitle || '')
+    if (!title) return null
+    return {
+      title,
+      sequence: this.normalizeSequence(book?.sequence || book?.sourceSequence || null),
+      publishedDate: String(book?.publishedDate || book?.sourcePublishedDate || '').trim() || null,
+      authors: Array.isArray(book?.authors)
+        ? book.authors.filter(Boolean)
+        : Array.isArray(book?.sourceAuthors)
+          ? book.sourceAuthors.filter(Boolean)
+          : [],
+      sourceUrl: String(book?.sourceUrl || '').trim(),
+      sourceAsin: String(book?.sourceAsin || '').trim(),
+      sourceRegion: String(book?.sourceRegion || '').trim()
+    }
+  }
+
+  sortSeriesSourceBooks(books = []) {
+    return [...(Array.isArray(books) ? books : [])].sort((left, right) => {
+      const leftSequence = String(left?.sequence || '')
+      const rightSequence = String(right?.sequence || '')
+      if (leftSequence && rightSequence && leftSequence !== rightSequence) {
+        return leftSequence.localeCompare(rightSequence, undefined, { numeric: true })
+      }
+      if (leftSequence && !rightSequence) return -1
+      if (!leftSequence && rightSequence) return 1
+      return String(left?.title || '').localeCompare(String(right?.title || ''))
+    })
+  }
+
+  getSeriesSourceLinkSeriesBooks(evidenceSnapshot) {
+    const snapshot = this.normalizeEvidenceSnapshot(evidenceSnapshot)
+    const explicitSeriesBooks = Array.isArray(snapshot?.seriesBooks) ? snapshot.seriesBooks : []
+    const rawBooks = explicitSeriesBooks.length
+      ? explicitSeriesBooks
+      : [
+          ...(Array.isArray(snapshot?.matchingBooks) ? snapshot.matchingBooks : []),
+          ...(Array.isArray(snapshot?.sampleBooks) ? snapshot.sampleBooks : [])
+        ]
+
+    const seen = new Set()
+    const seriesBooks = []
+    rawBooks.forEach((book) => {
+      const normalizedBook = this.normalizeSeriesSourceBookEntry(book)
+      if (!normalizedBook) return
+      const dedupeKey = `${this.normalizeKeyPart(normalizedBook.title)}::${normalizedBook.sequence || ''}`
+      if (!dedupeKey || seen.has(dedupeKey)) return
+      seen.add(dedupeKey)
+      seriesBooks.push(normalizedBook)
+    })
+
+    return this.sortSeriesSourceBooks(seriesBooks)
+  }
+
   getSeriesSourceLinkCoverageStatus(linkRow, localBooks = [], evidenceSnapshot = null) {
     if (!linkRow?.isActive) return 'previously_linked'
     const snapshot = this.getEffectiveEvidenceSnapshot(evidenceSnapshot, linkRow?.evidenceSnapshot)
@@ -1594,6 +1649,7 @@ class SeriesReviewManager {
       sourceRegion: snapshot.sourceRegion || '',
       matchingBooks: Array.isArray(snapshot.matchingBooks) ? snapshot.matchingBooks : [],
       sampleBooks: Array.isArray(snapshot.sampleBooks) ? snapshot.sampleBooks : [],
+      seriesBooks: this.getSeriesSourceLinkSeriesBooks(snapshot),
       sequenceIncomplete: !!snapshot.sequenceIncomplete,
       sequenceStatusNote: typeof snapshot.sequenceStatusNote === 'string' ? snapshot.sequenceStatusNote : '',
       evidenceSnapshot: snapshot,
@@ -1981,6 +2037,125 @@ class SeriesReviewManager {
     return rows.length
   }
 
+  getSeriesSourceLinkSnapshotRichness(snapshot) {
+    const normalized = this.normalizeEvidenceSnapshot(snapshot)
+    return (
+      this.getSeriesSourceLinkSeriesBooks(normalized).length * 10 +
+      this.getSeriesSourceLinkBookCount(normalized) * 5 +
+      (Array.isArray(normalized?.sampleBooks) ? normalized.sampleBooks.length : 0) * 2 +
+      Object.keys(normalized).length
+    )
+  }
+
+  choosePreferredSeriesSourceLinkSnapshot(primarySnapshot, secondarySnapshot) {
+    const primary = this.normalizeEvidenceSnapshot(primarySnapshot)
+    const secondary = this.normalizeEvidenceSnapshot(secondarySnapshot)
+    return this.getSeriesSourceLinkSnapshotRichness(primary) >= this.getSeriesSourceLinkSnapshotRichness(secondary) ? primary : secondary
+  }
+
+  choosePreferredSeriesSourceLinkCoverageStatus(statuses = []) {
+    const normalizedStatuses = (Array.isArray(statuses) ? statuses : []).map((status) => String(status || '').trim().toLowerCase())
+    if (normalizedStatuses.includes('linked')) return 'linked'
+    if (normalizedStatuses.includes('partial')) return 'partial'
+    if (normalizedStatuses.includes('previously_linked')) return 'previously_linked'
+    return 'partial'
+  }
+
+  async mergeSeriesSourceLinkRows(targetRow, sourceRow, targetSeriesName, targetDecisionKey) {
+    const nextIsActive = targetRow.isActive !== false || sourceRow.isActive !== false
+    const nextLastImportedAt = [targetRow.lastImportedAt, sourceRow.lastImportedAt]
+      .filter(Boolean)
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null
+    const nextSnapshot = this.choosePreferredSeriesSourceLinkSnapshot(targetRow.evidenceSnapshot, sourceRow.evidenceSnapshot)
+
+    targetRow.localSeriesName = targetSeriesName
+    targetRow.localDecisionKey = targetDecisionKey
+    targetRow.coverageStatus = this.choosePreferredSeriesSourceLinkCoverageStatus([targetRow.coverageStatus, sourceRow.coverageStatus])
+    targetRow.linkedBookCount = Math.max(Number(targetRow.linkedBookCount || 0), Number(sourceRow.linkedBookCount || 0))
+    targetRow.totalBookCount = Math.max(Number(targetRow.totalBookCount || 0), Number(sourceRow.totalBookCount || 0))
+    targetRow.importStatus = [targetRow.importStatus, sourceRow.importStatus].some((status) => String(status || '').trim().toLowerCase() === 'pending')
+      ? 'pending'
+      : 'imported'
+    targetRow.lastImportedAt = nextLastImportedAt
+    targetRow.evidenceSnapshot = nextSnapshot
+    targetRow.isActive = nextIsActive
+    targetRow.unlinkedAt = nextIsActive ? null : targetRow.unlinkedAt || sourceRow.unlinkedAt || null
+    targetRow.unlinkedByUserId = nextIsActive ? null : targetRow.unlinkedByUserId || sourceRow.unlinkedByUserId || null
+    if (!targetRow.sourceAuthor && sourceRow.sourceAuthor) targetRow.sourceAuthor = sourceRow.sourceAuthor
+    await targetRow.save()
+    await sourceRow.destroy()
+  }
+
+  async renameSeriesSourceLinksForLibrary(libraryId, sourceName, targetName) {
+    const normalizedSourceName = this.normalizeSeriesName(sourceName)
+    const normalizedTargetName = this.normalizeSeriesName(targetName)
+    const sourceDecisionKey = this.normalizeDecisionKey(normalizedSourceName)
+    const targetDecisionKey = this.normalizeDecisionKey(normalizedTargetName)
+    if (!sourceDecisionKey || !targetDecisionKey) {
+      return {
+        updatedCount: 0,
+        mergedCount: 0
+      }
+    }
+
+    const rows = await Database.seriesReviewSeriesSourceLinkModel.findAll({
+      where: {
+        libraryId,
+        localDecisionKey: {
+          [Op.in]: [...new Set([sourceDecisionKey, targetDecisionKey])]
+        }
+      },
+      order: [['updatedAt', 'DESC']]
+    })
+    if (!rows.length) {
+      return {
+        updatedCount: 0,
+        mergedCount: 0
+      }
+    }
+
+    let updatedCount = 0
+    let mergedCount = 0
+    const targetRowsBySourceUrl = new Map()
+
+    rows
+      .filter((row) => row.localDecisionKey === targetDecisionKey)
+      .forEach((row) => {
+        row.localSeriesName = normalizedTargetName
+        targetRowsBySourceUrl.set(row.sourceSeriesUrl, row)
+      })
+
+    if (sourceDecisionKey === targetDecisionKey) {
+      for (const row of rows) {
+        if (row.localSeriesName === normalizedTargetName) continue
+        row.localSeriesName = normalizedTargetName
+        await row.save()
+        updatedCount += 1
+      }
+      return { updatedCount, mergedCount }
+    }
+
+    for (const row of rows.filter((candidate) => candidate.localDecisionKey === sourceDecisionKey)) {
+      const existingTargetRow = targetRowsBySourceUrl.get(row.sourceSeriesUrl)
+      if (existingTargetRow && existingTargetRow.id !== row.id) {
+        await this.mergeSeriesSourceLinkRows(existingTargetRow, row, normalizedTargetName, targetDecisionKey)
+        mergedCount += 1
+        continue
+      }
+
+      row.localDecisionKey = targetDecisionKey
+      row.localSeriesName = normalizedTargetName
+      await row.save()
+      updatedCount += 1
+      targetRowsBySourceUrl.set(row.sourceSeriesUrl, row)
+    }
+
+    return {
+      updatedCount,
+      mergedCount
+    }
+  }
+
   doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl) {
     const normalizedSourceSeriesUrl = String(sourceSeriesUrl || '').trim()
     if (!normalizedSourceSeriesUrl) return false
@@ -2149,6 +2324,36 @@ class SeriesReviewManager {
       ...options,
       forceRefresh: true
     })
+  }
+
+  async renameCatalogForLibrary(libraryId, catalogId, targetLabel, userId) {
+    const normalizedTargetLabel = this.normalizeSeriesName(targetLabel)
+    if (!normalizedTargetLabel) {
+      throw new Error('Missing targetLabel')
+    }
+
+    const currentDetail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
+    if (!currentDetail?.catalog?.seriesName) return null
+
+    const currentSeriesName = this.normalizeSeriesName(currentDetail.catalog.seriesName)
+    const result = await this.applySeriesNameControlForLibrary(libraryId, userId, currentSeriesName, normalizedTargetLabel, 'alias', {
+      applyLocalRename: true
+    })
+
+    const nextCatalogId = this.parseLocalOnlyCatalogId(catalogId)
+      ? this.buildLocalOnlyCatalogId(this.normalizeDecisionKey(result.canonicalName || normalizedTargetLabel))
+      : catalogId
+
+    const detail =
+      (await this.getCatalogDetailForLibrary(libraryId, nextCatalogId)) ||
+      (await this.getCatalogDetailForLibrary(libraryId, catalogId))
+
+    return {
+      detail,
+      canonicalName: result.canonicalName,
+      renameResult: result.renameResult,
+      sourceLinkRenameResult: result.sourceLinkRenameResult || { updatedCount: 0, mergedCount: 0 }
+    }
   }
 
   async getCatalogsForLibrary(libraryId, includeUntrusted = false, includeDismissed = false) {
@@ -3866,6 +4071,9 @@ class SeriesReviewManager {
     }
 
     const control = await this.upsertSeriesNameControlForLibrary(libraryId, userId, sourceName, canonicalTargetName, controlType)
+    const sourceLinkRenameResult = applyLocalRename
+      ? await this.renameSeriesSourceLinksForLibrary(libraryId, sourceName, canonicalTargetName)
+      : { updatedCount: 0, mergedCount: 0 }
 
     const nextResolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     await this.rebuildCatalogsForLibrary(libraryId, nextResolver)
@@ -3874,6 +4082,7 @@ class SeriesReviewManager {
     return {
       control,
       renameResult,
+      sourceLinkRenameResult,
       canonicalName: canonicalTargetName
     }
   }

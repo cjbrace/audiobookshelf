@@ -165,6 +165,79 @@ class SeriesReviewController {
     res.json(detail)
   }
 
+  async rebuildLocalCatalogMatch(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    try {
+      const catalogDetail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+      if (!catalogDetail) return res.sendStatus(404)
+
+      const savedLinks = Array.isArray(catalogDetail.catalog?.savedSeriesLinks) ? catalogDetail.catalog.savedSeriesLinks : []
+      const selectedLink = savedLinks.find((link) => link.id === req.params.matchId)
+      if (!selectedLink) return res.status(404).send('Saved local source link was not found')
+
+      const linkRows = await SeriesReviewManager.getSeriesSourceLinkRowsForLibrary(req.library.id, {
+        activeOnly: true
+      })
+      const matchRow = linkRows.find((row) => row.id === req.params.matchId)
+      if (!matchRow) return res.status(404).send('Saved local source link was not found')
+
+      await SeriesReviewManager.cleanupImportedArtifactsForSeriesSourceLink(req.library.id, matchRow, req.user.id)
+      await SeriesReviewManager.cleanupCatalogEvidenceForSeriesSourceLink(req.library.id, matchRow)
+
+      const matches = await SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary(
+        req.library.id,
+        [{ matchId: matchRow.id, includedLibraryItemIds: [] }],
+        { forceRefresh: true }
+      )
+
+      if (!matches.length) {
+        const detail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+        return res.json({
+          detail,
+          summary: {
+            selected_matches: 0,
+            queue_rows_updated: 0,
+            series_catalogs_created: 0,
+            series_catalogs_updated: 0
+          }
+        })
+      }
+
+      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, { matchIds: [matchRow.id] })
+      const detail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+
+      return res.json({
+        detail,
+        ...(result || {})
+      })
+    } catch (error) {
+      const statusCode = Number(error?.statusCode || 0)
+      if (statusCode >= 400) {
+        return res.status(statusCode).send(String(error?.message || 'Manual series rebuild failed'))
+      }
+      return handleActionError(res, error)
+    }
+  }
+
+  async renameCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+    const targetLabel = typeof req.body?.targetLabel === 'string' ? req.body.targetLabel : ''
+    if (!targetLabel.trim()) return res.status(400).send('Missing targetLabel')
+
+    let result
+    try {
+      result = await SeriesReviewManager.renameCatalogForLibrary(req.library.id, req.params.catalogId, targetLabel, req.user.id)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result?.detail) return res.sendStatus(404)
+    res.json(result)
+  }
+
   async getLocalCatalogMatches(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

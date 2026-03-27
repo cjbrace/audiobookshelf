@@ -796,7 +796,35 @@
                 >
                   <div class="flex flex-wrap items-start gap-3">
                     <div class="grow min-w-[18rem]">
-                      <h2 class="text-2xl font-semibold">{{ selectedCatalogHeading }}</h2>
+                      <div v-if="selectedCatalogRenameEditing" class="max-w-2xl space-y-2">
+                        <input
+                          :value="selectedCatalogRenameDraft"
+                          type="text"
+                          class="w-full rounded border border-white/15 bg-black/25 px-3 py-2 text-xl font-semibold text-gray-100 placeholder:text-gray-500 focus:border-sky-300/40 focus:outline-none"
+                          @input="setSelectedCatalogRenameDraft($event.target.value)"
+                          @keyup.enter.prevent="saveCatalogRename"
+                          @keyup.esc.prevent="cancelCatalogRename"
+                        />
+                        <div class="flex flex-wrap gap-2">
+                          <ui-btn
+                            small
+                            color="bg-success/80"
+                            :loading="catalogRenameLoading"
+                            @click="saveCatalogRename"
+                          >
+                            Save Name
+                          </ui-btn>
+                          <ui-btn
+                            small
+                            color="bg-bg border border-white/20"
+                            :disabled="catalogRenameLoading"
+                            @click="cancelCatalogRename"
+                          >
+                            Cancel
+                          </ui-btn>
+                        </div>
+                      </div>
+                      <h2 v-else class="text-2xl font-semibold">{{ selectedCatalogHeading }}</h2>
                       <p v-if="selectedCatalogDetailBusy" class="mt-1 text-xs text-amber-200">
                         Loading the newly selected series. Actions are disabled until the detail panel catches up.
                       </p>
@@ -807,6 +835,15 @@
                     >
                       {{ selectedCatalogDetail.catalog.displayLabel }}
                     </span>
+                    <ui-btn
+                      v-if="!selectedCatalogRenameEditing"
+                      small
+                      color="bg-bg border border-white/20"
+                      :disabled="selectedCatalogDetailBusy"
+                      @click="startCatalogRename"
+                    >
+                      Edit Name
+                    </ui-btn>
                     <ui-btn
                       v-for="link in selectedCatalogDetail.catalog.evidenceLinks || []"
                       :key="selectedCatalogDetail.catalog.id + ':evidence:' + link.source"
@@ -884,29 +921,36 @@
                               {{ getManualSourceText(match) }}
                             </p>
                           </div>
-                          <ui-btn
-                            v-if="match.canRemove"
-                            small
-                            color="bg-bg border border-white/20"
-                            :loading="catalogLocalMatchRemovingKey === match.id"
-                            @click="removeLocalCatalogMatch(match)"
-                          >
-                            Unlink
-                          </ui-btn>
+                          <div class="flex flex-wrap items-center gap-2">
+                            <ui-btn
+                              v-if="match.canRemove && !match.pendingImport"
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="catalogLocalMatchRebuildingKey === match.id"
+                              @click="rebuildLocalCatalogMatch(match)"
+                            >
+                              Rebuild From Link
+                            </ui-btn>
+                            <ui-btn
+                              v-if="match.canRemove"
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="catalogLocalMatchRemovingKey === match.id"
+                              @click="removeLocalCatalogMatch(match)"
+                            >
+                              Unlink
+                            </ui-btn>
+                          </div>
                         </div>
-                        <div v-if="match.matchingBooks.length" class="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2 text-sm text-gray-200">
+                        <div v-if="getSourceSeriesBooks(match).length" class="mt-3 space-y-2">
+                          <p class="text-sm font-semibold uppercase tracking-wide text-gray-300">Source Series Books</p>
                           <div
-                            v-for="book in match.matchingBooks"
-                            :key="'saved-local-evidence:' + match.id + ':' + book.localTitle + ':' + book.sourceTitle"
-                            class="rounded border border-white/10 bg-black/20 px-3 py-2"
+                            v-for="book in getSourceSeriesBooks(match)"
+                            :key="'saved-local-source-book:' + match.id + ':' + getSourceSeriesBookKey(book)"
+                            class="rounded border border-white/10 bg-black/20 px-3 py-2 text-sm"
+                            :class="book.localMatched ? 'text-emerald-200' : 'text-red-200'"
                           >
-                            <p class="font-medium text-white">{{ book.localTitle }}</p>
-                            <p class="text-gray-300 mt-1">{{ book.sourceTitle }}</p>
-                            <p class="text-xs text-gray-400 mt-1">
-                              <span v-if="book.sourceSequence">#{{ book.sourceSequence }}</span>
-                              <span v-if="book.sourceSequence && book.sourcePublishedDate"> | </span>
-                              <span v-if="book.sourcePublishedDate">{{ book.sourcePublishedDate }}</span>
-                            </p>
+                            {{ formatSourceSeriesBookLine(book) }}
                           </div>
                         </div>
                       </div>
@@ -951,40 +995,16 @@
                           </div>
                         </div>
 
-                        <div v-if="result.matchingBooks.length">
-                          <p class="text-sm font-semibold uppercase tracking-wide text-gray-300">Matching Books</p>
-                          <div class="mt-2 space-y-2 text-sm text-gray-200">
+                        <div v-if="getSourceSeriesBooks(result).length" class="space-y-2">
+                          <p class="text-sm font-semibold uppercase tracking-wide text-gray-300">Source Series Books</p>
+                          <div class="space-y-2 text-sm">
                             <div
-                              v-for="book in result.matchingBooks"
-                              :key="'manual-match-book:' + result.sourceUrl + ':' + book.localTitle + ':' + book.sourceTitle"
+                              v-for="book in getSourceSeriesBooks(result)"
+                              :key="'manual-source-book:' + getManualLookupResultKey(result) + ':' + getSourceSeriesBookKey(book)"
                               class="rounded border border-white/10 bg-black/20 px-3 py-2"
+                              :class="book.localMatched ? 'text-emerald-200' : 'text-red-200'"
                             >
-                              <p class="font-medium text-white">{{ book.localTitle }}</p>
-                              <p class="text-gray-300 mt-1">{{ book.sourceTitle }}</p>
-                              <p class="text-xs text-gray-400 mt-1">
-                                <span v-if="book.sourceSequence">#{{ book.sourceSequence }}</span>
-                                <span v-if="book.sourceSequence && book.sourcePublishedDate"> | </span>
-                                <span v-if="book.sourcePublishedDate">{{ book.sourcePublishedDate }}</span>
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div v-if="result.sampleBooks.length">
-                          <p class="text-sm font-semibold uppercase tracking-wide text-gray-300">Sample Source Books</p>
-                          <div class="mt-2 space-y-2 text-sm text-gray-200">
-                            <div
-                              v-for="book in result.sampleBooks"
-                              :key="'manual-sample-book:' + result.sourceUrl + ':' + book.title"
-                              class="rounded border border-white/10 bg-black/20 px-3 py-2"
-                            >
-                              <p class="font-medium text-white">{{ book.title }}</p>
-                              <p v-if="book.authors && book.authors.length" class="text-xs text-gray-400 mt-1">{{ book.authors.join(', ') }}</p>
-                              <p class="text-xs text-gray-400 mt-1">
-                                <span v-if="book.sequence">#{{ book.sequence }}</span>
-                                <span v-if="book.sequence && book.publishedDate"> | </span>
-                                <span v-if="book.publishedDate">{{ book.publishedDate }}</span>
-                              </p>
+                              {{ formatSourceSeriesBookLine(book) }}
                             </div>
                           </div>
                         </div>
@@ -1313,10 +1333,13 @@ export default {
       catalogCategoryFilter: '',
       selectedCatalogId: '',
       selectedCatalogDetail: null,
+      selectedCatalogRenameEditing: false,
+      selectedCatalogRenameDraft: '',
       catalogChoiceLoadingKey: '',
       catalogCandidateSearchLoadingKey: '',
       catalogCandidateQueueLoadingKey: '',
       catalogVisibilityLoadingKey: '',
+      catalogRenameLoading: false,
       catalogCandidateResultsBySlot: {},
       catalogCandidateFilterBySlot: {},
       catalogListCache: {},
@@ -1332,6 +1355,7 @@ export default {
       catalogManualLookupLoading: false,
       catalogManualLookupSavingKey: '',
       catalogManualLookupError: '',
+      catalogLocalMatchRebuildingKey: '',
       catalogLocalMatchRemovingKey: '',
       sourceImportStatus: null,
       sourceImportError: '',
@@ -1547,6 +1571,153 @@ export default {
     getManualSequenceStatus(entry) {
       return String(entry?.sequenceStatusNote || entry?.evidenceSnapshot?.sequenceStatusNote || '').trim()
     },
+    normalizeSourceUrl(value) {
+      return String(value || '').trim().replace(/\/+$/, '')
+    },
+    normalizeSourceBookText(value) {
+      return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+    },
+    getSourceBookTitleKeys(title) {
+      const normalizedTitle = String(title || '').trim()
+      if (!normalizedTitle) return []
+      const candidates = new Set()
+      const pushCandidate = (value) => {
+        const normalized = this.normalizeSourceBookText(value)
+        if (normalized) candidates.add(normalized)
+      }
+      pushCandidate(normalizedTitle)
+      if (normalizedTitle.includes(':')) pushCandidate(normalizedTitle.split(':').slice(1).join(':'))
+      if (normalizedTitle.includes(' - ')) pushCandidate(normalizedTitle.split(' - ').slice(1).join(' - '))
+      if (normalizedTitle.includes(' – ')) pushCandidate(normalizedTitle.split(' – ').slice(1).join(' – '))
+      return [...candidates]
+    },
+    buildSourceSeriesBook(rawBook, entry = null) {
+      const title = String(rawBook?.title || rawBook?.sourceTitle || '').trim()
+      if (!title) return null
+      return {
+        title,
+        sequence: String(rawBook?.sequence || rawBook?.sourceSequence || '').trim(),
+        publishedDate: String(rawBook?.publishedDate || rawBook?.sourcePublishedDate || '').trim(),
+        authors: Array.isArray(rawBook?.authors) ? rawBook.authors.filter(Boolean) : Array.isArray(rawBook?.sourceAuthors) ? rawBook.sourceAuthors.filter(Boolean) : [],
+        sourceUrl: String(rawBook?.sourceUrl || entry?.sourceUrl || entry?.sourceSeriesUrl || '').trim()
+      }
+    },
+    sortSourceSeriesBooks(books) {
+      return [...(books || [])].sort((left, right) => {
+        const leftSequence = String(left?.sequence || '')
+        const rightSequence = String(right?.sequence || '')
+        if (leftSequence && rightSequence && leftSequence !== rightSequence) {
+          return leftSequence.localeCompare(rightSequence, undefined, { numeric: true })
+        }
+        if (leftSequence && !rightSequence) return -1
+        if (!leftSequence && rightSequence) return 1
+        return String(left?.title || '').localeCompare(String(right?.title || ''))
+      })
+    },
+    dedupeSourceSeriesBooks(books) {
+      const seen = new Set()
+      return this.sortSourceSeriesBooks(
+        (books || []).filter((book) => {
+          const title = String(book?.title || '').trim()
+          const dedupeKey = `${this.normalizeSourceBookText(title)}::${String(book?.sequence || '').trim()}`
+          if (!title || seen.has(dedupeKey)) return false
+          seen.add(dedupeKey)
+          return true
+        })
+      )
+    },
+    getCatalogSourceSeriesBooks(entry) {
+      const targetUrl = this.normalizeSourceUrl(entry?.sourceUrl || entry?.sourceSeriesUrl || entry?.sourceLinkUrl || '')
+      const targetSource = String(entry?.source || '').trim().toLowerCase()
+      if (!this.selectedCatalogDetail || !targetUrl || !targetSource) return []
+
+      const books = []
+      ;(this.selectedCatalogRows || []).forEach((row) => {
+        const supports = this.getCatalogRowSourceSupport(row).filter((source) => {
+          return String(source?.source || '').trim().toLowerCase() === targetSource && this.normalizeSourceUrl(source?.evidenceUrl || '') === targetUrl
+        })
+        if (!supports.length) return
+        const expected = this.getCatalogExpectedDisplay(row)
+        const title = String(expected?.title || '').trim()
+        if (!title) return
+        books.push({
+          title,
+          sequence: row?.rowType === 'unsequenced' ? '' : String(row?.slot || '').trim(),
+          publishedDate: String(row?.expectedPublishedDate || row?.publishedDate || '').trim(),
+          authors: Array.isArray(row?.expectedAuthors) ? row.expectedAuthors.filter(Boolean) : Array.isArray(row?.authors) ? row.authors.filter(Boolean) : [],
+          localMatched: Array.isArray(row?.localBooks) && row.localBooks.length > 0
+        })
+      })
+
+      return this.dedupeSourceSeriesBooks(books)
+    },
+    getEntryMatchedSourceBookKeys(entry) {
+      const keys = new Set()
+      ;(entry?.matchingBooks || []).forEach((book) => {
+        const sequence = String(book?.sourceSequence || '').trim()
+        this.getSourceBookTitleKeys(book?.sourceTitle || '').forEach((titleKey) => {
+          keys.add(`${sequence}::${titleKey}`)
+          keys.add(`::${titleKey}`)
+        })
+      })
+      return keys
+    },
+    getLocalBookLookupKeys() {
+      const keys = new Set()
+      ;(this.selectedCatalogDetail?.localBooks || []).forEach((book) => {
+        const sequence = String(book?.sequence || '').trim()
+        this.getSourceBookTitleKeys(book?.title || '').forEach((titleKey) => {
+          keys.add(`${sequence}::${titleKey}`)
+          keys.add(`::${titleKey}`)
+        })
+      })
+      return keys
+    },
+    getFallbackSourceSeriesBooks(entry) {
+      const rawSeriesBooks = Array.isArray(entry?.seriesBooks) && entry.seriesBooks.length
+        ? entry.seriesBooks
+        : Array.isArray(entry?.evidenceSnapshot?.seriesBooks) && entry.evidenceSnapshot.seriesBooks.length
+          ? entry.evidenceSnapshot.seriesBooks
+          : [
+              ...(Array.isArray(entry?.matchingBooks) ? entry.matchingBooks : []),
+              ...(Array.isArray(entry?.sampleBooks) ? entry.sampleBooks : []),
+              ...(Array.isArray(entry?.evidenceSnapshot?.matchingBooks) ? entry.evidenceSnapshot.matchingBooks : []),
+              ...(Array.isArray(entry?.evidenceSnapshot?.sampleBooks) ? entry.evidenceSnapshot.sampleBooks : [])
+            ]
+
+      const matchedKeys = this.getEntryMatchedSourceBookKeys(entry)
+      const localKeys = this.getLocalBookLookupKeys()
+      const books = rawSeriesBooks
+        .map((book) => this.buildSourceSeriesBook(book, entry))
+        .filter(Boolean)
+        .map((book) => {
+          const titleKeys = this.getSourceBookTitleKeys(book.title)
+          const sequence = String(book.sequence || '').trim()
+          const localMatched = titleKeys.some((titleKey) => matchedKeys.has(`${sequence}::${titleKey}`) || matchedKeys.has(`::${titleKey}`) || localKeys.has(`${sequence}::${titleKey}`) || localKeys.has(`::${titleKey}`))
+          return {
+            ...book,
+            localMatched
+          }
+        })
+
+      return this.dedupeSourceSeriesBooks(books)
+    },
+    getSourceSeriesBooks(entry) {
+      const catalogBooks = this.getCatalogSourceSeriesBooks(entry)
+      if (catalogBooks.length) return catalogBooks
+      return this.getFallbackSourceSeriesBooks(entry)
+    },
+    getSourceSeriesBookKey(book) {
+      return `${String(book?.sequence || '').trim()}:${String(book?.title || '').trim()}`
+    },
+    formatSourceSeriesBookLine(book) {
+      const sequence = String(book?.sequence || '').trim()
+      const title = String(book?.title || '').trim()
+      return sequence ? `#${sequence} - ${title}` : title
+    },
     getSeriesLinkStateLabel(entry) {
       if (entry?.pendingImport || String(entry?.importStatus || '').toLowerCase() === 'pending') return 'Pending Import'
       if (entry?.linkStateLabel) return entry.linkStateLabel
@@ -1621,6 +1792,18 @@ export default {
     },
     setRenameDraft(suggestionId, value) {
       this.$set(this.renameTargetBySuggestion, suggestionId, value)
+    },
+    startCatalogRename() {
+      if (!this.selectedCatalogDetail?.catalog?.seriesName) return
+      this.selectedCatalogRenameEditing = true
+      this.selectedCatalogRenameDraft = this.selectedCatalogDetail.catalog.seriesName
+    },
+    cancelCatalogRename() {
+      this.selectedCatalogRenameEditing = false
+      this.selectedCatalogRenameDraft = ''
+    },
+    setSelectedCatalogRenameDraft(value) {
+      this.selectedCatalogRenameDraft = String(value || '')
     },
     selectedManagementTargetId(groupKey) {
       return this.managementTargetIds[groupKey] || ''
@@ -2048,12 +2231,16 @@ export default {
       if (!catalogId) {
         this.selectedCatalogId = ''
         this.selectedCatalogDetail = null
+        this.selectedCatalogRenameEditing = false
+        this.selectedCatalogRenameDraft = ''
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
         return
       }
       this.selectedCatalogId = catalogId
+      this.selectedCatalogRenameEditing = false
+      this.selectedCatalogRenameDraft = ''
       this.catalogCandidateResultsBySlot = {}
       this.catalogCandidateFilterBySlot = {}
       if (this.catalogManualLookupCatalogId !== catalogId) {
@@ -2074,6 +2261,38 @@ export default {
         this.errorMessage = error?.response?.data || 'Failed to load series detail'
       } finally {
         if (!skipLoading || !this.catalogDetailCache[catalogId]) this.catalogLoading = false
+      }
+    },
+    async saveCatalogRename() {
+      if (!this.selectedCatalogDetailReady) return
+      const targetLabel = String(this.selectedCatalogRenameDraft || '').trim()
+      if (!targetLabel) {
+        this.$toast.error('Enter the series name first')
+        return
+      }
+
+      const catalogId = this.selectedCatalogDetail.catalog.id
+      this.catalogRenameLoading = true
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/rename`, {
+          targetLabel
+        })
+        const detail = response.detail
+        if (!detail) throw new Error('Missing updated series detail')
+        this.cancelCatalogRename()
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
+        this.selectedCatalogDetail = detail
+        this.selectedCatalogId = detail.catalog.id
+        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.persistCatalogCaches()
+        await this.loadLocalCatalogMatches({ silent: true })
+        await this.loadQueue()
+        this.$toast.success('Series name updated')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || error?.message || 'Failed to rename the series')
+      } finally {
+        this.catalogRenameLoading = false
       }
     },
     async lookupManualCatalogSources() {
@@ -2148,6 +2367,34 @@ export default {
         this.$toast.error(error?.response?.data || 'Failed to remove local source link')
       } finally {
         this.catalogLocalMatchRemovingKey = ''
+      }
+    },
+    async rebuildLocalCatalogMatch(match) {
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
+      this.catalogLocalMatchRebuildingKey = match.id
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/local-match/${match.id}/rebuild`
+        )
+        const detail = response.detail
+        if (!detail) throw new Error('Missing updated series detail')
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
+        this.selectedCatalogDetail = detail
+        this.selectedCatalogId = detail.catalog.id
+        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.persistCatalogCaches()
+        await this.loadLocalCatalogMatches({ silent: true })
+        await this.loadQueue()
+        const summary = response.summary || {}
+        this.$toast.success(
+          `Rebuilt ${summary.selected_matches || 0} link${(summary.selected_matches || 0) === 1 ? '' : 's'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
+        )
+      } catch (error) {
+        this.$toast.error(error?.response?.data || error?.message || 'Failed to rebuild the saved source link')
+      } finally {
+        this.catalogLocalMatchRebuildingKey = ''
       }
     },
     async importSelectedLocalCatalogMatches() {

@@ -110,6 +110,8 @@ class ApiRouter {
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/manual-lookup', LibraryController.middleware.bind(this), SeriesReviewController.lookupManualCatalogSources.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/local-match', LibraryController.middleware.bind(this), SeriesReviewController.saveLocalCatalogMatch.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/local-match/:matchId/remove', LibraryController.middleware.bind(this), SeriesReviewController.removeLocalCatalogMatch.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/:catalogId/local-match/:matchId/rebuild', LibraryController.middleware.bind(this), SeriesReviewController.rebuildLocalCatalogMatch.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/:catalogId/rename', LibraryController.middleware.bind(this), SeriesReviewController.renameCatalog.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/slot-choice', LibraryController.middleware.bind(this), SeriesReviewController.chooseCatalogSlot.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/find-candidates', LibraryController.middleware.bind(this), SeriesReviewController.findCatalogCandidates.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/queue-candidate', LibraryController.middleware.bind(this), SeriesReviewController.queueCatalogCandidate.bind(this))
