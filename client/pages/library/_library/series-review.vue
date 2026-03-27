@@ -1087,7 +1087,7 @@
                       Local-only series stay visible here until they are linked or merged into a sourced series, and they cannot be dismissed.
                     </p>
                     <p v-else-if="selectedCatalogDetail.catalog.displayBucket === 'locally_linked'" class="mt-1 text-xs text-gray-400">
-                      Locally linked series came from saved manual source links and now feed the normal review/catalog pipeline.
+                      Linked series came from saved manual source links and now feed the normal review/catalog pipeline.
                     </p>
                     <p v-else class="mt-1 text-xs text-gray-400">
                       Use Review Queue alias/rename or Series Management merge when this series needs canonical-name cleanup.
@@ -1504,7 +1504,7 @@ export default {
       return visibleCatalogs.length || this.catalogSeries.filter((catalog) => catalog.displayBucket !== 'dismissed').length
     },
     catalogCategoryOptions() {
-      const bucketOrder = ['trusted', 'local_only', 'locally_linked', 'potential', 'less_trusted', 'dismissed']
+      const bucketOrder = ['locally_linked', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
       const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
       const bucketCounts = new Map()
       ;(countCatalogs || []).forEach((catalog) => {
@@ -1517,6 +1517,7 @@ export default {
           label: this.getCatalogBucketLabel(bucket),
           count: bucketCounts.get(bucket) || 0
         }))
+        .filter((entry) => entry.count > 0)
     },
     filteredCatalogSeries() {
       const query = String(this.catalogSearchQuery || '').trim().toLowerCase()
@@ -1855,7 +1856,7 @@ export default {
       }
       const state = String(entry?.linkState || entry?.coverageStatus || '').toLowerCase()
       if (state === 'linked') return 'border-red-300/35 bg-red-500/10 text-red-100'
-      if (state === 'partial') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
+      if (state === 'partial') return 'border-orange-300/35 bg-orange-500/10 text-orange-100'
       if (state === 'previously_linked') return 'border-yellow-300/35 bg-yellow-500/10 text-yellow-100'
       return 'border-sky-300/35 bg-sky-400/10 text-sky-50'
     },
@@ -2010,7 +2011,7 @@ export default {
     },
     getCatalogBucketLabel(bucket) {
       if (bucket === 'local_only') return 'Local series'
-      if (bucket === 'locally_linked') return 'Locally linked'
+      if (bucket === 'locally_linked') return 'Linked'
       if (bucket === 'less_trusted') return 'Less trusted'
       if (bucket === 'potential') return 'Potential series'
       if (bucket === 'dismissed') return 'Dismissed'
@@ -2027,6 +2028,41 @@ export default {
     async setCatalogCategoryFilter(bucket) {
       this.catalogCategoryFilter = this.catalogCategoryFilter === bucket ? '' : bucket
       await this.loadCatalogs({ preferCache: true })
+    },
+    buildCatalogSummaryFromDetail(detail) {
+      const catalog = detail?.catalog
+      if (!catalog?.id) return null
+      const savedLinks = Array.isArray(catalog.savedSeriesLinks) ? catalog.savedSeriesLinks : Array.isArray(catalog.localSeriesMatches) ? catalog.localSeriesMatches : []
+      return {
+        ...catalog,
+        authorLine: catalog.authorLine || this.getCatalogAuthorLine(detail),
+        authorSearchText: catalog.authorSearchText || this.getCatalogAuthorLine(detail),
+        localBookCount: Array.isArray(detail?.localBooks) ? detail.localBooks.length : Number(catalog.localBookCount || 0),
+        missingCount: Array.isArray(detail?.slots) ? detail.slots.filter((slot) => slot?.status === 'missing').length : Number(catalog.missingCount || 0),
+        disputedCount: Array.isArray(detail?.slots) ? detail.slots.filter((slot) => slot?.status === 'disputed').length : Number(catalog.disputedCount || 0),
+        hasPendingLink: savedLinks.some((link) => link?.pendingImport || String(link?.importStatus || '').toLowerCase() === 'pending'),
+        hasPartialLink: savedLinks.some((link) => String(link?.coverageStatus || '').toLowerCase() === 'partial')
+      }
+    },
+    patchCatalogSummary(detail) {
+      const summary = this.buildCatalogSummaryFromDetail(detail)
+      if (!summary) return
+      const updateList = (catalogs) => {
+        const list = Array.isArray(catalogs) ? catalogs : []
+        const index = list.findIndex((catalog) => catalog?.id === summary.id)
+        if (index === -1) return list
+        const next = [...list]
+        next.splice(index, 1, {
+          ...next[index],
+          ...summary
+        })
+        return next
+      }
+      this.catalogSeries = updateList(this.catalogSeries)
+      Object.keys(this.catalogListCache || {}).forEach((key) => {
+        this.$set(this.catalogListCache, key, updateList(this.catalogListCache[key]))
+      })
+      this.persistCatalogCaches()
     },
     getCatalogFetchFlags(bucket = this.catalogCategoryFilter) {
       return {
@@ -2492,6 +2528,8 @@ export default {
         this.selectedCatalogDetail = detail
         this.selectedCatalogId = detail.catalog.id
         this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.patchCatalogSummary(detail)
+        await this.loadLocalCatalogMatches({ silent: true })
         this.persistCatalogCaches()
         this.$toast.success('Saved local source link')
       } catch (error) {

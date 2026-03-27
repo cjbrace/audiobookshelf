@@ -394,7 +394,7 @@ class SeriesReviewManager {
 
   getCatalogDisplayLabel(bucket) {
     if (bucket === 'local_only') return 'Local series'
-    if (bucket === 'locally_linked') return 'Locally linked'
+    if (bucket === 'locally_linked') return 'Linked'
     if (bucket === 'potential') return 'Potential series'
     if (bucket === 'less_trusted') return 'Less trusted'
     if (bucket === 'dismissed') return 'Dismissed'
