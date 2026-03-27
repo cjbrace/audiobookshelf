@@ -29,6 +29,42 @@
           >
             {{ localCatalogMatchesExpanded ? 'Hide Lookup Links' : 'Import Lookup Links' }}
           </ui-btn>
+          <template v-if="activeTab === 'catalog'">
+            <div v-if="catalogCreateEditing" class="flex items-center gap-2">
+              <input
+                v-model.trim="catalogCreateDraft"
+                type="text"
+                class="px-3 py-1.5 rounded border border-white/20 bg-black/20 text-sm text-white min-w-[16rem]"
+                placeholder="New series name"
+                @keydown.enter.prevent="createCatalogPlaceholder"
+                @keydown.esc.prevent="cancelCatalogCreate"
+              />
+              <ui-btn
+                color="bg-success/80"
+                small
+                :loading="catalogCreateLoading"
+                @click="createCatalogPlaceholder"
+              >
+                Save
+              </ui-btn>
+              <ui-btn
+                color="bg-bg border border-white/20"
+                small
+                :disabled="catalogCreateLoading"
+                @click="cancelCatalogCreate"
+              >
+                Cancel
+              </ui-btn>
+            </div>
+            <ui-btn
+              v-else
+              color="bg-bg border border-white/20"
+              small
+              @click="startCatalogCreate"
+            >
+              New Series
+            </ui-btn>
+          </template>
           <ui-btn
             v-if="activeTab === 'catalog'"
             color="bg-bg border border-white/20"
@@ -213,14 +249,14 @@
                   </p>
                 </div>
                 <div class="text-sm text-gray-300">
-                  Selected books: {{ (localCatalogMatchSelectionById[match.id] || []).length }} / {{ match.localBooks.length }}
+                  {{ match.localBooks.length ? `Selected books: ${(localCatalogMatchSelectionById[match.id] || []).length} / ${match.localBooks.length}` : 'No local books yet' }}
                 </div>
               </div>
 
               <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
                 <div class="rounded border border-white/10 bg-black/20 p-3">
                   <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Local Books</h3>
-                  <div class="mt-2 space-y-2 text-sm text-gray-200">
+                  <div v-if="match.localBooks.length" class="mt-2 space-y-2 text-sm text-gray-200">
                     <label
                       v-for="book in match.localBooks"
                       :key="'local-match-book:' + match.id + ':' + book.libraryItemId"
@@ -238,6 +274,7 @@
                       </span>
                     </label>
                   </div>
+                  <p v-else class="mt-2 text-sm text-gray-400">No local books are attached yet. Importing this link will create or refresh the source-backed series so you can attach books afterwards.</p>
                 </div>
 
                 <div class="rounded border border-white/10 bg-black/20 p-3">
@@ -917,7 +954,13 @@
                     <div class="flex flex-wrap items-start gap-3">
                       <div class="grow min-w-[18rem]">
                         <p class="text-sm uppercase tracking-wide text-gray-400">Manual Source Lookup</p>
-                        <p class="text-sm text-gray-200 mt-1">Search using the active series title, authors, and book context, then save source links for later review-queue import. Results are ordered FictionDB, Audible, then Wikidata.</p>
+                        <p class="text-sm text-gray-200 mt-1">
+                          {{
+                            selectedCatalogDetail.localBooks.length
+                              ? 'Search using the active series title, authors, and book context, then save source links for later review-queue import. Results are ordered FictionDB, Audible, then Wikidata.'
+                              : 'Search using the active series title only, then save a source link for later review-queue import. Empty series currently use the name-only lookup path.'
+                          }}
+                        </p>
                         <p v-if="catalogManualLookupError" class="text-sm text-amber-200 mt-2">{{ catalogManualLookupError }}</p>
                       </div>
                       <ui-btn
@@ -1089,6 +1132,9 @@
                     <p class="text-sm text-gray-200">Series name controls stay aligned with Review Queue alias/rename and Series Management merge behavior.</p>
                     <p v-if="selectedCatalogDetail.catalog.displayBucket === 'local_only'" class="mt-1 text-xs text-gray-400">
                       Local-only series stay visible here until they are linked or merged into a sourced series, and they cannot be dismissed.
+                    </p>
+                    <p v-else-if="selectedCatalogDetail.catalog.displayBucket === 'new'" class="mt-1 text-xs text-gray-400">
+                      New series start empty. Save and import a source link first, then use candidate search to attach the books you want under this local series.
                     </p>
                     <p v-else-if="selectedCatalogDetail.catalog.displayBucket === 'locally_linked'" class="mt-1 text-xs text-gray-400">
                       Linked series came from saved manual source links and now feed the normal review/catalog pipeline.
@@ -1382,6 +1428,9 @@ export default {
       selectedCatalogDetail: null,
       selectedCatalogRenameEditing: false,
       selectedCatalogRenameDraft: '',
+      catalogCreateEditing: false,
+      catalogCreateDraft: '',
+      catalogCreateLoading: false,
       catalogChoiceLoadingKey: '',
       catalogCandidateSearchLoadingKey: '',
       catalogCandidateQueueLoadingKey: '',
@@ -1501,7 +1550,7 @@ export default {
       return visibleCatalogs.length || this.catalogSeries.filter((catalog) => catalog.displayBucket !== 'dismissed').length
     },
     catalogCategoryOptions() {
-      const bucketOrder = ['locally_linked', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
+      const bucketOrder = ['locally_linked', 'new', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
       const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
       const bucketCounts = new Map()
       ;(countCatalogs || []).forEach((catalog) => {
@@ -1545,7 +1594,7 @@ export default {
       return !!this.selectedCatalogId && !this.selectedCatalogDetailReady
     },
     canUseManualCatalogLookup() {
-      return this.selectedCatalogDetail?.catalog?.displayBucket !== 'dismissed' && !!this.selectedCatalogDetail?.localBooks?.length
+      return this.selectedCatalogDetail?.catalog?.displayBucket !== 'dismissed'
     },
     selectedCatalogLocalMatches() {
       return this.selectedCatalogDetail?.catalog?.savedSeriesLinks || this.selectedCatalogDetail?.catalog?.localSeriesMatches || []
@@ -2043,6 +2092,14 @@ export default {
       this.selectedCatalogRenameEditing = true
       this.selectedCatalogRenameDraft = this.selectedCatalogDetail.catalog.seriesName
     },
+    startCatalogCreate() {
+      this.catalogCreateEditing = true
+      this.catalogCreateDraft = ''
+    },
+    cancelCatalogCreate() {
+      this.catalogCreateEditing = false
+      this.catalogCreateDraft = ''
+    },
     cancelCatalogRename() {
       this.selectedCatalogRenameEditing = false
       this.selectedCatalogRenameDraft = ''
@@ -2102,6 +2159,7 @@ export default {
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
     getCatalogBucketLabel(bucket) {
+      if (bucket === 'new') return 'New'
       if (bucket === 'local_only') return 'Local series'
       if (bucket === 'locally_linked') return 'Linked'
       if (bucket === 'less_trusted') return 'Less trusted'
@@ -2110,6 +2168,7 @@ export default {
       return 'Trusted'
     },
     getCatalogBucketPillClass(bucket) {
+      if (bucket === 'new') return 'border-indigo-300/35 bg-indigo-500/10 text-indigo-100'
       if (bucket === 'local_only') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100'
       if (bucket === 'locally_linked') return 'border-sky-300/35 bg-sky-500/10 text-sky-100'
       if (bucket === 'less_trusted') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
@@ -2584,6 +2643,8 @@ export default {
         this.selectedCatalogDetail = null
         this.selectedCatalogRenameEditing = false
         this.selectedCatalogRenameDraft = ''
+        this.catalogCreateEditing = false
+        this.catalogCreateDraft = ''
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
@@ -2592,6 +2653,8 @@ export default {
       this.selectedCatalogId = catalogId
       this.selectedCatalogRenameEditing = false
       this.selectedCatalogRenameDraft = ''
+      this.catalogCreateEditing = false
+      this.catalogCreateDraft = ''
       this.catalogCandidateResultsBySlot = {}
       this.catalogCandidateFilterBySlot = {}
       if (this.catalogManualLookupCatalogId !== catalogId) {
@@ -2643,6 +2706,34 @@ export default {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to rename the series')
       } finally {
         this.catalogRenameLoading = false
+      }
+    },
+    async createCatalogPlaceholder() {
+      const targetLabel = String(this.catalogCreateDraft || '').trim()
+      if (!targetLabel) {
+        this.$toast.error('Enter the series name first')
+        return
+      }
+
+      this.catalogCreateLoading = true
+      try {
+        const detail = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/create`, {
+          targetLabel
+        })
+        if (!detail?.catalog?.id) throw new Error('Missing created series detail')
+        this.cancelCatalogCreate()
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
+        this.selectedCatalogDetail = detail
+        this.selectedCatalogId = detail.catalog.id
+        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.patchCatalogSummary(detail)
+        this.persistCatalogCaches()
+        this.$toast.success('New series created')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || error?.message || 'Failed to create the new series')
+      } finally {
+        this.catalogCreateLoading = false
       }
     },
     async lookupManualCatalogSources() {
@@ -2752,9 +2843,12 @@ export default {
           matchId: match.id,
           includedLibraryItemIds: this.localCatalogMatchSelectionById[match.id] || []
         }))
-        .filter((match) => match.includedLibraryItemIds.length)
+        .filter((match) => {
+          const sourceMatch = this.pendingLocalCatalogMatches.find((candidate) => candidate.id === match.matchId)
+          return match.includedLibraryItemIds.length || !sourceMatch?.localBooks?.length
+        })
       if (!matches.length) {
-        this.$toast.error('Select at least one local book to import')
+        this.$toast.error('Select at least one local book to import, or import a pending link with no local books yet')
         return
       }
       this.localCatalogImporting = true

@@ -388,11 +388,13 @@ class SeriesReviewManager {
     if (visibilityStatus === 'dismissed') return 'dismissed'
     if (isLocalOnly) return 'local_only'
     if (isLocallyLinked) return 'locally_linked'
+    if (trustStatus === 'new') return 'new'
     if (!localBookCount) return 'potential'
     return trustStatus === 'untrusted' ? 'less_trusted' : 'trusted'
   }
 
   getCatalogDisplayLabel(bucket) {
+    if (bucket === 'new') return 'New'
     if (bucket === 'local_only') return 'Local series'
     if (bucket === 'locally_linked') return 'Linked'
     if (bucket === 'potential') return 'Potential series'
@@ -1555,15 +1557,36 @@ class SeriesReviewManager {
     return sourceUrlMap
   }
 
+  buildCatalogSourceDecisionMap(catalogs = [], resolver = null) {
+    const sourceDecisionMap = new Map()
+    ;(Array.isArray(catalogs) ? catalogs : []).forEach((catalog) => {
+      const decisionKey = resolver?.getDecisionKey ? resolver.getDecisionKey(catalog?.seriesName || '') : this.normalizeDecisionKey(catalog?.seriesName || '')
+      if (!decisionKey) return
+      this.getCatalogSourceUrls(catalog?.entries || []).forEach((sourceUrl) => {
+        sourceDecisionMap.set(`${decisionKey}::${this.normalizeExternalUrl(sourceUrl)}`, catalog.id)
+      })
+    })
+    return sourceDecisionMap
+  }
+
+  resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, decisionKey, sourceSeriesUrl) {
+    if (!(sourceDecisionMap instanceof Map)) return null
+    const normalizedDecisionKey = String(decisionKey || '').trim()
+    const normalizedSourceUrl = this.normalizeExternalUrl(sourceSeriesUrl || '')
+    if (!normalizedDecisionKey || !normalizedSourceUrl) return null
+    return sourceDecisionMap.get(`${normalizedDecisionKey}::${normalizedSourceUrl}`) || null
+  }
+
   async getResolvedCatalogIdForLocalDecisionKey(libraryId, decisionKey, catalogs = null) {
     if (!decisionKey) return null
     const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { localDecisionKey: decisionKey, activeOnly: true })
     if (!matchRows.length) return null
 
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const allCatalogs = Array.isArray(catalogs) ? catalogs : await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
-    const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
+    const sourceDecisionMap = this.buildCatalogSourceDecisionMap(allCatalogs, resolver)
     for (const matchRow of matchRows) {
-      const resolvedCatalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl)
+      const resolvedCatalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, decisionKey, matchRow.sourceSeriesUrl)
       if (resolvedCatalogId) return resolvedCatalogId
     }
     return null
@@ -1796,7 +1819,7 @@ class SeriesReviewManager {
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
     const catalogs = options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
-    const sourceUrlMap = options?.sourceUrlMap || this.buildCatalogSourceUrlMap(catalogs)
+    const sourceDecisionMap = options?.sourceDecisionMap || this.buildCatalogSourceDecisionMap(catalogs, resolver)
     const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, {
       activeOnly: true,
       localDecisionKey: options?.localDecisionKey || null
@@ -1808,7 +1831,7 @@ class SeriesReviewManager {
       const localBooks = group?.seriesName
         ? await this.getLocalCatalogBooks(libraryId, group.seriesName, { resolver, matchingSeries: group.seriesRows })
         : []
-      const resolvedCatalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl) || null
+      const resolvedCatalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl)
       const coverageOverride = options?.coverageBySourceUrl instanceof Map ? options.coverageBySourceUrl.get(this.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')) || null : null
       if (options?.pendingOnly && String(matchRow.importStatus || 'imported').trim().toLowerCase() !== 'pending') continue
       if (!options?.includeResolved && resolvedCatalogId) continue
@@ -1846,25 +1869,15 @@ class SeriesReviewManager {
   }
 
   async getManualLinkedSeriesRowsForCatalog(libraryId, catalog, options = {}) {
-    const sourceSeriesUrls = this.getCatalogSourceUrls(catalog?.entries || [])
-    if (!sourceSeriesUrls.length) return []
-
-    if (options?.manualLinkedSeriesRowsBySourceUrl instanceof Map) {
-      const linkedSeriesRows = []
-      const seen = new Set()
-      sourceSeriesUrls.forEach((sourceSeriesUrl) => {
-        ;(options.manualLinkedSeriesRowsBySourceUrl.get(sourceSeriesUrl) || []).forEach((seriesRow) => {
-          if (!seriesRow?.id || seen.has(seriesRow.id)) return
-          seen.add(seriesRow.id)
-          linkedSeriesRows.push(seriesRow)
-        })
-      })
-      return linkedSeriesRows
-    }
-
     const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
     const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
-    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { sourceSeriesUrls, activeOnly: true })
+    const decisionKey = resolver.getDecisionKey(catalog?.seriesName || '')
+    if (!decisionKey) return []
+
+    const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, {
+      localDecisionKey: decisionKey,
+      activeOnly: true
+    })
     const linkedSeriesRows = []
     const seen = new Set()
 
@@ -1902,16 +1915,18 @@ class SeriesReviewManager {
       group = localSeriesGroups.get(catalogDecisionKey) || null
     }
 
-    if (!group?.seriesName) return null
+    const contextSeriesName = seriesName || group?.seriesName || ''
+    if (!contextSeriesName) return null
 
-    const localBooks = await this.getLocalCatalogBooks(libraryId, group.seriesName, {
-      resolver,
-      matchingSeries: group.seriesRows
-    })
-    if (!localBooks.length) return null
+    const localBooks = group?.seriesName
+      ? await this.getLocalCatalogBooks(libraryId, group.seriesName, {
+          resolver,
+          matchingSeries: group.seriesRows
+        })
+      : []
     return {
-      localSeriesName: seriesName || group.seriesName,
-      localDecisionKey: localOnlyDecisionKey || resolver.getDecisionKey(seriesName || group.seriesName),
+      localSeriesName: contextSeriesName,
+      localDecisionKey: localOnlyDecisionKey || resolver.getDecisionKey(contextSeriesName),
       localBooks: localBooks.map((book) => ({
         libraryItemId: book.libraryItemId,
         title: book.title,
@@ -1920,6 +1935,35 @@ class SeriesReviewManager {
         currentSeries: [{ name: book.seriesName, sequence: book.sequence || '' }]
       }))
     }
+  }
+
+  async createCatalogPlaceholderForLibrary(libraryId, targetLabel) {
+    await this.ensureSeriesReviewCatalogSchema()
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    const seriesName = resolver.canonicalizeName(targetLabel)
+    if (!seriesName) throw new Error('Missing targetLabel')
+    const seriesNameNormalized = this.normalizeKeyPart(seriesName)
+    let catalog = await Database.seriesReviewCatalogModel.findOne({
+      where: {
+        libraryId,
+        seriesNameNormalized
+      }
+    })
+
+    if (!catalog) {
+      catalog = await Database.seriesReviewCatalogModel.create({
+        libraryId,
+        seriesName,
+        seriesNameNormalized,
+        trustStatus: 'new',
+        visibilityStatus: 'visible',
+        dismissedAt: null,
+        entries: [],
+        selectionBySlot: {}
+      })
+    }
+
+    return this.getCatalogDetailForLibrary(libraryId, catalog.id, { skipResolvedLookup: true })
   }
 
   async saveLocalSeriesMatchForLibrary(libraryId, catalogId, payload) {
@@ -2047,11 +2091,13 @@ class SeriesReviewManager {
       if (!forceRefresh && String(matchRow.importStatus || 'imported').trim().toLowerCase() !== 'pending') continue
 
       const group = localSeriesGroups.get(matchRow.localDecisionKey)
-      if (!group?.seriesName) continue
-      const localBooks = await this.getLocalCatalogBooks(libraryId, group.seriesName, {
-        resolver,
-        matchingSeries: group.seriesRows
-      })
+      const localSeriesName = group?.seriesName || matchRow.localSeriesName || ''
+      const localBooks = group?.seriesName
+        ? await this.getLocalCatalogBooks(libraryId, group.seriesName, {
+            resolver,
+            matchingSeries: group.seriesRows
+          })
+        : []
       const includedIds = Array.isArray(selection?.includedLibraryItemIds) && selection.includedLibraryItemIds.length
         ? new Set(selection.includedLibraryItemIds.map((id) => String(id || '').trim()).filter(Boolean))
         : null
@@ -2064,11 +2110,11 @@ class SeriesReviewManager {
           authors: (book.authors || []).map((author) => ({ name: author.name || author })),
           currentSeries: [{ name: book.seriesName, sequence: book.sequence || '' }]
         }))
-      if (!books.length) continue
+      if (!books.length && localBooks.length) continue
 
       matches.push({
         matchId: matchRow.id,
-        localSeriesName: matchRow.localSeriesName,
+        localSeriesName: localSeriesName || matchRow.localSeriesName,
         localDecisionKey: matchRow.localDecisionKey,
         source: matchRow.source,
         sourceSeriesName: matchRow.sourceSeriesName,
@@ -2110,7 +2156,7 @@ class SeriesReviewManager {
     const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
     const allCatalogs = await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
-    const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
+    const sourceDecisionMap = this.buildCatalogSourceDecisionMap(allCatalogs, resolver)
     const localBooksCache = new Map()
     const expandedSeriesCache = new Map()
     const coverageByCatalogId = new Map()
@@ -2124,7 +2170,7 @@ class SeriesReviewManager {
             expandedSeriesCache
           })
         : []
-      const catalogId = sourceUrlMap.get(row.sourceSeriesUrl) || null
+      const catalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, row.localDecisionKey, row.sourceSeriesUrl)
       const coverageOverride = catalogId
         ? (() => {
             if (!coverageByCatalogId.has(catalogId)) {
@@ -2284,10 +2330,15 @@ class SeriesReviewManager {
     }
   }
 
-  doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl) {
-    const normalizedSourceSeriesUrl = String(sourceSeriesUrl || '').trim()
+  doesContributionMatchSeriesSourceUrl(contribution, matchRow) {
+    const normalizedSourceSeriesUrl = String(matchRow?.sourceSeriesUrl || '').trim()
     if (!normalizedSourceSeriesUrl) return false
     const evidenceUrl = String(contribution?.evidenceUrl || '').trim()
+    const importedLocalSeriesName = String(contribution?.rawEvidence?.localSeriesImport?.localSeriesName || '').trim()
+    const contributionSeriesName = String(contribution?.seriesName || importedLocalSeriesName || '').trim()
+    const contributionDecisionKey = contributionSeriesName ? this.normalizeDecisionKey(contributionSeriesName) : ''
+    const targetDecisionKey = String(matchRow?.localDecisionKey || '').trim()
+    if (contributionDecisionKey && targetDecisionKey && contributionDecisionKey !== targetDecisionKey) return false
     if (evidenceUrl === normalizedSourceSeriesUrl) return true
     const importedUrl = String(contribution?.rawEvidence?.localSeriesImport?.sourceSeriesUrl || '').trim()
     return importedUrl === normalizedSourceSeriesUrl
@@ -2367,11 +2418,11 @@ class SeriesReviewManager {
 
     for (const suggestion of suggestions) {
       const contributions = Array.isArray(suggestion.contributions) ? suggestion.contributions : []
-      const removedContributions = contributions.filter((contribution) => this.doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl))
+      const removedContributions = contributions.filter((contribution) => this.doesContributionMatchSeriesSourceUrl(contribution, matchRow))
       if (!removedContributions.length) continue
 
       affectedLibraryItemIds.add(suggestion.libraryItemId)
-      const remainingContributions = contributions.filter((contribution) => !this.doesContributionMatchSeriesSourceUrl(contribution, sourceSeriesUrl))
+      const remainingContributions = contributions.filter((contribution) => !this.doesContributionMatchSeriesSourceUrl(contribution, matchRow))
       const removedSeriesSupport = removedContributions.some((contribution) => !contribution?.noSeries)
       const remainingSeriesSupport = remainingContributions.some((contribution) => !contribution?.noSeries)
 
@@ -2409,6 +2460,7 @@ class SeriesReviewManager {
     if (!sourceSeriesUrl) return { catalogsChanged: 0, sourcesRemoved: 0 }
 
     const preferredSource = String(matchRow?.source || '').trim().toLowerCase()
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const catalogs = await Database.seriesReviewCatalogModel.findAll({
       where: {
         libraryId
@@ -2419,6 +2471,7 @@ class SeriesReviewManager {
     let sourcesRemoved = 0
 
     for (const catalog of catalogs) {
+      if (resolver.getDecisionKey(catalog.seriesName || '') !== String(matchRow.localDecisionKey || '').trim()) continue
       const result = this.stripCatalogSourceEvidence(catalog.entries, sourceSeriesUrl, { source: preferredSource })
       if (!result.changed) continue
 
@@ -2580,14 +2633,17 @@ class SeriesReviewManager {
       libraryId,
       [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
     )
-    const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
+    const sourceDecisionMap = this.buildCatalogSourceDecisionMap(allCatalogs, resolver)
     const localMatchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
     const localMatchSummaryByCatalogId = new Map()
     const localMatchSummaryByDecisionKey = new Map()
+    const activeLinkKeys = new Set()
     for (const matchRow of localMatchRows) {
       const importStatus = String(matchRow.importStatus || 'imported').trim().toLowerCase()
       const coverageStatus = String(matchRow.coverageStatus || '').trim().toLowerCase()
-      const catalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl) || null
+      const normalizedSourceUrl = this.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')
+      if (normalizedSourceUrl) activeLinkKeys.add(`${matchRow.localDecisionKey}::${normalizedSourceUrl}`)
+      const catalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl)
       const summaryTarget = catalogId
         ? localMatchSummaryByCatalogId
         : localMatchSummaryByDecisionKey
@@ -2598,8 +2654,11 @@ class SeriesReviewManager {
       if (coverageStatus === 'partial') summary.hasPartialLink = true
       summaryTarget.set(summaryKey, summary)
     }
-    const resolvedLocalDecisionKeys = new Set(localMatchRows.filter((matchRow) => sourceUrlMap.has(matchRow.sourceSeriesUrl)).map((matchRow) => matchRow.localDecisionKey))
-    const manualLinkedSeriesRowsBySourceUrl = this.buildManualLinkedSeriesRowsBySourceUrl(localSeriesGroups, localMatchRows)
+    const resolvedLocalDecisionKeys = new Set(
+      localMatchRows
+        .filter((matchRow) => this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl))
+        .map((matchRow) => matchRow.localDecisionKey)
+    )
 
     const collectLocalBooksForSeriesRows = (seriesRows = []) => {
       const localBooks = []
@@ -2635,8 +2694,9 @@ class SeriesReviewManager {
     )
     for (const catalog of catalogs) {
       const catalogEntryUrls = this.getCatalogSourceUrls(catalog.entries || [])
-      const isLocallyLinked = catalogEntryUrls.some((sourceUrl) => manualLinkedSeriesRowsBySourceUrl.has(sourceUrl))
-      const matchingSeriesRows = localSeriesGroups.get(resolver.getDecisionKey(catalog.seriesName))?.seriesRows || []
+      const catalogDecisionKey = resolver.getDecisionKey(catalog.seriesName)
+      const isLocallyLinked = catalogEntryUrls.some((sourceUrl) => activeLinkKeys.has(`${catalogDecisionKey}::${this.normalizeExternalUrl(sourceUrl)}`))
+      const matchingSeriesRows = localSeriesGroups.get(catalogDecisionKey)?.seriesRows || []
       const localBooks = collectLocalBooksForSeriesRows(matchingSeriesRows)
       const slotMap = new Map()
       localBooks.forEach((book) => {
@@ -2682,7 +2742,7 @@ class SeriesReviewManager {
         isLocallyLinked
       })
       if (!includeDismissed && displayBucket === 'dismissed') continue
-      if (!includeUntrusted && displayBucket !== 'trusted' && displayBucket !== 'local_only' && displayBucket !== 'locally_linked' && displayBucket !== 'dismissed') continue
+      if (!includeUntrusted && !['trusted', 'local_only', 'locally_linked', 'new', 'dismissed'].includes(displayBucket)) continue
       const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
       detailSummaries.push({
         ...this.buildCatalogViewPayload({
@@ -2697,7 +2757,7 @@ class SeriesReviewManager {
           isLocallyLinked,
           canDismiss: true
         }),
-        ...(localMatchSummaryByCatalogId.get(catalog.id) || { hasPendingLink: false, hasPartialLink: false }),
+        ...(localMatchSummaryByCatalogId.get(catalog.id) || localMatchSummaryByDecisionKey.get(catalogDecisionKey) || { hasPendingLink: false, hasPartialLink: false }),
         authorLine: authorMeta.authorLine,
         authorSearchText: authorMeta.authorSearchText,
         missingCount: summaryCounts.missingCount,
@@ -3420,7 +3480,7 @@ class SeriesReviewManager {
         resolver,
         localSeriesGroups,
         catalogs: effectiveCatalogs,
-        sourceUrlMap: this.buildCatalogSourceUrlMap(effectiveCatalogs),
+        sourceDecisionMap: this.buildCatalogSourceDecisionMap(effectiveCatalogs, resolver),
         includeResolved: true,
         localDecisionKey: decisionKey
       })

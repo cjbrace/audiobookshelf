@@ -107,6 +107,7 @@ class ApiRouter {
     this.router.post('/libraries/:id/series-review/import', LibraryController.middleware.bind(this), SeriesReviewController.importSuggestions.bind(this))
     this.router.post('/libraries/:id/series-review/reset', LibraryController.middleware.bind(this), SeriesReviewController.resetSuggestions.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/import', LibraryController.middleware.bind(this), SeriesReviewController.importCatalog.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/create', LibraryController.middleware.bind(this), SeriesReviewController.createCatalog.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/manual-lookup', LibraryController.middleware.bind(this), SeriesReviewController.lookupManualCatalogSources.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/local-match', LibraryController.middleware.bind(this), SeriesReviewController.saveLocalCatalogMatch.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/local-match/:matchId/remove', LibraryController.middleware.bind(this), SeriesReviewController.removeLocalCatalogMatch.bind(this))

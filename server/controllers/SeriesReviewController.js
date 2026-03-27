@@ -76,6 +76,22 @@ class SeriesReviewController {
     res.json(detail)
   }
 
+  async createCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+    const targetLabel = typeof req.body?.targetLabel === 'string' ? req.body.targetLabel : ''
+    if (!targetLabel.trim()) return res.status(400).send('Missing targetLabel')
+
+    let detail
+    try {
+      detail = await SeriesReviewManager.createCatalogPlaceholderForLibrary(req.library.id, targetLabel)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
   async lookupManualCatalogSources(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

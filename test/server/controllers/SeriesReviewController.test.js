@@ -287,6 +287,27 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ catalog: { id: 'catalog-1' }, slots: [] })).to.be.true
   })
 
+  it('creates a new placeholder catalog for manual series work', async () => {
+    sinon.stub(SeriesReviewManager, 'createCatalogPlaceholderForLibrary').resolves({ catalog: { id: 'catalog-1', seriesName: 'Discworld (Full Cast)' } })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      body: { targetLabel: 'Discworld (Full Cast)' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.createCatalog(req, res)
+
+    expect(SeriesReviewManager.createCatalogPlaceholderForLibrary.calledOnceWithExactly('library-1', 'Discworld (Full Cast)')).to.be.true
+    expect(res.json.calledOnceWithExactly({ catalog: { id: 'catalog-1', seriesName: 'Discworld (Full Cast)' } })).to.be.true
+  })
+
   it('looks up manual source-series candidates for a local catalog', async () => {
     sinon.stub(SeriesReviewManager, 'buildManualLookupContextForCatalog').resolves({
       localSeriesName: 'Alpha Saga',
@@ -337,6 +358,39 @@ describe('SeriesReviewController', () => {
       linkStateLabel: 'Linked',
       canLink: false
     })
+  })
+
+  it('allows manual source lookup for an empty placeholder series', async () => {
+    sinon.stub(SeriesReviewManager, 'buildManualLookupContextForCatalog').resolves({
+      localSeriesName: 'Discworld (Full Cast)',
+      localDecisionKey: 'discworld full cast',
+      localBooks: []
+    })
+    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({
+      results: [{ sourceSeriesName: 'Discworld', sourceSeriesUrl: 'https://example.com/discworld' }]
+    })
+    sinon.stub(SeriesReviewManager, 'getSeriesSourceLinkRowsForLibrary').resolves([])
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.lookupManualCatalogSources(req, res)
+
+    expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
+      local_series_name: 'Discworld (Full Cast)',
+      local_decision_key: 'discworld full cast',
+      local_books: []
+    })).to.be.true
+    expect(res.json.calledOnce).to.be.true
   })
 
   it('lists saved local catalog matches for batch import', async () => {

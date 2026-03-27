@@ -291,6 +291,109 @@ describe('SeriesReviewManager', () => {
     expect(decidedRows[0].suggestions[0].state).to.equal('pending')
   })
 
+  it('resolves shared source URLs by local decision key instead of collapsing onto the first catalog', async () => {
+    const sourceUrl = 'https://www.audible.co.uk/series/Discworld-Audiobooks/B000DISC'
+    const firstCatalog = await Database.seriesReviewCatalogModel.create({
+      libraryId: library.id,
+      seriesName: 'Discworld',
+      seriesNameNormalized: 'discworld',
+      trustStatus: 'trusted',
+      visibilityStatus: 'visible',
+      entries: [
+        {
+          title: 'The Colour of Magic',
+          sequenceLabel: '1',
+          sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: sourceUrl }]
+        }
+      ],
+      selectionBySlot: {}
+    })
+    const secondCatalog = await Database.seriesReviewCatalogModel.create({
+      libraryId: library.id,
+      seriesName: 'Discworld (Full Cast)',
+      seriesNameNormalized: 'discworld full cast',
+      trustStatus: 'trusted',
+      visibilityStatus: 'visible',
+      entries: [
+        {
+          title: 'The Colour of Magic',
+          sequenceLabel: '1',
+          sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: sourceUrl }]
+        }
+      ],
+      selectionBySlot: {}
+    })
+    await Database.seriesReviewSeriesSourceLinkModel.create({
+      libraryId: library.id,
+      localDecisionKey: 'discworld',
+      localSeriesName: 'Discworld',
+      source: 'audible',
+      sourceSeriesName: 'Discworld',
+      sourceSeriesUrl: sourceUrl,
+      coverageStatus: 'linked',
+      linkedBookCount: 1,
+      totalBookCount: 1,
+      importStatus: 'imported',
+      evidenceSnapshot: {}
+    })
+    await Database.seriesReviewSeriesSourceLinkModel.create({
+      libraryId: library.id,
+      localDecisionKey: 'discworld full cast',
+      localSeriesName: 'Discworld (Full Cast)',
+      source: 'audible',
+      sourceSeriesName: 'Discworld',
+      sourceSeriesUrl: sourceUrl,
+      coverageStatus: 'linked',
+      linkedBookCount: 1,
+      totalBookCount: 1,
+      importStatus: 'imported',
+      evidenceSnapshot: {}
+    })
+
+    const resolvedFirst = await SeriesReviewManager.getResolvedCatalogIdForLocalDecisionKey(library.id, 'discworld')
+    const resolvedSecond = await SeriesReviewManager.getResolvedCatalogIdForLocalDecisionKey(library.id, 'discworld full cast')
+
+    expect(resolvedFirst).to.equal(firstCatalog.id)
+    expect(resolvedSecond).to.equal(secondCatalog.id)
+  })
+
+  it('creates a new placeholder catalog that still supports empty manual lookup/import context', async () => {
+    const detail = await SeriesReviewManager.createCatalogPlaceholderForLibrary(library.id, 'Discworld (Full Cast)')
+    expect(detail.catalog.seriesName).to.equal('Discworld (Full Cast)')
+    expect(detail.catalog.displayBucket).to.equal('new')
+    expect(detail.localBooks).to.deep.equal([])
+
+    const context = await SeriesReviewManager.buildManualLookupContextForCatalog(library.id, detail.catalog.id)
+    expect(context.localSeriesName).to.equal('Discworld (Full Cast)')
+    expect(context.localDecisionKey).to.equal('discworld full cast')
+    expect(context.localBooks).to.deep.equal([])
+
+    await Database.seriesReviewSeriesSourceLinkModel.create({
+      libraryId: library.id,
+      localDecisionKey: 'discworld full cast',
+      localSeriesName: 'Discworld (Full Cast)',
+      source: 'audible',
+      sourceSeriesName: 'Discworld',
+      sourceSeriesUrl: 'https://www.audible.co.uk/series/Discworld-Audiobooks/B000DISC',
+      coverageStatus: 'partial',
+      linkedBookCount: 0,
+      totalBookCount: 0,
+      importStatus: 'pending',
+      evidenceSnapshot: {}
+    })
+
+    const matches = await SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary(library.id, [
+      {
+        matchId: (await Database.seriesReviewSeriesSourceLinkModel.findOne()).id,
+        includedLibraryItemIds: []
+      }
+    ])
+
+    expect(matches).to.have.length(1)
+    expect(matches[0].localSeriesName).to.equal('Discworld (Full Cast)')
+    expect(matches[0].books).to.deep.equal([])
+  })
+
   it('aliases one suggestion to another primary and collapses the queue back to the primary name', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Wyrd Sisters'
