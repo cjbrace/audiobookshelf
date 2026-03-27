@@ -1435,6 +1435,89 @@ describe('SeriesReviewManager', () => {
     expect(linkedCatalog.hasPartialLink).to.equal(true)
   })
 
+  it('keeps partial summary flags when a linked catalog also has an unresolved partial saved link', async () => {
+    await createBookFixture({
+      title: 'Mort',
+      currentSeries: [{ name: 'Discworld - Death', sequence: '1' }],
+      authors: ['Terry Pratchett']
+    })
+    await createBookFixture({
+      title: 'Reaper Man',
+      currentSeries: [{ name: 'Discworld - Death', sequence: '2' }],
+      authors: ['Terry Pratchett']
+    })
+
+    const localCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const localCatalog = localCatalogs.find((catalog) => catalog.seriesName === 'Discworld - Death')
+
+    await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, localCatalog.id, {
+      source: 'fictiondb',
+      sourceSeriesName: 'Discworld - Death',
+      sourceAuthor: 'Terry Pratchett',
+      sourceUrl: 'https://www.fictiondb.com/series/discworld-death-terry-pratchett~15585.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'Discworld - Death',
+        sourceAuthor: 'Terry Pratchett',
+        sourceUrl: 'https://www.fictiondb.com/series/discworld-death-terry-pratchett~15585.htm',
+        matchingBooks: [
+          { localTitle: 'Mort', sourceTitle: 'Mort', sourceSequence: '1' },
+          { localTitle: 'Reaper Man', sourceTitle: 'Reaper Man', sourceSequence: '2' }
+        ],
+        sampleBooks: [
+          { title: 'Mort', sequence: '1' },
+          { title: 'Reaper Man', sequence: '2' }
+        ]
+      }
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Discworld - Death',
+        entries: [
+          {
+            title: 'Mort',
+            authors: ['Terry Pratchett'],
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/discworld-death-terry-pratchett~15585.htm' }]
+          },
+          {
+            title: 'Reaper Man',
+            authors: ['Terry Pratchett'],
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/discworld-death-terry-pratchett~15585.htm' }]
+          }
+        ]
+      }
+    ])
+    await SeriesReviewManager.markSeriesSourceLinksImported(library.id, {
+      localDecisionKey: 'discworld death',
+      sourceSeriesUrl: 'https://www.fictiondb.com/series/discworld-death-terry-pratchett~15585.htm'
+    })
+
+    await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, importResult.catalogs[0].id, {
+      source: 'audible',
+      sourceSeriesName: 'Discworld',
+      sourceAuthor: 'Terry Pratchett',
+      sourceUrl: 'https://www.audible.co.uk/series/Discworld-Audiobooks/B00HRG5ZPU',
+      evidenceSnapshot: {
+        sourceSeriesName: 'Discworld',
+        sourceAuthor: 'Terry Pratchett',
+        sourceUrl: 'https://www.audible.co.uk/series/Discworld-Audiobooks/B00HRG5ZPU',
+        matchingBooks: [{ localTitle: 'Mort', sourceTitle: 'Mort', sourceSequence: '4' }],
+        sampleBooks: [
+          { title: 'Mort', sequence: '4' },
+          { title: 'Reaper Man', sequence: '11' }
+        ]
+      }
+    })
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const linkedCatalog = catalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
+    expect(linkedCatalog.displayBucket).to.equal('locally_linked')
+    expect(linkedCatalog.hasPendingLink).to.equal(true)
+    expect(linkedCatalog.hasPartialLink).to.equal(true)
+  })
+
   it('recomputes saved-link coverage from imported catalog rows when an imported link becomes complete', async () => {
     await createBookFixture({
       title: 'Android X',

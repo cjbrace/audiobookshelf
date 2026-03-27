@@ -2235,6 +2235,18 @@ class SeriesReviewManager {
     return 'partial'
   }
 
+  mergeSeriesSourceLinkSummaryFlags(...summaries) {
+    return (Array.isArray(summaries) ? summaries : []).reduce(
+      (merged, summary) => {
+        if (!summary || typeof summary !== 'object') return merged
+        merged.hasPendingLink = merged.hasPendingLink || Boolean(summary.hasPendingLink)
+        merged.hasPartialLink = merged.hasPartialLink || Boolean(summary.hasPartialLink)
+        return merged
+      },
+      { hasPendingLink: false, hasPartialLink: false }
+    )
+  }
+
   async mergeSeriesSourceLinkRows(targetRow, sourceRow, targetSeriesName, targetDecisionKey) {
     const nextIsActive = targetRow.isActive !== false || sourceRow.isActive !== false
     const nextLastImportedAt = [targetRow.lastImportedAt, sourceRow.lastImportedAt]
@@ -2744,6 +2756,10 @@ class SeriesReviewManager {
       if (!includeDismissed && displayBucket === 'dismissed') continue
       if (!includeUntrusted && !['trusted', 'local_only', 'locally_linked', 'new', 'dismissed'].includes(displayBucket)) continue
       const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
+      const savedLinkSummary = this.mergeSeriesSourceLinkSummaryFlags(
+        localMatchSummaryByCatalogId.get(catalog.id),
+        localMatchSummaryByDecisionKey.get(catalogDecisionKey)
+      )
       detailSummaries.push({
         ...this.buildCatalogViewPayload({
           id: catalog.id,
@@ -2757,7 +2773,7 @@ class SeriesReviewManager {
           isLocallyLinked,
           canDismiss: true
         }),
-        ...(localMatchSummaryByCatalogId.get(catalog.id) || localMatchSummaryByDecisionKey.get(catalogDecisionKey) || { hasPendingLink: false, hasPartialLink: false }),
+        ...savedLinkSummary,
         authorLine: authorMeta.authorLine,
         authorSearchText: authorMeta.authorSearchText,
         missingCount: summaryCounts.missingCount,
@@ -2792,6 +2808,7 @@ class SeriesReviewManager {
       const summaryCounts = this.buildCatalogSummaryCounts(slotMap, {}, localBooks, [], {
         seriesName: group.seriesName
       })
+      const savedLinkSummary = this.mergeSeriesSourceLinkSummaryFlags(localMatchSummaryByDecisionKey.get(group.decisionKey))
       detailSummaries.push({
         ...this.buildCatalogViewPayload({
           id: group.catalogId,
@@ -2803,7 +2820,7 @@ class SeriesReviewManager {
           displayBucket: 'local_only',
           canDismiss: false
         }),
-        ...(localMatchSummaryByDecisionKey.get(group.decisionKey) || { hasPendingLink: false, hasPartialLink: false }),
+        ...savedLinkSummary,
         missingCount: summaryCounts.missingCount,
         disputedCount: summaryCounts.disputedCount,
         localBookCount: localBooks.length,
