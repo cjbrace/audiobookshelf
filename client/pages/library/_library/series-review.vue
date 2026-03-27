@@ -778,10 +778,9 @@
                   >
                     <div class="min-w-0">
                       <div class="grow min-w-0">
-                        <p class="font-medium">{{ catalog.seriesName }}</p>
-                        <p v-if="catalog.authorLine" class="text-sm text-gray-500 mt-0.5">{{ catalog.authorLine }}</p>
-                        <p class="text-sm text-gray-400 mt-1">
-                          {{ catalog.localBookCount }} local, {{ catalog.missingCount }} missing, {{ catalog.disputedCount }} disputed
+                        <p class="font-medium leading-snug">
+                          <span>{{ catalog.seriesName }}</span>
+                          <span v-if="catalog.authorLine" class="text-sm text-gray-400"> - {{ catalog.authorLine }}</span>
                         </p>
                       </div>
                       <div class="mt-2 flex flex-wrap gap-2">
@@ -802,6 +801,23 @@
                           class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-amber-300/35 bg-amber-500/10 text-amber-100"
                         >
                           Partial
+                        </span>
+                        <span
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-emerald-300/35 bg-emerald-500/10 text-emerald-100"
+                        >
+                          {{ formatCatalogBookCountPill(catalog.localBookCount) }}
+                        </span>
+                        <span
+                          v-if="catalog.missingCount > 0"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-amber-300/35 bg-amber-500/10 text-amber-100"
+                        >
+                          {{ formatCatalogMissingCountPill(catalog.missingCount) }}
+                        </span>
+                        <span
+                          v-if="catalog.disputedCount > 0"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-red-300/35 bg-red-500/10 text-red-100"
+                        >
+                          {{ formatCatalogDisputedCountPill(catalog.disputedCount) }}
                         </span>
                       </div>
                     </div>
@@ -1578,6 +1594,18 @@ export default {
     },
     formatConfidence(value) {
       return Number(value).toFixed(2)
+    },
+    formatCatalogBookCountPill(count) {
+      const total = Number(count || 0)
+      return `${total} Book${total === 1 ? '' : 's'}`
+    },
+    formatCatalogMissingCountPill(count) {
+      const total = Number(count || 0)
+      return `${total} Missing`
+    },
+    formatCatalogDisputedCountPill(count) {
+      const total = Number(count || 0)
+      return `${total} Disputed`
     },
     decodeHtmlEntities(value) {
       let text = String(value || '')
