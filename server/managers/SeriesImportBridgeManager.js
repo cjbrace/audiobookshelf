@@ -106,7 +106,7 @@ class SeriesImportBridgeManager {
         library_id: libraryId,
         ...payload
       },
-      timeoutMs: 60000
+      timeoutMs: 180000
     })
   }
 

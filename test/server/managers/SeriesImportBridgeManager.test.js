@@ -83,4 +83,20 @@ describe('SeriesImportBridgeManager', () => {
 
     expect(urls[0]).to.equal('http://bridge.example:9000')
   })
+
+  it('uses a longer timeout for manual lookups so large series can finish', async () => {
+    let capturedConfig = null
+    const manager = loadManagerWithAxios(async (config) => {
+      capturedConfig = config
+      return { status: 200, data: { results: [] } }
+    })
+
+    await manager.lookupManualSeries('library-1', {
+      local_series_name: 'Defiance of the Fall',
+      local_books: [{ title: 'Defiance of the Fall' }]
+    })
+
+    expect(capturedConfig).to.be.an('object')
+    expect(capturedConfig.timeout).to.equal(180000)
+  })
 })
