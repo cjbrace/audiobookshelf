@@ -1634,6 +1634,34 @@ describe('SeriesReviewManager', () => {
     expect(detail.rows.some((row) => row.rowType === 'unsequenced' && row.title === 'Expanse Stories')).to.equal(true)
   })
 
+  it('does not use local book titles as expected titles in source-backed slots with no source choice', async () => {
+    await createBookFixture({
+      title: 'Rincewind Book Three Full Cast',
+      currentSeries: [{ name: 'Discworld - Rincewind', sequence: '3' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Discworld - Rincewind',
+        entries: [
+          {
+            title: 'The Colour of Magic',
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: 'https://www.audible.co.uk/series/Discworld-Rincewind-Audiobooks/B07MF4H5L2' }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const slot3 = detail.slots.find((slot) => slot.slot === '3')
+
+    expect(slot3).to.exist
+    expect(slot3.expectedTitle).to.equal(null)
+    expect(slot3.localBooks).to.have.length(1)
+    expect(slot3.localBooks[0].title).to.equal('Rincewind Book Three Full Cast')
+  })
+
   it('keeps omnibus range entries out of core slot disputes and coverage counts', async () => {
     await createBookFixture({
       title: 'Android Paradox',

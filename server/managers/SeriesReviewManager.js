@@ -3006,6 +3006,10 @@ class SeriesReviewManager {
   }
 
   finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = [], options = {}) {
+    const allowLocalExpectedTitleFallback =
+      typeof options?.allowLocalExpectedTitleFallback === 'boolean'
+        ? options.allowLocalExpectedTitleFallback
+        : !Array.isArray(entries) || !entries.length
     const titleKeysFor = (value) => this.getCatalogEntryTitleKeys(value, options?.seriesName || '')
     const unsequencedEntrySourceSupportByTitleKey = new Map()
     const omnibusLocalBooksByTitleKey = new Map()
@@ -3075,10 +3079,13 @@ class SeriesReviewManager {
         slot.expectedAuthors = slot.choices[0].authors || []
         slot.expectedPublishedDate = slot.choices[0].publishedDate || null
         slot.sourceSupport = slot.choices[0].sources
-      } else if (slot.localBooks.length === 1) {
+      } else if (allowLocalExpectedTitleFallback && slot.localBooks.length === 1) {
         slot.expectedTitle = slot.localBooks[0].title
         slot.expectedAuthors = (slot.localBooks[0].authors || []).map((author) => author?.name || author).filter(Boolean)
         slot.expectedPublishedDate = null
+      }
+
+      if ((!Array.isArray(slot.sourceSupport) || !slot.sourceSupport.length) && slot.localBooks.length === 1) {
         slot.sourceSupport = titleKeysFor(slot.localBooks[0].title).flatMap((key) => unsequencedEntrySourceSupportByTitleKey.get(key) || []).filter((source, index, list) => {
           const identity = `${source.source}:${source.evidenceUrl || ''}:${source.label || ''}`
           return list.findIndex((candidate) => `${candidate.source}:${candidate.evidenceUrl || ''}:${candidate.label || ''}` === identity) === index
