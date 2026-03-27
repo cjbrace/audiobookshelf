@@ -1763,13 +1763,18 @@ export default {
           : Array.isArray(rawBook?.sourceAuthors)
             ? rawBook.sourceAuthors.filter(Boolean).map((author) => this.decodeHtmlEntities(author))
             : [],
-        sourceUrl: String(rawBook?.sourceUrl || entry?.sourceUrl || entry?.sourceSeriesUrl || '').trim()
+        sourceUrl: String(rawBook?.sourceUrl || entry?.sourceUrl || entry?.sourceSeriesUrl || '').trim(),
+        localMatched: !!rawBook?.localMatched
       }
     },
     sortSourceSeriesBooks(books) {
+      const omnibusPattern = /^\d+(?:\.\d+)?-\d+(?:\.\d+)?$/
       return [...(books || [])].sort((left, right) => {
         const leftSequence = String(left?.sequence || '')
         const rightSequence = String(right?.sequence || '')
+        const leftIsOmnibus = omnibusPattern.test(leftSequence)
+        const rightIsOmnibus = omnibusPattern.test(rightSequence)
+        if (leftIsOmnibus !== rightIsOmnibus) return leftIsOmnibus ? 1 : -1
         if (leftSequence && rightSequence && leftSequence !== rightSequence) {
           return leftSequence.localeCompare(rightSequence, undefined, { numeric: true })
         }
@@ -1872,8 +1877,27 @@ export default {
     },
     getSourceSeriesBooks(entry) {
       const catalogBooks = this.getCatalogSourceSeriesBooks(entry)
-      if (catalogBooks.length) return catalogBooks
-      return this.getFallbackSourceSeriesBooks(entry)
+      const fallbackBooks = this.getFallbackSourceSeriesBooks(entry)
+      const mergedBooksByKey = new Map()
+      const addBook = (book) => {
+        const normalizedBook = this.buildSourceSeriesBook(book, entry)
+        if (!normalizedBook) return
+        const key = this.getSourceSeriesBookKey(normalizedBook)
+        const existing = mergedBooksByKey.get(key)
+        if (!existing) {
+          mergedBooksByKey.set(key, normalizedBook)
+          return
+        }
+        mergedBooksByKey.set(key, {
+          ...existing,
+          ...normalizedBook,
+          localMatched: !!existing.localMatched || !!normalizedBook.localMatched
+        })
+      }
+
+      fallbackBooks.forEach(addBook)
+      catalogBooks.forEach(addBook)
+      return this.dedupeSourceSeriesBooks([...mergedBooksByKey.values()])
     },
     getSourceSeriesBookKey(book) {
       return `${String(book?.sequence || '').trim()}:${String(book?.title || '').trim()}`
@@ -2040,6 +2064,7 @@ export default {
       if (status === 'missing') return 'Missing'
       if (status === 'disputed') return 'Disputed'
       if (status === 'decimal') return 'Decimal only'
+      if (status === 'omnibus') return 'Omnibus'
       if (status === 'unsequenced') return 'Unsequenced'
       return 'Covered'
     },
@@ -2047,6 +2072,7 @@ export default {
       if (status === 'missing') return 'border-red-300/35 bg-red-500/10 text-red-50'
       if (status === 'disputed') return 'border-amber-300/35 bg-amber-500/10 text-amber-100'
       if (status === 'decimal') return 'border-slate-300/35 bg-slate-500/10 text-slate-100'
+      if (status === 'omnibus') return 'border-fuchsia-300/35 bg-fuchsia-500/10 text-fuchsia-100'
       if (status === 'unsequenced') return 'border-violet-300/35 bg-violet-500/10 text-violet-100'
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
@@ -2293,6 +2319,7 @@ export default {
     },
     getCatalogRowLabel(row) {
       if (row?.rowType === 'unsequenced') return 'Unsequenced'
+      if (row?.rowType === 'omnibus') return String(row?.sequenceLabel || row?.slot || 'Omnibus').trim() || 'Omnibus'
       return String(row?.slot || '').trim()
     },
     getCatalogRowSourceSupport(row) {
@@ -2307,6 +2334,7 @@ export default {
       })
     },
     getCatalogLocalCoverageEmptyText(row) {
+      if (row?.rowType === 'omnibus') return 'No local omnibus matches this entry'
       return row?.rowType === 'unsequenced' ? 'No local book matches this entry' : 'No local book covers this slot'
     },
     getCatalogCandidateFilter(rowKey) {

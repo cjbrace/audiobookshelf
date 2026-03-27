@@ -1171,6 +1171,23 @@ class SeriesReviewManager {
     return cleaned || null
   }
 
+  isRangedCatalogSlot(slot) {
+    return /^\d+(?:\.\d+)?-\d+(?:\.\d+)?$/.test(String(slot || '').trim())
+  }
+
+  isOmnibusCatalogSequenceLabel(value) {
+    const normalized = this.normalizeCatalogSlotToken(value)
+    return !!normalized && this.isRangedCatalogSlot(normalized)
+  }
+
+  getCoverageEligibleLocalBooks(localBooks = []) {
+    return (Array.isArray(localBooks) ? localBooks : []).filter((book) => !this.isOmnibusCatalogSequenceLabel(book?.sequence || ''))
+  }
+
+  getCoverageEligibleLocalBookCount(localBooks = []) {
+    return this.getCoverageEligibleLocalBooks(localBooks).length
+  }
+
   isMonthYearCatalogDate(value) {
     return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)-\d{4}$/i.test(String(value || '').trim())
   }
@@ -1207,6 +1224,7 @@ class SeriesReviewManager {
       .trim()
       .replace(/\s+/g, ' ')
     if (!normalizedLabel) return []
+    if (this.isOmnibusCatalogSequenceLabel(normalizedLabel)) return []
 
     const slots = new Set()
     normalizedLabel.split(',').forEach((rawPart) => {
@@ -1271,7 +1289,8 @@ class SeriesReviewManager {
               .map((slot) => this.normalizeCatalogSlotToken(slot))
               .filter(Boolean)
           : []
-        const coveredSlots = explicitCoveredSlots.length ? explicitCoveredSlots : this.expandCatalogSequenceCoverage(sequenceLabel)
+        const isOmnibus = this.isOmnibusCatalogSequenceLabel(sequenceLabel)
+        const coveredSlots = explicitCoveredSlots.length ? explicitCoveredSlots : isOmnibus ? [] : this.expandCatalogSequenceCoverage(sequenceLabel)
 
         if (!title) return null
 
@@ -1281,6 +1300,7 @@ class SeriesReviewManager {
           authors,
           publishedDate: publishedDate || null,
           sequenceLabel: sequenceLabel || null,
+          isOmnibus,
           coveredSlots,
           sources
         }
@@ -1624,16 +1644,17 @@ class SeriesReviewManager {
     const snapshotLinkedBookCount = this.getSeriesSourceLinkBookCount(snapshot)
     const storedLinkedBookCount = Number.isFinite(Number(linkRow?.linkedBookCount)) ? Number(linkRow.linkedBookCount) : 0
     const linkedBookCount = snapshotLinkedBookCount || storedLinkedBookCount
-    const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number.isFinite(Number(linkRow?.totalBookCount)) ? Number(linkRow.totalBookCount) : 0
+    const totalBookCount = Array.isArray(localBooks) ? this.getCoverageEligibleLocalBookCount(localBooks) : Number.isFinite(Number(linkRow?.totalBookCount)) ? Number(linkRow.totalBookCount) : 0
     if (totalBookCount > 0 && linkedBookCount >= totalBookCount) return 'linked'
     return 'partial'
   }
 
   buildCatalogSourceCoverageBySourceUrl(rows = [], localBooks = []) {
-    const totalBookCount = Array.isArray(localBooks) ? localBooks.length : 0
+    const totalBookCount = this.getCoverageEligibleLocalBookCount(localBooks)
     const matchedLocalBookIdsByUrl = new Map()
 
     ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+      if (row?.rowType === 'omnibus') return
       const supports = Array.isArray(row?.sourceSupport) ? row.sourceSupport : []
       const localRowBooks = Array.isArray(row?.localBooks) ? row.localBooks : []
       if (!supports.length || !localRowBooks.length) return
@@ -1674,7 +1695,7 @@ class SeriesReviewManager {
       overrideTotalBookCount !== null
         ? overrideTotalBookCount
         : Array.isArray(localBooks)
-          ? localBooks.length
+          ? this.getCoverageEligibleLocalBookCount(localBooks)
           : Number(linkRow?.totalBookCount || 0)
     const coverageStatus =
       typeof coverageOverride?.coverageStatus === 'string' && coverageOverride.coverageStatus
@@ -1733,7 +1754,7 @@ class SeriesReviewManager {
 
     if (activeLink) {
       const activeLinkedBookCount = Number(activeLink.linkedBookCount || 0)
-      const activeTotalBookCount = Number(activeLink.totalBookCount || (Array.isArray(localBooks) ? localBooks.length : 0) || 0)
+      const activeTotalBookCount = Number(activeLink.totalBookCount || (Array.isArray(localBooks) ? this.getCoverageEligibleLocalBookCount(localBooks) : 0) || 0)
       const coverageStatus =
         activeLinkedBookCount > 0 && activeTotalBookCount > 0 && activeLinkedBookCount >= activeTotalBookCount
           ? 'linked'
@@ -1918,7 +1939,7 @@ class SeriesReviewManager {
     const context = catalogId ? await this.buildManualLookupContextForCatalog(libraryId, catalogId) : null
     const localBooks = Array.isArray(context?.localBooks) ? context.localBooks : []
     const linkedBookCount = this.getSeriesSourceLinkBookCount(evidenceSnapshot)
-    const totalBookCount = localBooks.length
+    const totalBookCount = this.getCoverageEligibleLocalBookCount(localBooks)
     const coverageStatus = totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
     const existing = await Database.seriesReviewSeriesSourceLinkModel.findOne({
       where: {
@@ -2122,7 +2143,7 @@ class SeriesReviewManager {
       } else {
         const snapshot = this.getEffectiveEvidenceSnapshot(row.evidenceSnapshot)
         const linkedBookCount = this.getSeriesSourceLinkBookCount(snapshot)
-        const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number(row.totalBookCount || 0)
+        const totalBookCount = Array.isArray(localBooks) ? this.getCoverageEligibleLocalBookCount(localBooks) : Number(row.totalBookCount || 0)
         row.linkedBookCount = linkedBookCount
         row.totalBookCount = totalBookCount
         row.coverageStatus = totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
@@ -2551,7 +2572,7 @@ class SeriesReviewManager {
       })
       const summaryEntries = this.normalizeCatalogEntries(catalog.entries)
       summaryEntries.forEach((entry) => {
-        const coveredSlots = entry.coveredSlots.length ? entry.coveredSlots : [entry.sequenceLabel].filter(Boolean)
+        const coveredSlots = entry.coveredSlots.length ? entry.coveredSlots : []
         coveredSlots.forEach((coveredSlot) => {
           const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
           if (!slot) return
@@ -2902,9 +2923,28 @@ class SeriesReviewManager {
   finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = [], options = {}) {
     const titleKeysFor = (value) => this.getCatalogEntryTitleKeys(value, options?.seriesName || '')
     const unsequencedEntrySourceSupportByTitleKey = new Map()
+    const omnibusLocalBooksByTitleKey = new Map()
+    const pushLocalBookByTitleKey = (targetMap, book) => {
+      titleKeysFor(book?.title).forEach((key) => {
+        if (!key) return
+        if (!targetMap.has(key)) targetMap.set(key, [])
+        targetMap.get(key).push({
+          libraryItemId: book.libraryItemId,
+          title: book.title,
+          relPath: book.relPath,
+          sequence: book.sequence
+        })
+      })
+    }
+
+    ;(Array.isArray(localBooks) ? localBooks : [])
+      .filter((book) => this.isOmnibusCatalogSequenceLabel(book?.sequence || ''))
+      .forEach((book) => {
+        pushLocalBookByTitleKey(omnibusLocalBooksByTitleKey, book)
+      })
 
     entries
-      .filter((entry) => !entry.coveredSlots.length)
+      .filter((entry) => !entry.coveredSlots.length && !entry.isOmnibus)
       .forEach((entry) => {
         const sourceSupport = this.buildCatalogSourceSupport(entry.sources)
         titleKeysFor(entry.title).forEach((key) => {
@@ -2969,7 +3009,7 @@ class SeriesReviewManager {
       }
     })
 
-    const unsequencedBooks = localBooks.filter((book) => !book.sequence)
+    const unsequencedBooks = this.getCoverageEligibleLocalBooks(localBooks).filter((book) => !book.sequence)
     const unsequencedLocalBooksByTitle = new Map()
     unsequencedBooks.forEach((book) => {
       titleKeysFor(book.title).forEach((key) => {
@@ -2984,7 +3024,7 @@ class SeriesReviewManager {
       })
     })
     const coveredTitleKeys = new Set()
-    localBooks
+    this.getCoverageEligibleLocalBooks(localBooks)
       .filter((book) => !!book.sequence)
       .forEach((book) => {
         titleKeysFor(book.title).forEach((key) => {
@@ -3000,7 +3040,7 @@ class SeriesReviewManager {
     })
 
     const unsequencedSourceEntries = entries
-      .filter((entry) => !entry.coveredSlots.length)
+      .filter((entry) => !entry.coveredSlots.length && !entry.isOmnibus)
       .filter((entry) => {
         const keys = titleKeysFor(entry.title)
         return keys.length && !keys.some((key) => coveredTitleKeys.has(key))
@@ -3026,11 +3066,35 @@ class SeriesReviewManager {
         status: 'unsequenced'
       }))
       .sort((a, b) => a.title.localeCompare(b.title))
+    const omnibusRows = entries
+      .filter((entry) => entry.isOmnibus)
+      .map((entry) => ({
+        rowKey: `omnibus:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
+        rowType: 'omnibus',
+        slot: entry.sequenceLabel || 'omnibus',
+        entryKey: entry.entryKey,
+        title: entry.title,
+        expectedTitle: entry.title,
+        expectedAuthors: entry.authors || [],
+        expectedPublishedDate: entry.publishedDate || null,
+        authors: entry.authors || [],
+        publishedDate: entry.publishedDate || null,
+        sequenceLabel: entry.sequenceLabel || null,
+        sourceSupport: this.buildCatalogSourceSupport(entry.sources),
+        localBooks: titleKeysFor(entry.title).flatMap((key) => omnibusLocalBooksByTitleKey.get(key) || []).filter((book, index, list) => {
+          return list.findIndex((candidate) => candidate.libraryItemId === book.libraryItemId) === index
+        }),
+        choices: [],
+        selectedEntryKey: null,
+        status: 'omnibus'
+      }))
+      .sort((a, b) => String(a.sequenceLabel || '').localeCompare(String(b.sequenceLabel || ''), undefined, { numeric: true }) || a.title.localeCompare(b.title))
     return {
       slots,
       unsequencedBooks,
       unsequencedSourceEntries,
-      rows: [...slots, ...unsequencedSourceEntries]
+      omnibusRows,
+      rows: [...slots, ...unsequencedSourceEntries, ...omnibusRows]
     }
   }
 
@@ -3100,7 +3164,7 @@ class SeriesReviewManager {
 
     const entries = this.normalizeCatalogEntries(catalog.entries)
     entries.forEach((entry) => {
-      const coveredSlots = entry.coveredSlots.length ? entry.coveredSlots : [entry.sequenceLabel].filter(Boolean)
+      const coveredSlots = entry.coveredSlots.length ? entry.coveredSlots : []
       coveredSlots.forEach((coveredSlot) => {
         const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
         if (!slot) return

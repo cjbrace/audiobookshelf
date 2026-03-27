@@ -1633,6 +1633,74 @@ describe('SeriesReviewManager', () => {
     expect(detail.unsequencedBooks.map((book) => book.title)).to.deep.equal(['Expanse Stories'])
   })
 
+  it('keeps omnibus range entries out of core slot disputes and coverage counts', async () => {
+    await createBookFixture({
+      title: 'Android Paradox',
+      currentSeries: [{ name: 'Android X', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Android Deception',
+      currentSeries: [{ name: 'Android X', sequence: '2' }]
+    })
+    await createBookFixture({
+      title: 'Android X: The Complete Series',
+      currentSeries: [{ name: 'Android X', sequence: '1-3' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Android X',
+        entries: [
+          {
+            title: 'Android X: The Complete Series',
+            sequence: '1-3',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }]
+          },
+          {
+            title: 'Android Paradox',
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }]
+          },
+          {
+            title: 'Android Deception',
+            sequence: '2',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }]
+          },
+          {
+            title: 'Android Winter',
+            sequence: '3',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.93, evidenceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const slot1 = detail.slots.find((slot) => slot.slot === '1')
+    const slot2 = detail.slots.find((slot) => slot.slot === '2')
+    const slot3 = detail.slots.find((slot) => slot.slot === '3')
+    const omnibusRow = detail.rows.find((row) => row.rowType === 'omnibus')
+    const coverage = SeriesReviewManager.buildCatalogSourceCoverageBySourceUrl(detail.rows, detail.localBooks).get('https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU')
+
+    expect(slot1.status).to.equal('covered')
+    expect(slot1.choices).to.have.length(1)
+    expect(slot2.status).to.equal('covered')
+    expect(slot2.choices).to.have.length(1)
+    expect(slot3.status).to.equal('missing')
+    expect(slot3.expectedTitle).to.equal('Android Winter')
+    expect(detail.slots.filter((slot) => slot.status === 'disputed')).to.have.length(0)
+    expect(omnibusRow).to.exist
+    expect(omnibusRow.status).to.equal('omnibus')
+    expect(omnibusRow.sequenceLabel).to.equal('1-3')
+    expect(omnibusRow.localBooks).to.have.length(1)
+    expect(omnibusRow.localBooks[0].title).to.equal('Android X: The Complete Series')
+    expect(coverage).to.deep.equal({
+      linkedBookCount: 2,
+      totalBookCount: 2,
+      coverageStatus: 'linked'
+    })
+  })
+
   it('preserves catalog source provenance metadata in series detail support rows', async () => {
     const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {
