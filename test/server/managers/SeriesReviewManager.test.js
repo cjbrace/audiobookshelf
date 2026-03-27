@@ -1332,6 +1332,74 @@ describe('SeriesReviewManager', () => {
     expect(linkedCatalog.hasPartialLink).to.equal(true)
   })
 
+  it('recomputes saved-link coverage from imported catalog rows when an imported link becomes complete', async () => {
+    await createBookFixture({
+      title: 'Android X',
+      currentSeries: [{ name: 'Android X', sequence: '1' }],
+      authors: ['Michael La Ronn']
+    })
+    await createBookFixture({
+      title: 'Android X 2',
+      currentSeries: [{ name: 'Android X', sequence: '2' }],
+      authors: ['Michael La Ronn']
+    })
+
+    const localCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const localCatalog = localCatalogs.find((catalog) => catalog.seriesName === 'Android X')
+    await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, localCatalog.id, {
+      source: 'audible',
+      sourceSeriesName: 'Android X',
+      sourceAuthor: 'Michael La Ronn',
+      sourceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+      sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+      evidenceSnapshot: {
+        source: 'audible',
+        sourceSeriesName: 'Android X',
+        sourceAuthor: 'Michael La Ronn',
+        sourceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+        sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+        sourceLinkUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+        sourceIdentifier: 'B012C5FZPU',
+        matchingBooks: [{ localTitle: 'Android X', sourceTitle: 'Android X', sourceSequence: '1' }]
+      }
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Android X',
+        entries: [
+          {
+            title: 'Android X',
+            authors: ['Michael La Ronn'],
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }]
+          },
+          {
+            title: 'Android X 2',
+            authors: ['Michael La Ronn'],
+            sequence: '2',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }]
+          }
+        ]
+      }
+    ])
+
+    await SeriesReviewManager.markSeriesSourceLinksImported(library.id, {
+      localDecisionKey: 'android x',
+      sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU'
+    })
+
+    const linkedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const linkedCatalog = linkedCatalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
+    expect(linkedCatalog.hasPendingLink).to.equal(false)
+    expect(linkedCatalog.hasPartialLink).to.equal(false)
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(detail.catalog.savedSeriesLinks[0].coverageStatus).to.equal('linked')
+    expect(detail.catalog.savedSeriesLinks[0].linkedBookCount).to.equal(2)
+    expect(detail.catalog.savedSeriesLinks[0].totalBookCount).to.equal(2)
+  })
+
   it('resolves audible manual links into the locally linked category', async () => {
     await createBookFixture({
       title: 'Gamma Start',

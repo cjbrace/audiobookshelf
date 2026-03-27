@@ -758,7 +758,11 @@
               </div>
 
               <div v-else class="grid grid-cols-1 xl:grid-cols-[26rem_minmax(0,1fr)] gap-4">
-                <div class="rounded border border-white/15 bg-black/15 p-3 max-h-[72vh] overflow-y-auto self-start space-y-3">
+                <div
+                  ref="catalogListScroller"
+                  class="rounded border border-white/15 bg-black/15 p-3 max-h-[72vh] overflow-y-auto self-start space-y-3"
+                  @scroll="persistCatalogListScrollTop"
+                >
                   <div v-if="!filteredCatalogSeries.length" class="rounded border border-white/10 bg-black/20 px-3 py-4 text-sm text-gray-400">
                     No series match the current filter.
                   </div>
@@ -1343,6 +1347,7 @@ const SOURCE_LEGEND = {
 
 const CATALOG_LIST_CACHE_PREFIX = 'series-review:v2:catalog-list:'
 const CATALOG_DETAIL_CACHE_KEY = 'series-review:v2:catalog-detail-cache'
+const CATALOG_VIEW_STATE_KEY_PREFIX = 'series-review:v1:view-state:'
 
 export default {
   async asyncData({ redirect, store, params }) {
@@ -1395,6 +1400,7 @@ export default {
       catalogCandidateFilterBySlot: {},
       catalogListCache: {},
       catalogDetailCache: {},
+      catalogListScrollTop: 0,
       localCatalogMatches: [],
       localCatalogMatchesLoading: false,
       localCatalogMatchesExpanded: false,
@@ -1560,12 +1566,44 @@ export default {
       return this.pendingLocalCatalogMatches.filter((match) => (this.localCatalogMatchSelectionById[match.id] || []).length).length
     }
   },
-  mounted() {
+  watch: {
+    activeTab() {
+      this.persistCatalogViewState()
+      if (this.activeTab === 'catalog') this.restoreCatalogListScroll()
+    },
+    includeDecided() {
+      this.persistCatalogViewState()
+    },
+    catalogSearchQuery() {
+      this.persistCatalogViewState()
+    },
+    catalogCategoryFilter() {
+      this.persistCatalogViewState()
+    },
+    selectedCatalogId() {
+      this.persistCatalogViewState()
+    },
+    localCatalogMatchesExpanded() {
+      this.persistCatalogViewState()
+    }
+  },
+  async mounted() {
     this.hydrateCatalogCaches()
-    this.loadQueue()
+    this.hydrateCatalogViewState()
+    if (this.activeTab === 'management') {
+      await this.loadManagementData()
+    } else if (this.activeTab === 'catalog') {
+      await this.loadCatalogs({ preferCache: true })
+      if (this.localCatalogMatchesExpanded) await this.loadLocalCatalogMatches({ silent: true })
+      this.restoreCatalogListScroll(true)
+    } else {
+      await this.loadQueue()
+    }
     this.prefetchCatalogData()
   },
   beforeDestroy() {
+    this.persistCatalogListScrollTop()
+    this.persistCatalogViewState()
     this.stopSourceImportPolling()
   },
   methods: {
@@ -1584,7 +1622,10 @@ export default {
       this.activeTab = tab
       this.errorMessage = ''
       await this.refreshActiveTab()
-      if (tab === 'catalog') await this.loadLocalCatalogMatches({ silent: true })
+      if (tab === 'catalog') {
+        await this.loadLocalCatalogMatches({ silent: true })
+        this.restoreCatalogListScroll()
+      }
     },
     formatTime(value) {
       if (!value) return '-'
@@ -2074,8 +2115,65 @@ export default {
       if (!process.client || !link?.url) return
       window.open(link.url, '_blank', 'noopener')
     },
+    catalogViewStateKey() {
+      return `${CATALOG_VIEW_STATE_KEY_PREFIX}${this.$route.params.library || 'default'}`
+    },
     catalogListCacheKey(includeUntrusted = true, includeDismissed = false) {
       return `${CATALOG_LIST_CACHE_PREFIX}${includeUntrusted ? 1 : 0}:${includeDismissed ? 1 : 0}`
+    },
+    getCatalogListScroller() {
+      const ref = this.$refs.catalogListScroller
+      return Array.isArray(ref) ? ref[0] || null : ref || null
+    },
+    persistCatalogListScrollTop() {
+      if (!process.client) return
+      const scroller = this.getCatalogListScroller()
+      this.catalogListScrollTop = Number(scroller?.scrollTop || 0)
+      this.persistCatalogViewState()
+    },
+    restoreCatalogListScroll(force = false) {
+      if (!process.client) return
+      this.$nextTick(() => {
+        const scroller = this.getCatalogListScroller()
+        if (!scroller) return
+        const target = Math.max(0, Number(this.catalogListScrollTop || 0))
+        if (!force && !target) return
+        scroller.scrollTop = target
+      })
+    },
+    persistCatalogViewState() {
+      if (!process.client) return
+      try {
+        window.sessionStorage.setItem(
+          this.catalogViewStateKey(),
+          JSON.stringify({
+            activeTab: this.activeTab || 'queue',
+            includeDecided: !!this.includeDecided,
+            catalogSearchQuery: this.catalogSearchQuery || '',
+            catalogCategoryFilter: this.catalogCategoryFilter || '',
+            selectedCatalogId: this.selectedCatalogId || '',
+            localCatalogMatchesExpanded: !!this.localCatalogMatchesExpanded,
+            catalogListScrollTop: Math.max(0, Number(this.catalogListScrollTop || 0))
+          })
+        )
+      } catch {}
+    },
+    hydrateCatalogViewState() {
+      if (!process.client) return
+      try {
+        const raw = window.sessionStorage.getItem(this.catalogViewStateKey())
+        if (!raw) return
+        const parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object') return
+        const activeTab = String(parsed.activeTab || '').trim()
+        if (['queue', 'management', 'catalog'].includes(activeTab)) this.activeTab = activeTab
+        this.includeDecided = !!parsed.includeDecided
+        this.catalogSearchQuery = String(parsed.catalogSearchQuery || '')
+        this.catalogCategoryFilter = String(parsed.catalogCategoryFilter || '')
+        this.selectedCatalogId = String(parsed.selectedCatalogId || '')
+        this.localCatalogMatchesExpanded = !!parsed.localCatalogMatchesExpanded
+        this.catalogListScrollTop = Math.max(0, Number(parsed.catalogListScrollTop || 0))
+      } catch {}
     },
     persistCatalogCaches() {
       if (!process.client) return
@@ -2149,6 +2247,7 @@ export default {
       }
       const nextId = visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : visibleCatalogs[0].id
       this.selectCatalog(nextId, { preferCache: true })
+      this.restoreCatalogListScroll()
     },
     getCatalogExpectedDisplay(slotOrChoice) {
       const title = String(slotOrChoice?.expectedTitle || slotOrChoice?.title || '').trim()

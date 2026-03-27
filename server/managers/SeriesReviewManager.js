@@ -1629,11 +1629,57 @@ class SeriesReviewManager {
     return 'partial'
   }
 
-  buildSeriesSourceLinkPayload(linkRow, { localBooks = [], resolvedCatalogId = null, evidenceSnapshot = null } = {}) {
+  buildCatalogSourceCoverageBySourceUrl(rows = [], localBooks = []) {
+    const totalBookCount = Array.isArray(localBooks) ? localBooks.length : 0
+    const matchedLocalBookIdsByUrl = new Map()
+
+    ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+      const supports = Array.isArray(row?.sourceSupport) ? row.sourceSupport : []
+      const localRowBooks = Array.isArray(row?.localBooks) ? row.localBooks : []
+      if (!supports.length || !localRowBooks.length) return
+
+      supports.forEach((support) => {
+        const evidenceUrl = this.normalizeExternalUrl(support?.evidenceUrl || '')
+        if (!evidenceUrl) return
+        if (!matchedLocalBookIdsByUrl.has(evidenceUrl)) matchedLocalBookIdsByUrl.set(evidenceUrl, new Set())
+        const matchedIds = matchedLocalBookIdsByUrl.get(evidenceUrl)
+        localRowBooks.forEach((book) => {
+          const libraryItemId = String(book?.libraryItemId || '').trim()
+          if (libraryItemId) matchedIds.add(libraryItemId)
+        })
+      })
+    })
+
+    const coverageBySourceUrl = new Map()
+    matchedLocalBookIdsByUrl.forEach((matchedIds, evidenceUrl) => {
+      const linkedBookCount = matchedIds.size
+      coverageBySourceUrl.set(evidenceUrl, {
+        linkedBookCount,
+        totalBookCount,
+        coverageStatus: totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
+      })
+    })
+    return coverageBySourceUrl
+  }
+
+  buildSeriesSourceLinkPayload(linkRow, { localBooks = [], resolvedCatalogId = null, evidenceSnapshot = null, coverageOverride = null } = {}) {
     const snapshot = this.getEffectiveEvidenceSnapshot(evidenceSnapshot, linkRow?.evidenceSnapshot)
-    const linkedBookCount = this.getSeriesSourceLinkBookCount(snapshot) || Number(linkRow?.linkedBookCount || 0)
-    const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number(linkRow?.totalBookCount || 0)
-    const coverageStatus = this.getSeriesSourceLinkCoverageStatus(linkRow, localBooks, snapshot)
+    const overrideLinkedBookCount = Number.isFinite(Number(coverageOverride?.linkedBookCount)) ? Number(coverageOverride.linkedBookCount) : null
+    const overrideTotalBookCount = Number.isFinite(Number(coverageOverride?.totalBookCount)) ? Number(coverageOverride.totalBookCount) : null
+    const linkedBookCount =
+      overrideLinkedBookCount !== null
+        ? overrideLinkedBookCount
+        : this.getSeriesSourceLinkBookCount(snapshot) || Number(linkRow?.linkedBookCount || 0)
+    const totalBookCount =
+      overrideTotalBookCount !== null
+        ? overrideTotalBookCount
+        : Array.isArray(localBooks)
+          ? localBooks.length
+          : Number(linkRow?.totalBookCount || 0)
+    const coverageStatus =
+      typeof coverageOverride?.coverageStatus === 'string' && coverageOverride.coverageStatus
+        ? coverageOverride.coverageStatus
+        : this.getSeriesSourceLinkCoverageStatus(linkRow, localBooks, snapshot)
     const importStatus = String(linkRow?.importStatus || 'imported').trim().toLowerCase() === 'pending' ? 'pending' : 'imported'
     return {
       id: linkRow.id,
@@ -1732,9 +1778,10 @@ class SeriesReviewManager {
         ? await this.getLocalCatalogBooks(libraryId, group.seriesName, { resolver, matchingSeries: group.seriesRows })
         : []
       const resolvedCatalogId = sourceUrlMap.get(matchRow.sourceSeriesUrl) || null
+      const coverageOverride = options?.coverageBySourceUrl instanceof Map ? options.coverageBySourceUrl.get(this.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')) || null : null
       if (options?.pendingOnly && String(matchRow.importStatus || 'imported').trim().toLowerCase() !== 'pending') continue
       if (!options?.includeResolved && resolvedCatalogId) continue
-      results.push(this.buildSeriesSourceLinkPayload(matchRow, { localBooks, resolvedCatalogId }))
+      results.push(this.buildSeriesSourceLinkPayload(matchRow, { localBooks, resolvedCatalogId, coverageOverride }))
     }
 
     return results.sort((a, b) => {
@@ -2029,7 +2076,57 @@ class SeriesReviewManager {
     if (!rows.length) return 0
 
     const importedAt = new Date()
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+    const allCatalogs = await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
+    const sourceUrlMap = this.buildCatalogSourceUrlMap(allCatalogs)
+    const localBooksCache = new Map()
+    const expandedSeriesCache = new Map()
+    const coverageByCatalogId = new Map()
     for (const row of rows) {
+      const group = localSeriesGroups.get(row.localDecisionKey)
+      const localBooks = group?.seriesName
+        ? await this.getLocalCatalogBooks(libraryId, group.seriesName, {
+            resolver,
+            matchingSeries: group.seriesRows,
+            localBooksCache,
+            expandedSeriesCache
+          })
+        : []
+      const catalogId = sourceUrlMap.get(row.sourceSeriesUrl) || null
+      const coverageOverride = catalogId
+        ? (() => {
+            if (!coverageByCatalogId.has(catalogId)) {
+              coverageByCatalogId.set(
+                catalogId,
+                this.getCatalogDetailForLibrary(libraryId, catalogId, {
+                  resolver,
+                  localSeriesGroups,
+                  catalogs: allCatalogs,
+                  localBooksCache,
+                  expandedSeriesCache,
+                  skipLocalSeriesMatches: true
+                }).then((detail) => this.buildCatalogSourceCoverageBySourceUrl(detail?.rows || detail?.slots || [], detail?.localBooks || localBooks))
+              )
+            }
+            return coverageByCatalogId.get(catalogId)
+          })()
+        : null
+
+      const resolvedCoverage = coverageOverride ? await coverageOverride : null
+      const nextCoverage = resolvedCoverage?.get(this.normalizeExternalUrl(row.sourceSeriesUrl || '')) || null
+      if (nextCoverage) {
+        row.linkedBookCount = nextCoverage.linkedBookCount
+        row.totalBookCount = nextCoverage.totalBookCount
+        row.coverageStatus = nextCoverage.coverageStatus
+      } else {
+        const snapshot = this.getEffectiveEvidenceSnapshot(row.evidenceSnapshot)
+        const linkedBookCount = this.getSeriesSourceLinkBookCount(snapshot)
+        const totalBookCount = Array.isArray(localBooks) ? localBooks.length : Number(row.totalBookCount || 0)
+        row.linkedBookCount = linkedBookCount
+        row.totalBookCount = totalBookCount
+        row.coverageStatus = totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
+      }
       row.importStatus = 'imported'
       row.lastImportedAt = importedAt
       await row.save()
@@ -2982,16 +3079,6 @@ class SeriesReviewManager {
       expandedSeriesCache: options?.expandedSeriesCache
     })
     const decisionKey = resolver?.getDecisionKey(catalog.seriesName) || ''
-    let localSeriesMatches = []
-    if (!options?.skipLocalSeriesMatches) {
-      localSeriesMatches = await this.getLocalSeriesMatchesForLibrary(libraryId, {
-        resolver,
-        localSeriesGroups,
-        catalogs: effectiveCatalogs,
-        includeResolved: true,
-        localDecisionKey: decisionKey
-      })
-    }
     const slotMap = new Map()
 
     localBooks.forEach((book) => {
@@ -3032,6 +3119,18 @@ class SeriesReviewManager {
     const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks, entries, {
       seriesName: catalog.seriesName
     })
+    const coverageBySourceUrl = this.buildCatalogSourceCoverageBySourceUrl(finalized.rows, localBooks)
+    let localSeriesMatches = []
+    if (!options?.skipLocalSeriesMatches) {
+      localSeriesMatches = await this.getLocalSeriesMatchesForLibrary(libraryId, {
+        resolver,
+        localSeriesGroups,
+        catalogs: effectiveCatalogs,
+        includeResolved: true,
+        localDecisionKey: decisionKey,
+        coverageBySourceUrl
+      })
+    }
 
     return {
       catalog: {
