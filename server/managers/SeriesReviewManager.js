@@ -1638,6 +1638,16 @@ class SeriesReviewManager {
     return this.sortSeriesSourceBooks(seriesBooks)
   }
 
+  getSeriesSourceLinkSequenceStatusNote(snapshot, coverageStatus = '') {
+    const normalizedSnapshot = this.normalizeEvidenceSnapshot(snapshot)
+    const note = typeof normalizedSnapshot?.sequenceStatusNote === 'string' ? normalizedSnapshot.sequenceStatusNote.trim() : ''
+    if (!note) return ''
+    if (String(coverageStatus || '').trim().toLowerCase() === 'linked' && note === 'Partial source coverage from current catalog entries') {
+      return ''
+    }
+    return note
+  }
+
   getSeriesSourceLinkCoverageStatus(linkRow, localBooks = [], evidenceSnapshot = null) {
     if (!linkRow?.isActive) return 'previously_linked'
     const snapshot = this.getEffectiveEvidenceSnapshot(evidenceSnapshot, linkRow?.evidenceSnapshot)
@@ -1718,7 +1728,7 @@ class SeriesReviewManager {
       sampleBooks: Array.isArray(snapshot.sampleBooks) ? snapshot.sampleBooks : [],
       seriesBooks: this.getSeriesSourceLinkSeriesBooks(snapshot),
       sequenceIncomplete: !!snapshot.sequenceIncomplete,
-      sequenceStatusNote: typeof snapshot.sequenceStatusNote === 'string' ? snapshot.sequenceStatusNote : '',
+      sequenceStatusNote: this.getSeriesSourceLinkSequenceStatusNote(snapshot, coverageStatus),
       evidenceSnapshot: snapshot,
       localBooks,
       linkedBookCount,
