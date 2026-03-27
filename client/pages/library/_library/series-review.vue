@@ -2365,6 +2365,9 @@ export default {
     },
     canFindCatalogCandidates(row) {
       if (!row) return false
+      const hasLocalBooks = Array.isArray(row.localBooks) && row.localBooks.length > 0
+      if (row.status === 'disputed') return true
+      if (hasLocalBooks) return false
       if (row.isDecimal) return true
       if (row.rowType === 'unsequenced' || row.rowType === 'omnibus') return true
       return row.status === 'missing' || row.status === 'disputed' || row.status === 'decimal'
