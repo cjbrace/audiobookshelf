@@ -1726,6 +1726,9 @@ export default {
       return parts.join(' | ')
     },
     getManualSequenceStatus(entry) {
+      if (entry && Object.prototype.hasOwnProperty.call(entry, 'sequenceStatusNote')) {
+        return String(entry.sequenceStatusNote || '').trim()
+      }
       return String(entry?.sequenceStatusNote || entry?.evidenceSnapshot?.sequenceStatusNote || '').trim()
     },
     normalizeSourceUrl(value) {
