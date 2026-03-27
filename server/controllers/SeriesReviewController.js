@@ -207,10 +207,18 @@ class SeriesReviewController {
 
       const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
       await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, { matchIds: [matchRow.id] })
-      const detail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+      const detailAfterImport = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
+      const pruneResult = await SeriesReviewManager.pruneUnsupportedLocalSeriesBooksForCatalog(req.library.id, req.params.catalogId, {
+        detail: detailAfterImport
+      })
+      if (pruneResult.removedCount) {
+        await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, { matchIds: [matchRow.id] })
+      }
+      const detail = pruneResult.detail || detailAfterImport
 
       return res.json({
         detail,
+        pruneResult,
         ...(result || {})
       })
     } catch (error) {

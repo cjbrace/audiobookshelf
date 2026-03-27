@@ -1944,6 +1944,61 @@ describe('SeriesReviewManager', () => {
     expect(row.localBooks[0].sequence).to.equal('1-3')
   })
 
+  it('prunes unsupported local series books after a rebuild-style catalog restore', async () => {
+    await stubExpandedLibraryItems()
+    const supported = await createBookFixture({
+      title: 'A Court of Thorns and Roses',
+      currentSeries: [{ name: 'Court of Thorns and Roses', sequence: '1' }]
+    })
+    const stale = await createBookFixture({
+      title: 'A Court of Silver Flames',
+      currentSeries: [{ name: 'Court of Thorns and Roses', sequence: '5' }]
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Court of Thorns and Roses',
+        entries: [
+          {
+            title: 'A Court of Thorns and Roses',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          },
+          {
+            title: 'A Court of Mist and Fury',
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          },
+          {
+            title: 'A Court of Wings and Ruin',
+            sequence: '3',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          },
+          {
+            title: 'A Court of Frost and Starlight',
+            sequence: '3.5',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const before = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(before.rows.find((row) => row.slot === '5')?.localBooks?.[0]?.title).to.equal('A Court of Silver Flames')
+
+    const pruneResult = await SeriesReviewManager.pruneUnsupportedLocalSeriesBooksForCatalog(library.id, importResult.catalogs[0].id, {
+      detail: before
+    })
+
+    expect(pruneResult.removedCount).to.equal(1)
+    expect(pruneResult.detail.rows.find((row) => row.slot === '5')).to.equal(undefined)
+
+    const refreshedStaleBook = await Database.libraryItemModel.getExpandedById(stale.libraryItem.id)
+    const refreshedSupportedBook = await Database.libraryItemModel.getExpandedById(supported.libraryItem.id)
+    expect((refreshedStaleBook.media.series || []).map((series) => series.name)).to.deep.equal([])
+    expect((refreshedSupportedBook.media.series || []).map((series) => series.name)).to.deep.equal(['Court of Thorns and Roses'])
+  })
+
   it('stores preferred slot interpretations for disputed catalog slots', async () => {
     const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {

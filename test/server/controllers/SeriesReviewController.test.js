@@ -483,6 +483,10 @@ describe('SeriesReviewController', () => {
     sinon.stub(SeriesReviewManager, 'cleanupCatalogEvidenceForSeriesSourceLink').resolves({ catalogsChanged: 1, sourcesRemoved: 1 })
     sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
     sinon.stub(SeriesReviewManager, 'markSeriesSourceLinksImported').resolves(1)
+    sinon.stub(SeriesReviewManager, 'pruneUnsupportedLocalSeriesBooksForCatalog').resolves({
+      removedCount: 0,
+      detail: { catalog: { id: 'catalog-1' }, rows: [] }
+    })
     sinon.stub(SeriesImportBridgeManager, 'importManualSeriesMatches').resolves({ summary: { selected_matches: 1, queue_rows_updated: 2 } })
 
     const req = {
@@ -504,8 +508,10 @@ describe('SeriesReviewController', () => {
     expect(SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary.calledOnceWithExactly('library-1', [{ matchId: 'match-1', includedLibraryItemIds: [] }], { forceRefresh: true })).to.be.true
     expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }])).to.be.true
     expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', { matchIds: ['match-1'] })).to.be.true
+    expect(SeriesReviewManager.pruneUnsupportedLocalSeriesBooksForCatalog.calledOnce).to.be.true
     expect(res.json.calledOnceWithExactly({
       detail: { catalog: { id: 'catalog-1' }, rows: [] },
+      pruneResult: { removedCount: 0, detail: { catalog: { id: 'catalog-1' }, rows: [] } },
       summary: { selected_matches: 1, queue_rows_updated: 2 }
     })).to.be.true
   })

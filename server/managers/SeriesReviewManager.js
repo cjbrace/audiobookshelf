@@ -2434,6 +2434,81 @@ class SeriesReviewManager {
     }
   }
 
+  async pruneUnsupportedLocalSeriesBooksForCatalog(libraryId, catalogId, options = {}) {
+    const detail = options?.detail || (await this.getCatalogDetailForLibrary(libraryId, catalogId))
+    if (!detail?.catalog?.seriesName) {
+      return {
+        removedCount: 0,
+        detail: detail || null
+      }
+    }
+
+    const supportedLibraryItemIds = new Set(
+      (detail.rows || [])
+        .filter((row) => Array.isArray(row?.sourceSupport) && row.sourceSupport.length)
+        .flatMap((row) => (Array.isArray(row?.localBooks) ? row.localBooks : []).map((book) => String(book?.libraryItemId || '').trim()).filter(Boolean))
+    )
+    const unsupportedLocalBooks = (detail.localBooks || []).filter((book) => {
+      const libraryItemId = String(book?.libraryItemId || '').trim()
+      return !!libraryItemId && !supportedLibraryItemIds.has(libraryItemId)
+    })
+
+    if (!unsupportedLocalBooks.length) {
+      return {
+        removedCount: 0,
+        detail
+      }
+    }
+
+    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
+    const localDecisionKey = resolver.getDecisionKey(detail.catalog.seriesName)
+    const matchingSeriesRows = localSeriesGroups.get(localDecisionKey)?.seriesRows || []
+    const removableSeriesIds = new Set(matchingSeriesRows.map((seriesRow) => String(seriesRow?.id || '').trim()).filter(Boolean))
+
+    if (!removableSeriesIds.size) {
+      return {
+        removedCount: 0,
+        detail
+      }
+    }
+
+    let removedCount = 0
+    for (const book of unsupportedLocalBooks) {
+      const libraryItemId = String(book?.libraryItemId || '').trim()
+      if (!libraryItemId) continue
+      const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      if (!libraryItem?.isBook) continue
+
+      const currentSeries = Array.isArray(libraryItem.media?.series) ? libraryItem.media.series : []
+      const seriesEntriesToRemove = currentSeries.filter((seriesEntry) => removableSeriesIds.has(String(seriesEntry?.id || '').trim()))
+      if (!seriesEntriesToRemove.length) continue
+
+      const nextSeries = currentSeries
+        .filter((seriesEntry) => !removableSeriesIds.has(String(seriesEntry?.id || '').trim()))
+        .map((seriesEntry) => ({
+          name: seriesEntry.name,
+          sequence: seriesEntry.bookSeries?.sequence || null
+        }))
+
+      const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(nextSeries, libraryId)
+      await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
+      removedCount += seriesEntriesToRemove.length
+    }
+
+    if (!removedCount) {
+      return {
+        removedCount: 0,
+        detail
+      }
+    }
+
+    return {
+      removedCount,
+      detail: await this.getCatalogDetailForLibrary(libraryId, catalogId)
+    }
+  }
+
   async refreshLocalSeriesMatchesForLibrary(libraryId, matchIds = [], options = {}) {
     const allowedIds = Array.isArray(matchIds) && matchIds.length ? new Set(matchIds.map((value) => String(value || '').trim()).filter(Boolean)) : null
     const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
@@ -3013,7 +3088,7 @@ class SeriesReviewManager {
       if (slot.choices.length > 1 && !selectedChoice) {
         slot.status = 'disputed'
       } else if (slot.isDecimal) {
-        slot.status = slot.sourceCovered ? 'covered' : 'decimal'
+        slot.status = slot.locallyCovered ? 'covered' : 'decimal'
       } else if (!slot.locallyCovered) {
         slot.status = 'missing'
       } else {

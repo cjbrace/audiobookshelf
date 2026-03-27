@@ -2365,6 +2365,7 @@ export default {
     },
     canFindCatalogCandidates(row) {
       if (!row) return false
+      if (row.isDecimal) return true
       if (row.rowType === 'unsequenced' || row.rowType === 'omnibus') return true
       return row.status === 'missing' || row.status === 'disputed' || row.status === 'decimal'
     },
