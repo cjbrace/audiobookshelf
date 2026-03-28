@@ -1676,7 +1676,7 @@ class SeriesReviewManager {
     const snapshot = this.getEffectiveEvidenceSnapshot(evidenceSnapshot, linkRow?.evidenceSnapshot)
     const snapshotLinkedBookCount = this.getSeriesSourceLinkBookCount(snapshot)
     const storedLinkedBookCount = Number.isFinite(Number(linkRow?.linkedBookCount)) ? Number(linkRow.linkedBookCount) : 0
-    const linkedBookCount = snapshotLinkedBookCount || storedLinkedBookCount
+    const linkedBookCount = Math.max(snapshotLinkedBookCount, storedLinkedBookCount)
     const totalBookCount = Array.isArray(localBooks) ? this.getCoverageEligibleLocalBookCount(localBooks) : Number.isFinite(Number(linkRow?.totalBookCount)) ? Number(linkRow.totalBookCount) : 0
     if (totalBookCount > 0 && linkedBookCount >= totalBookCount) return 'linked'
     return 'partial'
@@ -2645,33 +2645,6 @@ class SeriesReviewManager {
       libraryId,
       [...localSeriesGroups.values()].flatMap((group) => (group.seriesRows || []).map((series) => series.id))
     )
-    const sourceDecisionMap = this.buildCatalogSourceDecisionMap(allCatalogs, resolver)
-    const localMatchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
-    const localMatchSummaryByCatalogId = new Map()
-    const localMatchSummaryByDecisionKey = new Map()
-    const activeLinkKeys = new Set()
-    for (const matchRow of localMatchRows) {
-      const importStatus = String(matchRow.importStatus || 'imported').trim().toLowerCase()
-      const coverageStatus = String(matchRow.coverageStatus || '').trim().toLowerCase()
-      const normalizedSourceUrl = this.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')
-      if (normalizedSourceUrl) activeLinkKeys.add(`${matchRow.localDecisionKey}::${normalizedSourceUrl}`)
-      const catalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl)
-      const summaryTarget = catalogId
-        ? localMatchSummaryByCatalogId
-        : localMatchSummaryByDecisionKey
-      const summaryKey = catalogId || matchRow.localDecisionKey
-      if (!summaryKey) continue
-      const summary = summaryTarget.get(summaryKey) || { hasPendingLink: false, hasPartialLink: false }
-      if (importStatus === 'pending') summary.hasPendingLink = true
-      if (coverageStatus === 'partial') summary.hasPartialLink = true
-      summaryTarget.set(summaryKey, summary)
-    }
-    const resolvedLocalDecisionKeys = new Set(
-      localMatchRows
-        .filter((matchRow) => this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl))
-        .map((matchRow) => matchRow.localDecisionKey)
-    )
-
     const collectLocalBooksForSeriesRows = (seriesRows = []) => {
       const localBooks = []
       const seen = new Set()
@@ -2697,6 +2670,34 @@ class SeriesReviewManager {
         return a.title.localeCompare(b.title)
       })
     }
+    const sourceDecisionMap = this.buildCatalogSourceDecisionMap(allCatalogs, resolver)
+    const localMatchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, { activeOnly: true })
+    const localMatchSummaryByCatalogId = new Map()
+    const localMatchSummaryByDecisionKey = new Map()
+    const activeLinkKeys = new Set()
+    for (const matchRow of localMatchRows) {
+      const importStatus = String(matchRow.importStatus || 'imported').trim().toLowerCase()
+      const group = localSeriesGroups.get(matchRow.localDecisionKey)
+      const localBooks = group?.seriesName ? collectLocalBooksForSeriesRows(group.seriesRows) : []
+      const coverageStatus = this.getSeriesSourceLinkCoverageStatus(matchRow, localBooks, matchRow.evidenceSnapshot).trim().toLowerCase()
+      const normalizedSourceUrl = this.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')
+      if (normalizedSourceUrl) activeLinkKeys.add(`${matchRow.localDecisionKey}::${normalizedSourceUrl}`)
+      const catalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl)
+      const summaryTarget = catalogId
+        ? localMatchSummaryByCatalogId
+        : localMatchSummaryByDecisionKey
+      const summaryKey = catalogId || matchRow.localDecisionKey
+      if (!summaryKey) continue
+      const summary = summaryTarget.get(summaryKey) || { hasPendingLink: false, hasPartialLink: false }
+      if (importStatus === 'pending') summary.hasPendingLink = true
+      if (coverageStatus === 'partial') summary.hasPartialLink = true
+      summaryTarget.set(summaryKey, summary)
+    }
+    const resolvedLocalDecisionKeys = new Set(
+      localMatchRows
+        .filter((matchRow) => this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl))
+        .map((matchRow) => matchRow.localDecisionKey)
+    )
 
     const detailSummaries = []
     const catalogDecisionKeys = new Set(

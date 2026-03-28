@@ -1518,6 +1518,58 @@ describe('SeriesReviewManager', () => {
     expect(linkedCatalog.hasPartialLink).to.equal(true)
   })
 
+  it('recomputes left-list partial flags from current local coverage instead of stale stored saved-link state', async () => {
+    await createBookFixture({
+      title: 'Dune',
+      currentSeries: [{ name: 'Dune Chronicles', sequence: '1' }],
+      authors: ['Frank Herbert']
+    })
+    await createBookFixture({
+      title: 'Dune Messiah',
+      currentSeries: [{ name: 'Dune Chronicles', sequence: '2' }],
+      authors: ['Frank Herbert']
+    })
+
+    const localCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const localCatalog = localCatalogs.find((catalog) => catalog.seriesName === 'Dune Chronicles')
+    await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, localCatalog.id, {
+      source: 'fictiondb',
+      sourceSeriesName: 'Dune Chronicles',
+      sourceAuthor: 'Frank Herbert',
+      sourceUrl: 'https://www.fictiondb.com/series/dune-chronicles-frank-herbert~3735.htm',
+      evidenceSnapshot: {
+        sourceSeriesName: 'Dune Chronicles',
+        sourceAuthor: 'Frank Herbert',
+        sourceUrl: 'https://www.fictiondb.com/series/dune-chronicles-frank-herbert~3735.htm',
+        matchingBooks: [
+          { localTitle: 'Dune', sourceTitle: 'Dune', sourceSequence: '1' },
+          { localTitle: 'Dune Messiah', sourceTitle: 'Dune Messiah', sourceSequence: '2' }
+        ],
+        seriesBooks: [
+          { title: 'Dune', sequence: '1' },
+          { title: 'Dune Messiah', sequence: '2' }
+        ]
+      }
+    })
+
+    const matchRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
+      where: {
+        libraryId: library.id,
+        localDecisionKey: 'dune chronicles',
+        sourceSeriesUrl: 'https://www.fictiondb.com/series/dune-chronicles-frank-herbert~3735.htm'
+      }
+    })
+    matchRow.coverageStatus = 'partial'
+    matchRow.linkedBookCount = 2
+    matchRow.totalBookCount = 0
+    matchRow.importStatus = 'imported'
+    await matchRow.save()
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const catalog = catalogs.find((entry) => entry.seriesName === 'Dune Chronicles')
+    expect(catalog.hasPartialLink).to.equal(false)
+  })
+
   it('recomputes saved-link coverage from imported catalog rows when an imported link becomes complete', async () => {
     await createBookFixture({
       title: 'Android X',
