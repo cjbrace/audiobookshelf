@@ -970,9 +970,16 @@
                       >
                         Lookup Sources
                       </ui-btn>
+                      <ui-btn
+                        small
+                        color="bg-bg border border-white/20"
+                        @click="catalogManualPasteExpanded = !catalogManualPasteExpanded"
+                      >
+                        FF
+                      </ui-btn>
                     </div>
 
-                    <div class="rounded border border-white/10 bg-black/15 p-3 space-y-3">
+                    <div v-if="catalogManualPasteExpanded" class="rounded border border-white/10 bg-black/15 p-3 space-y-3">
                       <div class="space-y-1">
                         <p class="text-sm uppercase tracking-wide text-gray-400">Fantastic Fiction Paste</p>
                         <p class="text-sm text-gray-300">
@@ -1488,6 +1495,7 @@ export default {
       catalogManualLookupLoading: false,
       catalogManualLookupSavingKey: '',
       catalogManualLookupError: '',
+      catalogManualPasteExpanded: false,
       catalogManualPasteUrl: '',
       catalogManualPasteText: '',
       catalogLocalMatchRebuildingKey: '',
@@ -2686,6 +2694,7 @@ export default {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
+        this.catalogManualPasteExpanded = false
         this.catalogManualPasteUrl = ''
         this.catalogManualPasteText = ''
         return
@@ -2701,6 +2710,7 @@ export default {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
+        this.catalogManualPasteExpanded = false
         this.catalogManualPasteUrl = ''
         this.catalogManualPasteText = ''
       }
