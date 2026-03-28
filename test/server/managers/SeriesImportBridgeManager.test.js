@@ -99,4 +99,39 @@ describe('SeriesImportBridgeManager', () => {
     expect(capturedConfig).to.be.an('object')
     expect(capturedConfig.timeout).to.equal(180000)
   })
+
+  it('uses a longer timeout for large manual imports', async () => {
+    let capturedConfig = null
+    const manager = loadManagerWithAxios(async (config) => {
+      capturedConfig = config
+      return { status: 200, data: { summary: { selected_matches: 25, queue_rows_updated: 25 } } }
+    })
+
+    await manager.importManualSeriesMatches('library-1', [{ matchId: 'match-1' }], { refreshSourceData: false })
+
+    expect(capturedConfig).to.be.an('object')
+    expect(capturedConfig.timeout).to.equal(600000)
+    expect(capturedConfig.data.refresh_source_data).to.equal(false)
+  })
+
+  it('returns a timeout-specific error when the companion does not finish in time', async () => {
+    const manager = loadManagerWithAxios(async () => {
+      const error = new Error('timeout of 600000ms exceeded')
+      error.code = 'ECONNABORTED'
+      throw error
+    })
+
+    let caught = null
+    try {
+      await manager.importManualSeriesMatches('library-1', [{ matchId: 'match-1' }], { refreshSourceData: true })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).to.be.an('error')
+    expect(caught.statusCode).to.equal(503)
+    expect(caught.message).to.equal('Series import timed out after 600s before the companion finished processing the request.')
+    expect(caught.cause).to.be.an('error')
+    expect(caught.cause.code).to.equal('ECONNABORTED')
+  })
 })

@@ -224,7 +224,7 @@ class SeriesReviewController {
         })
       }
 
-      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches, { refreshSourceData: true })
       await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, { matchIds: [matchRow.id] })
       const detailAfterImport = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
       const pruneResult = await SeriesReviewManager.pruneUnsupportedLocalSeriesBooksForCatalog(req.library.id, req.params.catalogId, {
@@ -293,7 +293,7 @@ class SeriesReviewController {
           }
         })
       }
-      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches, { refreshSourceData: false })
       await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, {
         matchIds: matches.map((match) => match.matchId)
       })
@@ -387,7 +387,7 @@ class SeriesReviewController {
           }))
         }
       ]
-      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches)
+      const result = await SeriesImportBridgeManager.importManualSeriesMatches(req.library.id, matches, { refreshSourceData: true })
       await SeriesReviewManager.markSeriesSourceLinksImported(req.library.id, {
         localDecisionKey: SeriesReviewManager.normalizeDecisionKey(String(catalogDetail.catalog?.seriesName || '').trim()),
         sourceSeriesUrl: selectedResult.sourceSeriesUrl || selectedResult.sourceUrl || ''

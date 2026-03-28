@@ -560,7 +560,7 @@ describe('SeriesReviewController', () => {
       sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
       evidenceSnapshot: { sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU' }
     }, 'local-series:android-x')).to.be.true
-    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnce).to.be.true
+    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', sinon.match.array, { refreshSourceData: true })).to.be.true
     expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', {
       localDecisionKey: 'android x',
       sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU'
@@ -607,7 +607,7 @@ describe('SeriesReviewController', () => {
     expect(SeriesReviewManager.cleanupImportedArtifactsForSeriesSourceLink.calledOnce).to.be.true
     expect(SeriesReviewManager.cleanupCatalogEvidenceForSeriesSourceLink.calledOnce).to.be.true
     expect(SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary.calledOnceWithExactly('library-1', [{ matchId: 'match-1', includedLibraryItemIds: [] }], { forceRefresh: true })).to.be.true
-    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }])).to.be.true
+    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }], { refreshSourceData: true })).to.be.true
     expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', { matchIds: ['match-1'] })).to.be.true
     expect(SeriesReviewManager.pruneUnsupportedLocalSeriesBooksForCatalog.calledOnce).to.be.true
     expect(res.json.calledOnceWithExactly({
@@ -667,7 +667,7 @@ describe('SeriesReviewController', () => {
     await SeriesReviewController.importLocalCatalogMatches(req, res)
 
     expect(SeriesReviewManager.buildLocalSeriesMatchImportPayloadForLibrary.calledOnceWithExactly('library-1', [{ matchId: 'match-1', includedLibraryItemIds: ['item-1'] }])).to.be.true
-    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }])).to.be.true
+    expect(SeriesImportBridgeManager.importManualSeriesMatches.calledOnceWithExactly('library-1', [{ matchId: 'match-1' }], { refreshSourceData: false })).to.be.true
     expect(SeriesReviewManager.markSeriesSourceLinksImported.calledOnceWithExactly('library-1', { matchIds: ['match-1'] })).to.be.true
     expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1 } })).to.be.true
   })

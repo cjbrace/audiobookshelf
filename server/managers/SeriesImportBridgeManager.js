@@ -34,6 +34,11 @@ class SeriesImportBridgeManager {
     return 'Series import service is unavailable. Configure SERIES_IMPORT_TOOL_URL to a reachable companion service.'
   }
 
+  getTimeoutMessage(timeoutMs) {
+    const seconds = Math.max(1, Math.round(Number(timeoutMs || 0) / 1000))
+    return `Series import timed out after ${seconds}s before the companion finished processing the request.`
+  }
+
   shouldUseCachedBaseUrl() {
     return !!this.cachedBaseUrl && Date.now() - this.cachedAt <= this.cacheTtlMs
   }
@@ -77,7 +82,9 @@ class SeriesImportBridgeManager {
       }
     }
 
-    const message = this.getUnavailableMessage(candidateBaseUrls)
+    const message = lastNetworkError?.code === 'ECONNABORTED' || /timeout/i.test(String(lastNetworkError?.message || ''))
+      ? this.getTimeoutMessage(timeout)
+      : this.getUnavailableMessage(candidateBaseUrls)
     const error = new Error(message)
     error.statusCode = 503
     error.cause = lastNetworkError || undefined
@@ -110,13 +117,14 @@ class SeriesImportBridgeManager {
     })
   }
 
-  async importManualSeriesMatches(libraryId, matches) {
+  async importManualSeriesMatches(libraryId, matches, options = {}) {
     return this.request('post', '/api/series-import/manual-import', {
       data: {
         library_id: libraryId,
-        matches
+        matches,
+        refresh_source_data: !!options.refreshSourceData
       },
-      timeoutMs: 120000
+      timeoutMs: 600000
     })
   }
 }
