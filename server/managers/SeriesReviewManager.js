@@ -1547,6 +1547,9 @@ class SeriesReviewManager {
     if (Array.isArray(options?.sourceSeriesUrls) && options.sourceSeriesUrls.length) {
       where.sourceSeriesUrl = { [Op.in]: options.sourceSeriesUrls }
     }
+    if (options?.importStatus) {
+      where.importStatus = String(options.importStatus || '').trim().toLowerCase() === 'pending' ? 'pending' : 'imported'
+    }
     if (options?.activeOnly === true) where.isActive = true
     if (options?.activeOnly === false) where.isActive = false
     return Database.seriesReviewSeriesSourceLinkModel.findAll({
@@ -1828,22 +1831,52 @@ class SeriesReviewManager {
   }
 
   async getLocalSeriesMatchesForLibrary(libraryId, options = {}) {
-    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
-    const localSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
-    const catalogs = options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } }))
-    const sourceDecisionMap = options?.sourceDecisionMap || this.buildCatalogSourceDecisionMap(catalogs, resolver)
     const matchRows = await this.getSeriesSourceLinkRowsForLibrary(libraryId, {
       activeOnly: true,
-      localDecisionKey: options?.localDecisionKey || null
+      localDecisionKey: options?.localDecisionKey || null,
+      importStatus: options?.pendingOnly ? 'pending' : null
     })
+    if (!matchRows.length) return []
+
+    const resolver = options?.resolver || (await this.getSeriesNameControlResolverForLibrary(libraryId))
+    const allLocalSeriesGroups = options?.localSeriesGroups || (await this.getLocalSeriesGroupsForLibrary(libraryId, resolver))
+    const relevantDecisionKeys = new Set(matchRows.map((matchRow) => String(matchRow?.localDecisionKey || '').trim()).filter(Boolean))
+    const localSeriesGroups = new Map()
+    const relevantSeriesIds = []
+    allLocalSeriesGroups.forEach((group, decisionKey) => {
+      if (!relevantDecisionKeys.has(String(decisionKey || '').trim())) return
+      localSeriesGroups.set(decisionKey, group)
+      ;(group?.seriesRows || []).forEach((seriesRow) => {
+        const seriesId = String(seriesRow?.id || '').trim()
+        if (seriesId) relevantSeriesIds.push(seriesId)
+      })
+    })
+
+    const shouldResolveCatalogs = !options?.includeResolved
+    const catalogs = shouldResolveCatalogs ? options?.catalogs || (await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })) : []
+    const sourceDecisionMap = shouldResolveCatalogs ? options?.sourceDecisionMap || this.buildCatalogSourceDecisionMap(catalogs, resolver) : null
+    const preloadedSeriesBooksBySeriesId =
+      options?.preloadedSeriesBooksBySeriesId instanceof Map
+        ? options.preloadedSeriesBooksBySeriesId
+        : await this.getSeriesBooksBySeriesIds(libraryId, relevantSeriesIds)
+    const localBooksCache = options?.localBooksCache instanceof Map ? options.localBooksCache : new Map()
+    const expandedSeriesCache = options?.expandedSeriesCache instanceof Map ? options.expandedSeriesCache : new Map()
     const results = []
 
     for (const matchRow of matchRows) {
       const group = localSeriesGroups.get(matchRow.localDecisionKey)
       const localBooks = group?.seriesName
-        ? await this.getLocalCatalogBooks(libraryId, group.seriesName, { resolver, matchingSeries: group.seriesRows })
+        ? await this.getLocalCatalogBooks(libraryId, group.seriesName, {
+            resolver,
+            matchingSeries: group.seriesRows,
+            localBooksCache,
+            expandedSeriesCache,
+            preloadedSeriesBooksBySeriesId
+          })
         : []
-      const resolvedCatalogId = this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl)
+      const resolvedCatalogId = shouldResolveCatalogs
+        ? this.resolveCatalogIdForDecisionKeyAndSourceUrl(sourceDecisionMap, matchRow.localDecisionKey, matchRow.sourceSeriesUrl)
+        : null
       const coverageOverride = options?.coverageBySourceUrl instanceof Map ? options.coverageBySourceUrl.get(this.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')) || null : null
       if (options?.pendingOnly && String(matchRow.importStatus || 'imported').trim().toLowerCase() !== 'pending') continue
       if (!options?.includeResolved && resolvedCatalogId) continue
@@ -2082,21 +2115,42 @@ class SeriesReviewManager {
   }
 
   async buildLocalSeriesMatchImportPayloadForLibrary(libraryId, selections, options = {}) {
-    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
-    const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
     const forceRefresh = !!options?.forceRefresh
     const requestedSelections = Array.isArray(selections) ? selections : []
+    const requestedMatchIds = [...new Set(requestedSelections.map((selection) => String(selection?.matchId || '').trim()).filter(Boolean))]
+    if (!requestedMatchIds.length) return []
+
+    const requestedRows = await Database.seriesReviewSeriesSourceLinkModel.findAll({
+      where: {
+        id: {
+          [Op.in]: requestedMatchIds
+        },
+        libraryId
+      }
+    })
+    const requestedRowsById = new Map(requestedRows.map((row) => [String(row.id || '').trim(), row]))
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    const allLocalSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+    const relevantDecisionKeys = new Set(requestedRows.map((row) => String(row?.localDecisionKey || '').trim()).filter(Boolean))
+    const localSeriesGroups = new Map()
+    const relevantSeriesIds = []
+    allLocalSeriesGroups.forEach((group, decisionKey) => {
+      if (!relevantDecisionKeys.has(String(decisionKey || '').trim())) return
+      localSeriesGroups.set(decisionKey, group)
+      ;(group?.seriesRows || []).forEach((seriesRow) => {
+        const seriesId = String(seriesRow?.id || '').trim()
+        if (seriesId) relevantSeriesIds.push(seriesId)
+      })
+    })
+    const preloadedSeriesBooksBySeriesId = await this.getSeriesBooksBySeriesIds(libraryId, relevantSeriesIds)
+    const localBooksCache = new Map()
+    const expandedSeriesCache = new Map()
     const matches = []
 
     for (const selection of requestedSelections) {
       const matchId = String(selection?.matchId || '').trim()
       if (!matchId) continue
-      const matchRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
-        where: {
-          id: matchId,
-          libraryId
-        }
-      })
+      const matchRow = requestedRowsById.get(matchId)
       if (!matchRow || matchRow.isActive === false) {
         throw new Error('Saved local source link was not found')
       }
@@ -2107,7 +2161,10 @@ class SeriesReviewManager {
       const localBooks = group?.seriesName
         ? await this.getLocalCatalogBooks(libraryId, group.seriesName, {
             resolver,
-            matchingSeries: group.seriesRows
+            matchingSeries: group.seriesRows,
+            localBooksCache,
+            expandedSeriesCache,
+            preloadedSeriesBooksBySeriesId
           })
         : []
       const includedIds = Array.isArray(selection?.includedLibraryItemIds) && selection.includedLibraryItemIds.length

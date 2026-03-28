@@ -2916,6 +2916,11 @@ export default {
         this.$toast.success(
           `Rebuilt ${summary.selected_matches || 0} link${(summary.selected_matches || 0) === 1 ? '' : 's'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
         )
+        await Promise.all([
+          this.loadCatalogs({ preferCache: false }),
+          this.loadQueue(),
+          this.loadLocalCatalogMatches({ silent: true })
+        ])
       } catch (error) {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to rebuild the saved source link')
       } finally {
@@ -2945,9 +2950,11 @@ export default {
         this.$toast.success(
           `Imported ${summary.selected_matches || matches.length} match${(summary.selected_matches || matches.length) === 1 ? '' : 'es'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
         )
-        await this.loadCatalogs({ preferCache: false })
-        await this.loadQueue()
-        await this.loadLocalCatalogMatches({ silent: true })
+        await Promise.all([
+          this.loadCatalogs({ preferCache: false }),
+          this.loadQueue(),
+          this.loadLocalCatalogMatches({ silent: true })
+        ])
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to import locally matched series')
       } finally {
@@ -2967,9 +2974,11 @@ export default {
         this.$toast.success(
           `Refreshed ${summary.selected_matches || 0} match${(summary.selected_matches || 0) === 1 ? '' : 'es'}; queued ${summary.queue_rows_updated || 0} review row${(summary.queue_rows_updated || 0) === 1 ? '' : 's'}`
         )
-        await this.loadCatalogs({ preferCache: false })
-        await this.loadQueue()
-        await this.loadLocalCatalogMatches({ silent: true })
+        await Promise.all([
+          this.loadCatalogs({ preferCache: false }),
+          this.loadQueue(),
+          this.loadLocalCatalogMatches({ silent: true })
+        ])
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to refresh saved links')
       } finally {

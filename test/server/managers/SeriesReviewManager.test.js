@@ -1112,7 +1112,7 @@ describe('SeriesReviewManager', () => {
       pendingOnly: true
     })
     expect(pendingMatches).to.have.length(1)
-    expect(pendingMatches[0].resolvedCatalogId).to.equal(importResult.catalogs[0].id)
+    expect(pendingMatches[0].resolvedCatalogId).to.equal(null)
     expect(pendingMatches[0].pendingImport).to.equal(true)
 
     await SeriesReviewManager.markSeriesSourceLinksImported(library.id, {
