@@ -3103,6 +3103,7 @@ class SeriesReviewManager {
     return {
       seriesName: catalog.seriesName,
       seriesNameNormalized: this.normalizeDecisionKey(catalog.seriesName),
+      catalogId: catalog.id,
       expectedTitle,
       expectedTitleNormalized: this.normalizeSearchText(expectedTitle),
       expectedTitleTokens: this.tokenizeSearchText(expectedTitle),
@@ -3111,6 +3112,8 @@ class SeriesReviewManager {
       expectedSeriesTokens: this.tokenizeSearchText(catalog.seriesName),
       slot: rowKey,
       rowType: slotDetail?.rowType || 'slot',
+      rowKey,
+      entryKey: String(slotDetail?.entryKey || primaryChoice?.entryKey || '').trim() || null,
       choice: primaryChoice || {
         title: expectedTitle,
         authors,
@@ -3120,12 +3123,56 @@ class SeriesReviewManager {
     }
   }
 
+  buildCatalogManualLocalBookMaps(suggestions = [], localBookMap = new Map(), catalogId = '') {
+    const entryKeyMap = new Map()
+    const rowKeyMap = new Map()
+    const addBook = (targetMap, key, payload) => {
+      if (!key || !payload?.libraryItemId) return
+      if (!targetMap.has(key)) targetMap.set(key, [])
+      const bucket = targetMap.get(key)
+      if (!bucket.some((candidate) => candidate.libraryItemId === payload.libraryItemId)) bucket.push(payload)
+    }
+
+    ;(Array.isArray(suggestions) ? suggestions : []).forEach((suggestion) => {
+      const state = String(suggestion?.state || '').trim().toLowerCase()
+      if (!['linked', 'applied', 'manual_override'].includes(state)) return
+
+      const book = localBookMap.get(String(suggestion?.libraryItemId || '').trim())
+      if (!book) return
+
+      ;(Array.isArray(suggestion?.contributions) ? suggestion.contributions : []).forEach((contribution) => {
+        if (String(contribution?.source || '').trim().toLowerCase() !== 'catalog') return
+        const rawEvidence =
+          contribution?.rawEvidence && typeof contribution.rawEvidence === 'object' && !Array.isArray(contribution.rawEvidence)
+            ? contribution.rawEvidence
+            : null
+        if (!rawEvidence) return
+        if (catalogId && String(rawEvidence.catalogId || '').trim() !== String(catalogId || '').trim()) return
+
+        const payload = {
+          ...book,
+          manualCandidateSuggestionId: suggestion.id,
+          manualCandidateLinked: true
+        }
+        addBook(entryKeyMap, String(rawEvidence.entryKey || '').trim(), payload)
+        addBook(rowKeyMap, String(rawEvidence.rowKey || '').trim(), payload)
+      })
+    })
+
+    return {
+      entryKeyMap,
+      rowKeyMap
+    }
+  }
+
   finalizeCatalogSlots(slotMap, selectionBySlot, localBooks, entries = [], options = {}) {
     const allowLocalExpectedTitleFallback =
       typeof options?.allowLocalExpectedTitleFallback === 'boolean'
         ? options.allowLocalExpectedTitleFallback
         : !Array.isArray(entries) || !entries.length
     const titleKeysFor = (value) => this.getCatalogEntryTitleKeys(value, options?.seriesName || '')
+    const manualEntryBooksByEntryKey = options?.manualEntryBooksByEntryKey instanceof Map ? options.manualEntryBooksByEntryKey : new Map()
+    const manualEntryBooksByRowKey = options?.manualEntryBooksByRowKey instanceof Map ? options.manualEntryBooksByRowKey : new Map()
     const unsequencedEntrySourceSupportByTitleKey = new Map()
     const omnibusLocalBooksByTitleKey = new Map()
     const buildLocalBookPayload = (book) => ({
@@ -3133,8 +3180,31 @@ class SeriesReviewManager {
       title: book.title,
       relPath: book.relPath,
       sequence: book.sequence,
-      authors: Array.isArray(book?.authors) ? book.authors : []
+      authors: Array.isArray(book?.authors) ? book.authors : [],
+      manualCandidateSuggestionId: book?.manualCandidateSuggestionId || null,
+      manualCandidateLinked: !!book?.manualCandidateLinked
     })
+    const mergeLocalBooks = (...groups) => {
+      const merged = []
+      const indexById = new Map()
+      groups.flat().forEach((book) => {
+        const payload = buildLocalBookPayload(book)
+        const key = String(payload.libraryItemId || '').trim()
+        if (!key) return
+        const existingIndex = indexById.get(key)
+        if (existingIndex === undefined) {
+          indexById.set(key, merged.length)
+          merged.push(payload)
+          return
+        }
+
+        if (payload.manualCandidateSuggestionId && !merged[existingIndex].manualCandidateSuggestionId) {
+          merged[existingIndex].manualCandidateSuggestionId = payload.manualCandidateSuggestionId
+          merged[existingIndex].manualCandidateLinked = true
+        }
+      })
+      return merged
+    }
     const pushLocalBookByTitleKey = (targetMap, book) => {
       titleKeysFor(book?.title).forEach((key) => {
         if (!key) return
@@ -3254,10 +3324,12 @@ class SeriesReviewManager {
         const keys = titleKeysFor(entry.title)
         return keys.length && !keys.some((key) => coveredTitleKeys.has(key))
       })
-      .map((entry) => ({
-        rowKey: `unsequenced:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
+      .map((entry) => {
+        const rowKey = `unsequenced:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`
+        return {
+        rowKey,
         rowType: 'unsequenced',
-        slot: `unsequenced:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
+        slot: rowKey,
         entryKey: entry.entryKey,
         title: entry.title,
         expectedTitle: entry.title,
@@ -3267,13 +3339,15 @@ class SeriesReviewManager {
         publishedDate: entry.publishedDate || null,
         sequenceLabel: entry.sequenceLabel || null,
         sourceSupport: this.buildCatalogSourceSupport(entry.sources),
-        localBooks: titleKeysFor(entry.title).flatMap((key) => unsequencedLocalBooksByTitle.get(key) || []).filter((book, index, list) => {
-          return list.findIndex((candidate) => candidate.libraryItemId === book.libraryItemId) === index
-        }),
+        localBooks: mergeLocalBooks(
+          titleKeysFor(entry.title).flatMap((key) => unsequencedLocalBooksByTitle.get(key) || []),
+          manualEntryBooksByEntryKey.get(entry.entryKey) || [],
+          manualEntryBooksByRowKey.get(rowKey) || []
+        ),
         choices: [],
         selectedEntryKey: null,
         status: 'unsequenced'
-      }))
+      }} )
       .sort((a, b) => a.title.localeCompare(b.title))
     const matchedUnsequencedLocalIds = new Set(unsequencedSourceEntries.flatMap((row) => (Array.isArray(row.localBooks) ? row.localBooks : []).map((book) => book.libraryItemId)))
     const localOnlyUnsequencedRows = unsequencedBooks
@@ -3302,8 +3376,10 @@ class SeriesReviewManager {
       .sort((a, b) => a.title.localeCompare(b.title))
     const omnibusRows = entries
       .filter((entry) => entry.isOmnibus)
-      .map((entry) => ({
-        rowKey: `omnibus:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`,
+      .map((entry) => {
+        const rowKey = `omnibus:${this.normalizeKeyPart(entry.entryKey).replace(/\s+/g, '')}`
+        return {
+        rowKey,
         rowType: 'omnibus',
         slot: entry.sequenceLabel || 'omnibus',
         entryKey: entry.entryKey,
@@ -3315,13 +3391,15 @@ class SeriesReviewManager {
         publishedDate: entry.publishedDate || null,
         sequenceLabel: entry.sequenceLabel || null,
         sourceSupport: this.buildCatalogSourceSupport(entry.sources),
-        localBooks: titleKeysFor(entry.title).flatMap((key) => omnibusLocalBooksByTitleKey.get(key) || []).filter((book, index, list) => {
-          return list.findIndex((candidate) => candidate.libraryItemId === book.libraryItemId) === index
-        }),
+        localBooks: mergeLocalBooks(
+          titleKeysFor(entry.title).flatMap((key) => omnibusLocalBooksByTitleKey.get(key) || []),
+          manualEntryBooksByEntryKey.get(entry.entryKey) || [],
+          manualEntryBooksByRowKey.get(rowKey) || []
+        ),
         choices: [],
         selectedEntryKey: null,
         status: 'omnibus'
-      }))
+      }} )
       .sort((a, b) => String(a.sequenceLabel || '').localeCompare(String(b.sequenceLabel || ''), undefined, { numeric: true }) || a.title.localeCompare(b.title))
     const matchedOmnibusLocalIds = new Set(omnibusRows.flatMap((row) => (Array.isArray(row.localBooks) ? row.localBooks : []).map((book) => book.libraryItemId)))
     const localOnlyOmnibusRows = (Array.isArray(localBooks) ? localBooks : [])
@@ -3437,8 +3515,28 @@ class SeriesReviewManager {
       })
     })
 
+    const localLibraryItemIds = localBooks.map((book) => String(book.libraryItemId || '').trim()).filter(Boolean)
+    const localBookMap = new Map(localBooks.map((book) => [String(book.libraryItemId || '').trim(), book]))
+    const manualLinkSuggestions = localLibraryItemIds.length
+      ? await Database.seriesReviewSuggestionModel.findAll({
+          where: {
+            libraryId,
+            libraryItemId: {
+              [Op.in]: localLibraryItemIds
+            },
+            isActive: true,
+            state: {
+              [Op.in]: ['linked', 'applied', 'manual_override']
+            }
+          }
+        })
+      : []
+    const manualLocalBookMaps = this.buildCatalogManualLocalBookMaps(manualLinkSuggestions, localBookMap, catalog.id)
+
     const finalized = this.finalizeCatalogSlots(slotMap, catalog.selectionBySlot, localBooks, entries, {
-      seriesName: catalog.seriesName
+      seriesName: catalog.seriesName,
+      manualEntryBooksByEntryKey: manualLocalBookMaps.entryKeyMap,
+      manualEntryBooksByRowKey: manualLocalBookMaps.rowKeyMap
     })
     const coverageBySourceUrl = this.buildCatalogSourceCoverageBySourceUrl(finalized.rows, localBooks)
     let localSeriesMatches = []
@@ -3652,6 +3750,9 @@ class SeriesReviewManager {
       catalog: detail.catalog,
       slot: normalizedSlot,
       rowType: slotDetail.rowType || 'slot',
+      rowKey: String(slotDetail.rowKey || slotDetail.slot || '').trim(),
+      entryKey: String(slotDetail.entryKey || '').trim() || null,
+      catalogId: detail.catalog.id,
       expectedTitle: context.expectedTitle,
       expectedAuthors: context.choice.authors || [],
       expectedSeriesName: detail.catalog.seriesName,
@@ -3679,7 +3780,15 @@ class SeriesReviewManager {
             seriesName: searchResult.expectedSeriesName,
             sequence: searchResult.rowType === 'unsequenced' ? null : searchResult.slot,
             confidence: Number(Math.min(candidate.score / 20, 0.99).toFixed(2)),
-            notes: `Task 5 candidate for ${searchResult.rowType === 'unsequenced' ? 'unsequenced entry' : `slot ${searchResult.slot}`}: ${searchResult.expectedTitle} (${strongestReason})`
+            notes: `Task 5 candidate for ${searchResult.rowType === 'unsequenced' ? 'unsequenced entry' : `slot ${searchResult.slot}`}: ${searchResult.expectedTitle} (${strongestReason})`,
+            rawEvidence: {
+              catalogId: searchResult.catalogId,
+              rowType: searchResult.rowType || 'slot',
+              rowKey: searchResult.rowKey || searchResult.slot,
+              entryKey: searchResult.entryKey || null,
+              expectedTitle: searchResult.expectedTitle,
+              expectedSeriesName: searchResult.expectedSeriesName
+            }
           }
         ]
       }

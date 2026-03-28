@@ -1291,9 +1291,21 @@
                                   :key="getCatalogRowKey(row) + ':' + book.libraryItemId"
                                   class="rounded border border-white/10 bg-black/15 px-3 py-2"
                                 >
-                                  <nuxt-link :to="`/item/${book.libraryItemId}`" target="_blank" class="block font-semibold text-white hover:underline">
-                                    {{ book.title }}
-                                  </nuxt-link>
+                                  <div class="flex items-start gap-2">
+                                    <nuxt-link :to="`/item/${book.libraryItemId}`" target="_blank" class="block grow font-semibold text-white hover:underline">
+                                      {{ book.title }}
+                                    </nuxt-link>
+                                    <ui-btn
+                                      v-if="book.manualCandidateSuggestionId"
+                                      small
+                                      color="bg-red-500/80"
+                                      class="min-w-[2rem] justify-center px-2"
+                                      :loading="catalogLocalBookUnlinkingKey === `${getCatalogRowKey(row)}:${book.libraryItemId}`"
+                                      @click="unlinkCatalogLocalBook(row, book)"
+                                    >
+                                      X
+                                    </ui-btn>
+                                  </div>
                                   <p v-if="formatCatalogLocalSeries(book)" class="text-sm text-gray-300 mt-1">{{ formatCatalogLocalSeries(book) }}</p>
                                   <p v-if="book.relPath" class="text-xs text-gray-500 mt-1 break-all">{{ book.relPath }}</p>
                                 </div>
@@ -1477,6 +1489,7 @@ export default {
       catalogChoiceLoadingKey: '',
       catalogCandidateSearchLoadingKey: '',
       catalogCandidateQueueLoadingKey: '',
+      catalogLocalBookUnlinkingKey: '',
       catalogVisibilityLoadingKey: '',
       catalogRenameLoading: false,
       catalogCandidateResultsBySlot: {},
@@ -3031,6 +3044,23 @@ export default {
         this.$toast.error(error?.response?.data || 'Failed to queue candidate for review')
       } finally {
         this.catalogCandidateQueueLoadingKey = ''
+      }
+    },
+    async unlinkCatalogLocalBook(row, book) {
+      if (!this.selectedCatalogDetailReady || !book.manualCandidateSuggestionId) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
+      const rowKey = this.getCatalogRowKey(row)
+      this.catalogLocalBookUnlinkingKey = `${rowKey}:${book.libraryItemId}`
+      try {
+        await this.$axios.$post(`/api/series-review/suggestions/${book.manualCandidateSuggestionId}/unlink`)
+        if (this.selectedCatalogId !== catalogId) return
+        await this.loadQueue()
+        await this.selectCatalog(catalogId, { preferCache: false, skipLoading: true, updateView: true })
+        this.$toast.success('Manual link removed')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to remove manual link')
+      } finally {
+        this.catalogLocalBookUnlinkingKey = ''
       }
     },
     async dismissCatalog(catalog) {

@@ -2085,6 +2085,66 @@ describe('SeriesReviewManager', () => {
     expect(detail.rows.some((row) => row.rowKey.startsWith('unsequenced-local:') && row.expectedTitle === 'Dune: The Butlerian Jihad')).to.equal(false)
   })
 
+  it('persists reviewed manual candidate links for unsequenced rows even when titles differ materially', async () => {
+    await stubExpandedLibraryItems()
+    const { libraryItem } = await createBookFixture({
+      title: 'Legends Volume One',
+      relPath: 'Herbert, Frank/Legends of Dune - Book 1',
+      authors: ['Brian Herbert', 'Kevin J. Anderson']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Dune Saga',
+        entries: [
+          {
+            title: 'The Butlerian Jihad',
+            authors: ['Frank Herbert'],
+            publishedDate: '2002',
+            sources: [{ source: 'fantasticfiction', label: 'FF', confidence: 0.9, evidenceUrl: 'https://www.fantasticfiction.com/h/frank-herbert/dune/' }]
+          }
+        ]
+      }
+    ])
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          {
+            source: 'catalog',
+            label: 'CAT',
+            seriesName: 'Dune Saga',
+            sequence: null,
+            confidence: 0.95,
+            rawEvidence: {
+              catalogId: importResult.catalogs[0].id,
+              rowType: 'unsequenced',
+              rowKey: 'unsequenced:thebutlerianjihadunsequenced',
+              entryKey: 'the butlerian jihad::unsequenced',
+              expectedTitle: 'The Butlerian Jihad',
+              expectedSeriesName: 'Dune Saga'
+            }
+          }
+        ]
+      }
+    ])
+
+    const queue = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const row = queue.find((entry) => entry.libraryItemId === libraryItem.id)
+    const suggestion = row.suggestions.find((entry) => entry.suggestedName === 'Dune Saga')
+    await SeriesReviewManager.applySuggestion(suggestion.id, user.id, 'add')
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const unsequencedRow = detail.rows.find((candidate) => candidate.rowType === 'unsequenced' && candidate.expectedTitle === 'The Butlerian Jihad')
+
+    expect(unsequencedRow).to.exist
+    expect(unsequencedRow.localBooks).to.have.length(1)
+    expect(unsequencedRow.localBooks[0].title).to.equal('Legends Volume One')
+    expect(unsequencedRow.localBooks[0].manualCandidateSuggestionId).to.equal(suggestion.id)
+    expect(detail.rows.some((candidate) => candidate.rowKey.startsWith('unsequenced-local:') && candidate.expectedTitle === 'Legends Volume One')).to.equal(false)
+  })
+
   it('keeps source-only unsequenced continuation entries visible in catalog detail', async () => {
     await createBookFixture({
       title: 'Dune',
