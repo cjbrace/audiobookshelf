@@ -957,7 +957,7 @@
                         <p class="text-sm text-gray-200 mt-1">
                           {{
                             selectedCatalogDetail.localBooks.length
-                              ? 'Search using the active series title, authors, and book context, then save source links for later review-queue import. Results are ordered FictionDB, Audible, then Wikidata.'
+                              ? 'Search using the active series title, authors, and book context, then save source links for later review-queue import. Results are ordered FictionDB, then Audible.'
                               : 'Search using the active series title only, then save a source link for later review-queue import. Empty series currently use the name-only lookup path.'
                           }}
                         </p>
@@ -973,9 +973,16 @@
                       <ui-btn
                         small
                         color="bg-bg border border-white/20"
-                        @click="catalogManualPasteExpanded = !catalogManualPasteExpanded"
+                        @click="toggleCatalogManualSourcePanel('fantasticfiction')"
                       >
                         FF
+                      </ui-btn>
+                      <ui-btn
+                        small
+                        color="bg-bg border border-white/20"
+                        @click="toggleCatalogManualSourcePanel('goodreads')"
+                      >
+                        GR
                       </ui-btn>
                     </div>
 
@@ -1011,6 +1018,33 @@
                           @click="lookupManualCatalogSources({ sourceKind: 'fantasticfiction', sourceUrl: catalogManualPasteUrl, sourceText: catalogManualPasteText })"
                         >
                           Use Fantastic Fiction List
+                        </ui-btn>
+                      </div>
+                    </div>
+
+                    <div v-if="catalogManualGoodreadsExpanded" class="rounded border border-white/10 bg-black/15 p-3 space-y-3">
+                      <div class="space-y-1">
+                        <p class="text-sm uppercase tracking-wide text-gray-400">Goodreads URL</p>
+                        <p class="text-sm text-gray-300">
+                          Paste a Goodreads series URL. This creates a normal saved lookup link that can be imported, rebuilt, and unlinked like the other sources.
+                        </p>
+                      </div>
+                      <div class="space-y-2">
+                        <label class="block text-xs uppercase tracking-wide text-gray-400">Series URL</label>
+                        <input
+                          v-model.trim="catalogManualGoodreadsUrl"
+                          type="text"
+                          class="w-full rounded border border-white/10 bg-black/20 px-3 py-2 text-sm text-white"
+                          placeholder="https://www.goodreads.com/series/..."
+                        >
+                      </div>
+                      <div class="flex justify-end">
+                        <ui-btn
+                          color="bg-bg border border-white/20"
+                          :loading="catalogManualLookupLoading"
+                          @click="lookupManualCatalogSources({ sourceKind: 'goodreads', sourceUrl: catalogManualGoodreadsUrl })"
+                        >
+                          Use Goodreads URL
                         </ui-btn>
                       </div>
                     </div>
@@ -1509,8 +1543,10 @@ export default {
       catalogManualLookupSavingKey: '',
       catalogManualLookupError: '',
       catalogManualPasteExpanded: false,
+      catalogManualGoodreadsExpanded: false,
       catalogManualPasteUrl: '',
       catalogManualPasteText: '',
+      catalogManualGoodreadsUrl: '',
       catalogLocalMatchRebuildingKey: '',
       catalogLocalMatchRemovingKey: '',
       sourceImportStatus: null,
@@ -1822,6 +1858,20 @@ export default {
       if (entry?.sourceAsin) parts.push(`ASIN ${entry.sourceAsin}`)
       if (entry?.sourceRegion) parts.push(String(entry.sourceRegion).toUpperCase())
       return parts.join(' | ')
+    },
+    toggleCatalogManualSourcePanel(kind) {
+      const normalized = String(kind || '').trim().toLowerCase()
+      if (normalized === 'fantasticfiction') {
+        const next = !this.catalogManualPasteExpanded
+        this.catalogManualPasteExpanded = next
+        if (next) this.catalogManualGoodreadsExpanded = false
+        return
+      }
+      if (normalized === 'goodreads') {
+        const next = !this.catalogManualGoodreadsExpanded
+        this.catalogManualGoodreadsExpanded = next
+        if (next) this.catalogManualPasteExpanded = false
+      }
     },
     getManualSequenceStatus(entry) {
       if (entry && Object.prototype.hasOwnProperty.call(entry, 'sequenceStatusNote')) {
@@ -2708,8 +2758,10 @@ export default {
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
         this.catalogManualPasteExpanded = false
+        this.catalogManualGoodreadsExpanded = false
         this.catalogManualPasteUrl = ''
         this.catalogManualPasteText = ''
+        this.catalogManualGoodreadsUrl = ''
         return
       }
       this.selectedCatalogId = catalogId
@@ -2724,8 +2776,10 @@ export default {
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
         this.catalogManualPasteExpanded = false
+        this.catalogManualGoodreadsExpanded = false
         this.catalogManualPasteUrl = ''
         this.catalogManualPasteText = ''
+        this.catalogManualGoodreadsUrl = ''
       }
       if (preferCache && this.catalogDetailCache[catalogId]) {
         if (updateView) this.selectedCatalogDetail = this.catalogDetailCache[catalogId]
@@ -2818,6 +2872,11 @@ export default {
           this.$toast.error(this.catalogManualLookupError)
           return
         }
+      }
+      if (sourceKind === 'goodreads' && !sourceUrl) {
+        this.catalogManualLookupError = 'Goodreads series URL is required'
+        this.$toast.error(this.catalogManualLookupError)
+        return
       }
       this.catalogManualLookupLoading = true
       this.catalogManualLookupError = ''
