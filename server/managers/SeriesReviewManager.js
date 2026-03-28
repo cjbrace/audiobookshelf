@@ -1331,6 +1331,18 @@ class SeriesReviewManager {
       const escapedSeriesName = normalizedSeriesName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const stripped = original.replace(new RegExp(`^${escapedSeriesName}(?:\\s*[:\\-]\\s*|\\s+)`, 'i'), '').trim()
       if (stripped && stripped !== original) addKey(stripped)
+
+      const seriesTokens = this.tokenizeSearchText(normalizedSeriesName)
+      const separatorMatch = original.match(/^(.+?)(?:\s*[:\-]\s*)(.+)$/)
+      if (separatorMatch) {
+        const prefix = separatorMatch[1].trim()
+        const suffix = separatorMatch[2].trim()
+        const prefixTokens = this.tokenizeSearchText(prefix)
+        const sharedSeriesPrefixTokenCount = prefixTokens.filter((token) => seriesTokens.includes(token)).length
+        if (suffix && prefixTokens.length && sharedSeriesPrefixTokenCount >= Math.min(1, prefixTokens.length)) {
+          addKey(suffix)
+        }
+      }
     }
 
     return [...keys]

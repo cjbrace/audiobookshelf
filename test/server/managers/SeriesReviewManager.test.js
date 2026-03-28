@@ -2054,6 +2054,37 @@ describe('SeriesReviewManager', () => {
     expect(detail.unsequencedSourceEntries.map((entry) => entry.title)).to.deep.equal([])
   })
 
+  it('matches unsequenced source rows to local books when local titles carry a collector prefix', async () => {
+    await createBookFixture({
+      title: 'Dune: The Butlerian Jihad',
+      currentSeries: [{ name: 'Dune Saga', sequence: '' }],
+      authors: ['Brian Herbert', 'Kevin J. Anderson']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Dune Saga',
+        entries: [
+          {
+            title: 'The Butlerian Jihad',
+            authors: ['Frank Herbert'],
+            publishedDate: '2002',
+            sources: [{ source: 'fantasticfiction', label: 'FF', confidence: 0.9, evidenceUrl: 'https://www.fantasticfiction.com/h/frank-herbert/dune/' }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const unsequencedRow = detail.rows.find((row) => row.rowType === 'unsequenced' && row.expectedTitle === 'The Butlerian Jihad')
+
+    expect(unsequencedRow).to.exist
+    expect(unsequencedRow.localBooks).to.have.length(1)
+    expect(unsequencedRow.localBooks[0].title).to.equal('Dune: The Butlerian Jihad')
+    expect((unsequencedRow.sourceSupport || []).map((support) => support.source)).to.deep.equal(['fantasticfiction'])
+    expect(detail.rows.some((row) => row.rowKey.startsWith('unsequenced-local:') && row.expectedTitle === 'Dune: The Butlerian Jihad')).to.equal(false)
+  })
+
   it('keeps source-only unsequenced continuation entries visible in catalog detail', async () => {
     await createBookFixture({
       title: 'Dune',
