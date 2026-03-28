@@ -1627,6 +1627,18 @@ describe('SeriesReviewManager', () => {
       sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU'
     })
 
+    const staleRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
+      where: {
+        libraryId: library.id,
+        localDecisionKey: 'android x',
+        sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU'
+      }
+    })
+    staleRow.coverageStatus = 'partial'
+    staleRow.linkedBookCount = 1
+    staleRow.totalBookCount = 1
+    await staleRow.save()
+
     const linkedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
     const linkedCatalog = linkedCatalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
     expect(linkedCatalog.hasPendingLink).to.equal(false)
