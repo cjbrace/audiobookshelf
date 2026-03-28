@@ -349,7 +349,10 @@ describe('SeriesReviewController', () => {
     expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
       local_series_name: 'Alpha Saga',
       local_decision_key: 'alpha saga',
-      local_books: [{ libraryItemId: 'item-1', title: 'Alpha Start' }]
+      local_books: [{ libraryItemId: 'item-1', title: 'Alpha Start' }],
+      source_kind: '',
+      source_url: '',
+      source_text: ''
     })).to.be.true
     expect(res.json.calledOnce).to.be.true
     expect(res.json.firstCall.args[0].results[0]).to.include({
@@ -388,7 +391,51 @@ describe('SeriesReviewController', () => {
     expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
       local_series_name: 'Discworld (Full Cast)',
       local_decision_key: 'discworld full cast',
-      local_books: []
+      local_books: [],
+      source_kind: '',
+      source_url: '',
+      source_text: ''
+    })).to.be.true
+    expect(res.json.calledOnce).to.be.true
+  })
+
+  it('passes Fantastic Fiction pasted lookup fields through to the bridge', async () => {
+    sinon.stub(SeriesReviewManager, 'buildManualLookupContextForCatalog').resolves({
+      localSeriesName: 'The Dresden Files',
+      localDecisionKey: 'the dresden files',
+      localBooks: [{ libraryItemId: 'item-1', title: 'Storm Front' }]
+    })
+    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({
+      results: [{ source: 'fantasticfiction', sourceSeriesName: 'The Dresden Files', sourceSeriesUrl: 'https://www.fantasticfiction.com/b/jim-butcher/dresden-files/' }]
+    })
+    sinon.stub(SeriesReviewManager, 'getSeriesSourceLinkRowsForLibrary').resolves([])
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1' },
+      body: {
+        sourceKind: 'fantasticfiction',
+        sourceUrl: 'https://www.fantasticfiction.com/b/jim-butcher/dresden-files/',
+        sourceText: '1 Storm Front (2000)\n10.5 Backup (2008)'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.lookupManualCatalogSources(req, res)
+
+    expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
+      local_series_name: 'The Dresden Files',
+      local_decision_key: 'the dresden files',
+      local_books: [{ libraryItemId: 'item-1', title: 'Storm Front' }],
+      source_kind: 'fantasticfiction',
+      source_url: 'https://www.fantasticfiction.com/b/jim-butcher/dresden-files/',
+      source_text: '1 Storm Front (2000)\n10.5 Backup (2008)'
     })).to.be.true
     expect(res.json.calledOnce).to.be.true
   })

@@ -972,6 +972,42 @@
                       </ui-btn>
                     </div>
 
+                    <div class="rounded border border-white/10 bg-black/15 p-3 space-y-3">
+                      <div class="space-y-1">
+                        <p class="text-sm uppercase tracking-wide text-gray-400">Fantastic Fiction Paste</p>
+                        <p class="text-sm text-gray-300">
+                          Paste a Fantastic Fiction series list and the evidence URL. This creates a normal saved lookup link that can be imported, rebuilt, and unlinked like the other sources.
+                        </p>
+                      </div>
+                      <div class="space-y-2">
+                        <label class="block text-xs uppercase tracking-wide text-gray-400">Evidence URL</label>
+                        <input
+                          v-model.trim="catalogManualPasteUrl"
+                          type="text"
+                          class="w-full rounded border border-white/10 bg-black/20 px-3 py-2 text-sm text-white"
+                          placeholder="https://www.fantasticfiction.com/..."
+                        >
+                      </div>
+                      <div class="space-y-2">
+                        <label class="block text-xs uppercase tracking-wide text-gray-400">Series List</label>
+                        <textarea
+                          v-model="catalogManualPasteText"
+                          rows="8"
+                          class="w-full rounded border border-white/10 bg-black/20 px-3 py-2 text-sm text-white"
+                          placeholder="1 Storm Front (2000)&#10;10.5 Backup (2008)&#10;18 Twelve Months (2026)"
+                        />
+                      </div>
+                      <div class="flex justify-end">
+                        <ui-btn
+                          color="bg-bg border border-white/20"
+                          :loading="catalogManualLookupLoading"
+                          @click="lookupManualCatalogSources({ sourceKind: 'fantasticfiction', sourceUrl: catalogManualPasteUrl, sourceText: catalogManualPasteText })"
+                        >
+                          Use Fantastic Fiction List
+                        </ui-btn>
+                      </div>
+                    </div>
+
                     <div v-if="selectedCatalogLocalMatches.length" class="space-y-3">
                       <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-300">Saved Lookup Links</h3>
                       <div
@@ -1452,6 +1488,8 @@ export default {
       catalogManualLookupLoading: false,
       catalogManualLookupSavingKey: '',
       catalogManualLookupError: '',
+      catalogManualPasteUrl: '',
+      catalogManualPasteText: '',
       catalogLocalMatchRebuildingKey: '',
       catalogLocalMatchRemovingKey: '',
       sourceImportStatus: null,
@@ -2648,6 +2686,8 @@ export default {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
+        this.catalogManualPasteUrl = ''
+        this.catalogManualPasteText = ''
         return
       }
       this.selectedCatalogId = catalogId
@@ -2661,6 +2701,8 @@ export default {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
+        this.catalogManualPasteUrl = ''
+        this.catalogManualPasteText = ''
       }
       if (preferCache && this.catalogDetailCache[catalogId]) {
         if (updateView) this.selectedCatalogDetail = this.catalogDetailCache[catalogId]
@@ -2736,14 +2778,34 @@ export default {
         this.catalogCreateLoading = false
       }
     },
-    async lookupManualCatalogSources() {
+    async lookupManualCatalogSources(options = {}) {
       if (!this.selectedCatalogDetailReady) return
       const catalogId = this.selectedCatalogDetail.catalog.id
+      const sourceKind = String(options?.sourceKind || '').trim().toLowerCase()
+      const sourceUrl = String(options?.sourceUrl || '').trim()
+      const sourceText = String(options?.sourceText || '')
+      if (sourceKind === 'fantasticfiction') {
+        if (!sourceUrl) {
+          this.catalogManualLookupError = 'Fantastic Fiction evidence URL is required'
+          this.$toast.error(this.catalogManualLookupError)
+          return
+        }
+        if (!sourceText.trim()) {
+          this.catalogManualLookupError = 'Fantastic Fiction series list is required'
+          this.$toast.error(this.catalogManualLookupError)
+          return
+        }
+      }
       this.catalogManualLookupLoading = true
       this.catalogManualLookupError = ''
       try {
         const response = await this.$axios.$post(
-          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/manual-lookup`
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/manual-lookup`,
+          {
+            sourceKind,
+            sourceUrl,
+            sourceText
+          }
         )
         if (this.selectedCatalogId !== catalogId) return
         this.catalogManualLookupResults = response.results || []

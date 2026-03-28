@@ -102,7 +102,10 @@ class SeriesReviewController {
       const response = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
         local_series_name: context.localSeriesName,
         local_decision_key: context.localDecisionKey,
-        local_books: context.localBooks
+        local_books: context.localBooks,
+        source_kind: typeof req.body?.sourceKind === 'string' ? req.body.sourceKind : '',
+        source_url: typeof req.body?.sourceUrl === 'string' ? req.body.sourceUrl : '',
+        source_text: typeof req.body?.sourceText === 'string' ? req.body.sourceText : ''
       })
       const linkRows = await SeriesReviewManager.getSeriesSourceLinkRowsForLibrary(req.library.id, {
         localDecisionKey: context.localDecisionKey
