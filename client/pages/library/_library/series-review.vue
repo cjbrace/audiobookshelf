@@ -2122,7 +2122,8 @@ export default {
       if (!targetId) return
       this.$nextTick(() => {
         const element = this.getCatalogListItemElements().find((candidate) => String(candidate?.getAttribute?.('data-catalog-id') || '').trim() === targetId)
-        if (element?.focus) element.focus()
+        const button = element?.querySelector?.('button')
+        if (button?.focus) button.focus()
       })
     },
     async selectAdjacentCatalog(delta) {
@@ -2365,8 +2366,10 @@ export default {
         const element = this.getCatalogListItemElements().find((candidate) => String(candidate?.getAttribute?.('data-catalog-id') || '').trim() === targetId)
         if (!scroller || !element) return
 
-        const elementTop = Number(element.offsetTop || 0)
-        const elementBottom = elementTop + Number(element.offsetHeight || 0)
+        const scrollerRect = scroller.getBoundingClientRect()
+        const elementRect = element.getBoundingClientRect()
+        const elementTop = elementRect.top - scrollerRect.top + Number(scroller.scrollTop || 0)
+        const elementBottom = elementTop + Number(elementRect.height || element.offsetHeight || 0)
         const currentTop = Number(scroller.scrollTop || 0)
         const currentBottom = currentTop + Number(scroller.clientHeight || 0)
         const isVisible = elementTop >= currentTop && elementBottom <= currentBottom
@@ -2374,7 +2377,7 @@ export default {
 
         const nextTop =
           align === 'center'
-            ? Math.max(0, elementTop - Math.max(0, (scroller.clientHeight - element.offsetHeight) / 2))
+            ? Math.max(0, elementTop - Math.max(0, (scroller.clientHeight - (elementRect.height || element.offsetHeight || 0)) / 2))
             : Math.max(0, elementTop)
         scroller.scrollTop = nextTop
         this.catalogListScrollTop = nextTop
@@ -2498,7 +2501,7 @@ export default {
       const nextId = visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : visibleCatalogs[0].id
       this.selectCatalog(nextId, { preferCache: true })
       this.restoreCatalogListScroll()
-      this.scrollCatalogListItemIntoView(nextId, { align: 'start', force: true })
+      this.scrollCatalogListItemIntoView(nextId, { align: 'start', force: false })
     },
     getCatalogExpectedDisplay(slotOrChoice) {
       const title = String(slotOrChoice?.expectedTitle || slotOrChoice?.title || '').trim()
@@ -2732,6 +2735,14 @@ export default {
           includeDismissed: flags.includeDismissed,
           updateView: true
         })
+        if (!flags.includeDismissed) {
+          await this.fetchCatalogList({
+            includeUntrusted: true,
+            includeDismissed: true,
+            updateView: false,
+            prefetchOnly: true
+          })
+        }
       } catch (error) {
         this.errorMessage = error?.response?.data || 'Failed to load series detail catalogs'
       } finally {
@@ -2826,7 +2837,6 @@ export default {
         this.errorMessage = error?.response?.data || 'Failed to load series detail'
       } finally {
         if (!skipLoading || !this.catalogDetailCache[catalogId]) this.catalogLoading = false
-        if (updateView && this.selectedCatalogId === catalogId) this.scrollCatalogListItemIntoView(catalogId, { align: 'start', force: true })
       }
     },
     async setCatalogCheckedState(catalog, checked) {
