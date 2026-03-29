@@ -2866,6 +2866,52 @@ describe('SeriesReviewManager', () => {
     expect(appliedSuggestion.state).to.equal('applied')
   })
 
+  it('can replace a selected existing series when accepting a catalog candidate', async () => {
+    await stubExpandedLibraryItems()
+    const { libraryItem } = await createBookFixture({
+      title: 'Barrayar',
+      relPath: 'Bujold, Lois McMaster/Barrayar',
+      authors: ['Lois McMaster Bujold'],
+      currentSeries: [{ name: 'Old Saga', sequence: '2' }]
+    })
+    const expandedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    const oldSeriesId = expandedLibraryItem.media.series[0].id
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Vorkosigan Saga',
+        entries: [
+          {
+            title: 'Barrayar',
+            authors: ['Lois McMaster Bujold'],
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const accepted = await SeriesReviewManager.acceptCatalogCandidateForLibrary(
+      library.id,
+      importResult.catalogs[0].id,
+      '2',
+      libraryItem.id,
+      null,
+      oldSeriesId
+    )
+
+    expect(accepted.decisionAction).to.equal('replace')
+    expect(accepted.replacedSeriesId).to.equal(oldSeriesId)
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.series.map((series) => series.name)).to.deep.equal(['Vorkosigan Saga'])
+
+    const updatedSuggestion = await Database.seriesReviewSuggestionModel.findByPk(accepted.suggestionId)
+    expect(updatedSuggestion.state).to.equal('manual_override')
+    expect(updatedSuggestion.decisionAction).to.equal('replace')
+    expect(updatedSuggestion.decisionSeriesId).to.equal(oldSeriesId)
+  })
+
   it('dismisses and restores a catalog without letting import overwrite the hidden state', async () => {
     const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {

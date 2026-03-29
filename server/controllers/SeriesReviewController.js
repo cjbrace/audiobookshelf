@@ -540,7 +540,8 @@ class SeriesReviewController {
         req.params.catalogId,
         req.body?.slot,
         req.body?.libraryItemId,
-        req.user.id
+        req.user.id,
+        req.body?.replaceSeriesId
       )
     } catch (error) {
       return handleActionError(res, error)

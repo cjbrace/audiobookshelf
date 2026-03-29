@@ -936,7 +936,8 @@ describe('SeriesReviewController', () => {
       },
       body: {
         slot: '3',
-        libraryItemId: 'item-1'
+        libraryItemId: 'item-1',
+        replaceSeriesId: 'series-9'
       }
     }
     const res = {
@@ -973,7 +974,8 @@ describe('SeriesReviewController', () => {
       },
       body: {
         slot: '3',
-        libraryItemId: 'item-1'
+        libraryItemId: 'item-1',
+        replaceSeriesId: 'series-9'
       }
     }
     const res = {
@@ -985,7 +987,7 @@ describe('SeriesReviewController', () => {
 
     await SeriesReviewController.acceptCatalogCandidate(req, res)
 
-    expect(SeriesReviewManager.acceptCatalogCandidateForLibrary.calledOnceWithExactly('library-1', 'catalog-1', '3', 'item-1', 'user-1')).to.be.true
+    expect(SeriesReviewManager.acceptCatalogCandidateForLibrary.calledOnceWithExactly('library-1', 'catalog-1', '3', 'item-1', 'user-1', 'series-9')).to.be.true
     expect(res.json.calledOnceWithExactly({
       accepted: true,
       libraryItemId: 'item-1',

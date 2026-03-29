@@ -1414,47 +1414,50 @@
                               </div>
                               <p v-else class="text-gray-500">{{ getCatalogLocalCoverageEmptyText(row) }}</p>
                               <div v-if="getCatalogAutoCandidate(row)" class="mt-2 rounded border border-red-300/35 bg-red-500/10 px-3 py-3 space-y-2">
-                                <div class="flex flex-wrap items-start gap-3">
-                                  <div class="grow min-w-[16rem]">
-                                    <p class="text-xs font-semibold uppercase tracking-wide text-red-200">Suggested Match</p>
-                                    <nuxt-link :to="`/item/${getCatalogAutoCandidate(row).libraryItemId}`" class="mt-1 block font-semibold text-red-50 hover:underline">
-                                      {{ getCatalogAutoCandidate(row).title }}
+                                <div class="flex items-start gap-3">
+                                  <div class="grow min-w-0 space-y-2">
+                                    <nuxt-link :to="`/item/${getCatalogAutoCandidate(row).libraryItemId}`" class="block font-semibold text-red-50 hover:underline">
+                                      {{ getCatalogAutoCandidate(row).title }}<span v-if="formatAuthors(getCatalogAutoCandidate(row).authors)"> - {{ formatAuthors(getCatalogAutoCandidate(row).authors) }}</span>
                                     </nuxt-link>
-                                    <p class="text-sm text-red-100/90 mt-1">{{ formatAuthors(getCatalogAutoCandidate(row).authors) }}</p>
-                                    <p v-if="getCatalogAutoCandidate(row).relPath" class="text-xs text-red-100/70 mt-1 break-all">{{ getCatalogAutoCandidate(row).relPath }}</p>
+                                    <p v-if="getCatalogAutoCandidate(row).relPath" class="text-xs text-red-100/70 break-all">{{ getCatalogAutoCandidate(row).relPath }}</p>
+                                    <div v-if="(getCatalogAutoCandidate(row).currentSeries || []).length" class="space-y-2">
+                                      <div class="flex flex-wrap gap-2">
+                                        <button
+                                          v-for="series in getCatalogAutoCandidate(row).currentSeries"
+                                          :key="getCatalogRowKey(row) + ':auto-series:' + getCatalogAutoCandidate(row).libraryItemId + ':' + series.id"
+                                          type="button"
+                                          class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs transition"
+                                          :class="getCatalogAutoCandidateSeriesClass(row, series)"
+                                          @click="toggleCatalogAutoCandidateReplaceSeries(row, series)"
+                                        >
+                                          {{ series.name }}<span v-if="series.sequence"> #{{ series.sequence }}</span>
+                                        </button>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-red-300/35 bg-red-500/20 text-xs text-red-100">
-                                    Score {{ getCatalogAutoCandidate(row).score }}
-                                  </span>
+                                  <div class="flex shrink-0 flex-col gap-2">
+                                    <ui-btn
+                                      small
+                                      color="bg-success/80"
+                                      :loading="catalogAutoSuggestAcceptLoadingKey === `${getCatalogRowKey(row)}:${getCatalogAutoCandidate(row).libraryItemId}`"
+                                      @click="acceptCatalogAutoCandidate(row)"
+                                    >
+                                      Accept
+                                    </ui-btn>
+                                    <ui-btn
+                                      small
+                                      color="bg-red-500/80"
+                                      @click="rejectCatalogAutoCandidate(row)"
+                                    >
+                                      Reject
+                                    </ui-btn>
+                                  </div>
                                 </div>
-                                <p v-if="getCatalogAutoCandidate(row).alreadyInSeries" class="text-xs text-amber-200">
-                                  Already has this series{{ getCatalogAutoCandidate(row).alreadyInSeriesSequence ? ` (sequence ${getCatalogAutoCandidate(row).alreadyInSeriesSequence})` : '' }}. Accept will keep it and reuse/update that entry.
-                                </p>
-                                <div class="flex flex-wrap gap-2">
-                                  <span
-                                    v-for="reason in getCatalogAutoCandidate(row).reasons"
-                                    :key="getCatalogRowKey(row) + ':auto:' + getCatalogAutoCandidate(row).libraryItemId + ':' + reason.key"
-                                    class="inline-flex items-center px-2 py-0.5 rounded-full border border-red-300/20 bg-black/20 text-xs text-red-100"
-                                  >
-                                    {{ reason.text }}
-                                  </span>
+                                <div v-if="selectedCatalogAutoCandidateReplaceSeriesId(row)" class="text-xs text-sky-100">
+                                  Accept will replace {{ selectedCatalogAutoCandidateReplaceSeriesLabel(row) }} instead of adding another series entry.
                                 </div>
-                                <div class="flex flex-wrap gap-2">
-                                  <ui-btn
-                                    small
-                                    color="bg-success/80"
-                                    :loading="catalogAutoSuggestAcceptLoadingKey === `${getCatalogRowKey(row)}:${getCatalogAutoCandidate(row).libraryItemId}`"
-                                    @click="acceptCatalogAutoCandidate(row)"
-                                  >
-                                    Accept
-                                  </ui-btn>
-                                  <ui-btn
-                                    small
-                                    color="bg-red-500/80"
-                                    @click="rejectCatalogAutoCandidate(row)"
-                                  >
-                                    Reject
-                                  </ui-btn>
+                                <div v-else-if="(getCatalogAutoCandidate(row).currentSeries || []).length" class="text-xs text-red-100/70">
+                                  Click a series pill to replace it on accept. Leave them unselected to add this series alongside the others.
                                 </div>
                               </div>
                             </td>
@@ -1644,6 +1647,7 @@ export default {
       catalogCandidateResultsBySlot: {},
       catalogCandidateFilterBySlot: {},
       catalogAutoSuggestBySlot: {},
+      catalogAutoSuggestReplaceSeriesBySlot: {},
       catalogAutoSuggestFilters: {
         normal: true,
         unsequenced: true,
@@ -2773,6 +2777,42 @@ export default {
     },
     clearCatalogAutoCandidate(rowKey) {
       this.$delete(this.catalogAutoSuggestBySlot, rowKey)
+      this.$delete(this.catalogAutoSuggestReplaceSeriesBySlot, rowKey)
+    },
+    selectedCatalogAutoCandidateReplaceSeriesId(row) {
+      return this.catalogAutoSuggestReplaceSeriesBySlot[this.getCatalogRowKey(row)] || ''
+    },
+    selectedCatalogAutoCandidateReplaceSeriesLabel(row) {
+      const candidate = this.getCatalogAutoCandidate(row)
+      const selectedId = this.selectedCatalogAutoCandidateReplaceSeriesId(row)
+      const series = (candidate?.currentSeries || []).find((entry) => entry?.id === selectedId)
+      if (!series) return ''
+      return series.sequence ? `${series.name} #${series.sequence}` : series.name
+    },
+    isCatalogAutoCandidateSameSeries(row, series) {
+      const currentSeriesName = String(series?.name || '').trim().toLowerCase()
+      const targetSeriesName = String(this.selectedCatalogDetail?.catalog?.seriesName || '').trim().toLowerCase()
+      return !!currentSeriesName && !!targetSeriesName && currentSeriesName === targetSeriesName
+    },
+    getCatalogAutoCandidateSeriesClass(row, series) {
+      const selectedId = this.selectedCatalogAutoCandidateReplaceSeriesId(row)
+      const isSelected = !!selectedId && selectedId === series?.id
+      const isSameSeries = this.isCatalogAutoCandidateSameSeries(row, series)
+      return {
+        'border-white/20 bg-black/20 text-gray-100 hover:border-sky-300/35 hover:bg-sky-400/10': !isSameSeries,
+        'border-emerald-300/45 bg-emerald-400/15 text-emerald-100 hover:border-emerald-300/60': isSameSeries,
+        'ring-2 ring-sky-300/45': isSelected
+      }
+    },
+    toggleCatalogAutoCandidateReplaceSeries(row, series) {
+      const rowKey = this.getCatalogRowKey(row)
+      const seriesId = String(series?.id || '').trim()
+      if (!rowKey || !seriesId) return
+      if (this.catalogAutoSuggestReplaceSeriesBySlot[rowKey] === seriesId) {
+        this.$delete(this.catalogAutoSuggestReplaceSeriesBySlot, rowKey)
+        return
+      }
+      this.$set(this.catalogAutoSuggestReplaceSeriesBySlot, rowKey, seriesId)
     },
     getCatalogCandidateFilter(rowKey) {
       return this.catalogCandidateFilterBySlot[rowKey] || ''
@@ -3001,6 +3041,7 @@ export default {
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
         this.catalogAutoSuggestBySlot = {}
+        this.catalogAutoSuggestReplaceSeriesBySlot = {}
         this.catalogManualPasteExpanded = false
         this.catalogManualGoodreadsExpanded = false
         this.catalogManualPasteUrl = ''
@@ -3016,6 +3057,7 @@ export default {
       this.catalogCandidateResultsBySlot = {}
       this.catalogCandidateFilterBySlot = {}
       this.catalogAutoSuggestBySlot = {}
+      this.catalogAutoSuggestReplaceSeriesBySlot = {}
       if (this.catalogManualLookupCatalogId !== catalogId) {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
@@ -3355,6 +3397,7 @@ export default {
         this.persistCatalogCaches()
         this.$delete(this.catalogCandidateResultsBySlot, rowKey)
         this.catalogAutoSuggestBySlot = {}
+        this.catalogAutoSuggestReplaceSeriesBySlot = {}
         this.$toast.success('Preferred interpretation updated')
         await this.loadCatalogs({ preferCache: true })
       } catch (error) {
@@ -3393,6 +3436,7 @@ export default {
           }
         })
         this.catalogAutoSuggestBySlot = next
+        this.catalogAutoSuggestReplaceSeriesBySlot = {}
         if (Object.keys(next).length) this.$toast.success(`Suggested matches found for ${Object.keys(next).length} row${Object.keys(next).length === 1 ? '' : 's'}`)
         else this.$toast.success('No likely local matches found for the selected row types')
       } catch (error) {
@@ -3434,6 +3478,7 @@ export default {
         ...state,
         currentIndex: nextIndex
       })
+      this.$delete(this.catalogAutoSuggestReplaceSeriesBySlot, rowKey)
     },
     async acceptCatalogAutoCandidate(row) {
       if (!this.selectedCatalogDetailReady) return
@@ -3441,13 +3486,15 @@ export default {
       if (!candidate?.libraryItemId) return
       const catalogId = this.selectedCatalogDetail.catalog.id
       const rowKey = this.getCatalogRowKey(row)
+      const replaceSeriesId = this.selectedCatalogAutoCandidateReplaceSeriesId(row) || null
       this.catalogAutoSuggestAcceptLoadingKey = `${rowKey}:${candidate.libraryItemId}`
       try {
         const response = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/accept-candidate`,
           {
             slot: rowKey,
-            libraryItemId: candidate.libraryItemId
+            libraryItemId: candidate.libraryItemId,
+            replaceSeriesId
           }
         )
         if (this.selectedCatalogId !== catalogId) return

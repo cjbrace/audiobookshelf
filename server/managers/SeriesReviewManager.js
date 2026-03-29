@@ -4146,7 +4146,7 @@ class SeriesReviewManager {
     }
   }
 
-  async acceptCatalogCandidateForLibrary(libraryId, catalogId, slot, libraryItemId, userId = null) {
+  async acceptCatalogCandidateForLibrary(libraryId, catalogId, slot, libraryItemId, userId = null, replaceSeriesId = null) {
     const searchResult = await this.findCatalogSlotCandidates(libraryId, catalogId, slot)
     if (!searchResult) return null
 
@@ -4161,7 +4161,8 @@ class SeriesReviewManager {
       throw new Error('Catalog candidate suggestion could not be created')
     }
 
-    const applyResult = await this.applySuggestion(suggestion.id, userId, 'add')
+    const applyMode = replaceSeriesId ? 'replace' : 'add'
+    const applyResult = await this.applySuggestion(suggestion.id, userId, applyMode, replaceSeriesId || null)
     const detail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
 
     return {
@@ -4172,6 +4173,8 @@ class SeriesReviewManager {
       rowKey: searchResult.rowKey || searchResult.slot,
       rowType: searchResult.rowType || 'slot',
       targetSeriesName: searchResult.expectedSeriesName,
+      decisionAction: applyMode,
+      replacedSeriesId: replaceSeriesId || null,
       alreadyInSeries: !!candidate.alreadyInSeries,
       alreadyInSeriesSequenceMatch: !!candidate.alreadyInSeriesSequenceMatch,
       detail,
