@@ -820,6 +820,17 @@ class SeriesReviewManager {
     const sourceRef = typeof input?.sourceRef === 'string' ? input.sourceRef.trim() || null : null
     const providerMeta = input?.providerMeta && typeof input.providerMeta === 'object' && !Array.isArray(input.providerMeta) ? input.providerMeta : null
     const rawEvidence = input?.rawEvidence && typeof input.rawEvidence === 'object' && !Array.isArray(input.rawEvidence) ? input.rawEvidence : null
+    const localSeriesImport =
+      rawEvidence?.localSeriesImport && typeof rawEvidence.localSeriesImport === 'object' && !Array.isArray(rawEvidence.localSeriesImport)
+        ? rawEvidence.localSeriesImport
+        : null
+    const expectedTitle = this.normalizeSeriesName(
+      input?.expectedTitle ||
+        rawEvidence?.expectedTitle ||
+        localSeriesImport?.matchedEntryTitle ||
+        input?.title ||
+        ''
+    )
     return {
       source,
       label: String(input?.label || source).trim() || source,
@@ -831,11 +842,41 @@ class SeriesReviewManager {
       sequence,
       confidence: Number.isFinite(confidenceValue) ? Number(confidenceValue.toFixed(3)) : null,
       evidenceUrl: typeof input?.evidenceUrl === 'string' ? input.evidenceUrl.trim() || null : null,
+      expectedTitle: expectedTitle || null,
       notes: typeof input?.notes === 'string' ? input.notes.trim() || null : null,
       sourceRef,
       providerMeta,
       rawEvidence
     }
+  }
+
+  chooseSuggestedExpectedTitle(contributions) {
+    const rankedTitles = new Map()
+    for (const contribution of Array.isArray(contributions) ? contributions : []) {
+      const title = this.normalizeSeriesName(contribution?.expectedTitle || '')
+      if (!title) continue
+      const key = this.normalizeKeyPart(title) || title.toLowerCase()
+      const existing = rankedTitles.get(key) || {
+        title,
+        score: 0,
+        roleWeight: 0,
+        confidence: -1
+      }
+      existing.score += Number(contribution?.roleWeight || 0) * 10 + Number(contribution?.confidence || 0)
+      existing.roleWeight = Math.max(existing.roleWeight, Number(contribution?.roleWeight || 0))
+      existing.confidence = Math.max(existing.confidence, Number(contribution?.confidence || 0))
+      rankedTitles.set(key, existing)
+    }
+
+    return [...rankedTitles.values()]
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score
+        if (right.roleWeight !== left.roleWeight) return right.roleWeight - left.roleWeight
+        if (right.confidence !== left.confidence) return right.confidence - left.confidence
+        return String(left.title || '').localeCompare(String(right.title || ''))
+      })
+      .map((entry) => entry.title)
+      .find(Boolean) || null
   }
 
   groupContributions(sourceSuggestions, resolver = this.buildSeriesNameControlResolver([])) {
@@ -867,6 +908,7 @@ class SeriesReviewManager {
         suggestedName,
         suggestedNameNormalized: suggestedName ? this.normalizeKeyPart(suggestedName) : null,
         seriesDecisionKey: suggestedName ? resolver.getDecisionKey(suggestedName) : null,
+        expectedTitle: this.chooseSuggestedExpectedTitle(group.contributions),
         contributions: group.contributions.sort((a, b) => a.source.localeCompare(b.source))
       }
     })
@@ -884,6 +926,7 @@ class SeriesReviewManager {
         noSeries: !!contribution.noSeries,
         seriesName: contribution.seriesName || null,
         sequence: contribution.sequence || null,
+        expectedTitle: contribution.expectedTitle || null,
         confidence: contribution.confidence ?? null,
         evidenceUrl: contribution.evidenceUrl || null,
         notes: contribution.notes || null,
@@ -4260,6 +4303,7 @@ class SeriesReviewManager {
       suggestedName: suggestion.suggestedName,
       seriesDecisionKey: suggestion.suggestedName ? this.normalizeDecisionKey(suggestion.suggestedName) : null,
       suggestedSequence: suggestion.suggestedSequence,
+      expectedTitle: this.chooseSuggestedExpectedTitle(contributions),
       state: suggestion.state,
       decisionAction: suggestion.decisionAction,
       decisionSeriesId: suggestion.decisionSeriesId,

@@ -114,6 +114,39 @@ describe('SeriesReviewManager', () => {
     expect(rows[0].conflictSummary).to.equal('Series vs no-series conflict')
   })
 
+  it('surfaces the expected source title on grouped queue suggestions', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Summer Knight',
+      relPath: 'Butcher, Jim/Summer Knight'
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          {
+            source: 'fictiondb',
+            label: 'FDB',
+            seriesName: 'The Dresden Files',
+            sequence: '4',
+            confidence: 0.98,
+            rawEvidence: {
+              localSeriesImport: {
+                matchedEntryTitle: 'Summer Knight'
+              }
+            }
+          }
+        ]
+      }
+    ])
+
+    const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows).to.have.length(1)
+    expect(rows[0].suggestions).to.have.length(1)
+    expect(rows[0].suggestions[0].expectedTitle).to.equal('Summer Knight')
+    expect(rows[0].suggestions[0].contributions[0].expectedTitle).to.equal('Summer Knight')
+  })
+
   it('preserves audible and audnexus provenance as secondary support on grouped suggestions', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Leviathan Wakes',

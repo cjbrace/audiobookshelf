@@ -409,6 +409,9 @@
                                 <span v-if="suggestion.suggestedSequence" class="inline-flex items-center px-2 py-0.5 rounded-full bg-white/10 text-xs text-gray-100 border border-white/15">#{{ suggestion.suggestedSequence }}</span>
                               </template>
                             </div>
+                            <p v-if="suggestion.expectedTitle" class="mt-1 text-sm text-sky-100">
+                              Expected title: {{ suggestion.expectedTitle }}
+                            </p>
                             <p v-if="suggestion.previousDecision" class="text-sm mt-1" :class="suggestion.hasMeaningfulUpdateSinceDecision ? 'text-amber-200' : 'text-gray-400'">
                               {{ formatPreviousDecision(suggestion) }}
                             </p>
