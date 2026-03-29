@@ -542,6 +542,53 @@ describe('SeriesReviewManager', () => {
     expect(updatedDetail.catalog.seriesName).to.equal('Rain Wilds Chronicles')
   })
 
+  it('renames a catalog into an existing target catalog without tripping the unique catalog key', async () => {
+    await createBookFixture({
+      title: 'The Joiner King',
+      currentSeries: [{ name: 'Dark Nest', sequence: '1' }]
+    })
+    await stubExpandedLibraryItems()
+
+    const sourceImport = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Dark Nest',
+        entries: [
+          {
+            title: 'The Joiner King',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+    await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Star Wars: Dark Nest',
+        entries: [
+          {
+            title: 'The Unseen Queen',
+            sequence: '2',
+            sources: [{ source: 'wikidata', label: 'WD', confidence: 0.8 }]
+          }
+        ]
+      }
+    ])
+
+    const result = await SeriesReviewManager.renameCatalogForLibrary(library.id, sourceImport.catalogs[0].id, 'Star Wars: Dark Nest', user.id)
+
+    expect(result.detail.catalog.seriesName).to.equal('Star Wars: Dark Nest')
+
+    const catalogs = await Database.seriesReviewCatalogModel.findAll({
+      where: { libraryId: library.id },
+      order: [['seriesName', 'ASC']]
+    })
+    expect(catalogs.map((catalog) => catalog.seriesName)).to.deep.equal(['Star Wars: Dark Nest'])
+    expect((catalogs[0].entries || []).map((entry) => `${entry.title}#${entry.sequence || entry.sequenceLabel || ''}`)).to.deep.equal([
+      'The Joiner King#1',
+      'The Unseen Queen#2'
+    ])
+  })
+
   it('keeps an aliased surviving suggestion under the renamed canonical label', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Wyrd Sisters'

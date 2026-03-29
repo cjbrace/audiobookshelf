@@ -2813,9 +2813,16 @@ class SeriesReviewManager {
       applyLocalRename: true
     })
 
+    const canonicalCatalog = await Database.seriesReviewCatalogModel.findOne({
+      where: {
+        libraryId,
+        seriesNameNormalized: this.normalizeKeyPart(result.canonicalName || normalizedTargetLabel)
+      },
+      order: [['createdAt', 'ASC']]
+    })
     const nextCatalogId = this.parseLocalOnlyCatalogId(catalogId)
       ? this.buildLocalOnlyCatalogId(this.normalizeDecisionKey(result.canonicalName || normalizedTargetLabel))
-      : catalogId
+      : canonicalCatalog?.id || catalogId
 
     const detail =
       (await this.getCatalogDetailForLibrary(libraryId, nextCatalogId)) ||
@@ -4936,7 +4943,9 @@ class SeriesReviewManager {
 
     const retainedIds = new Set()
     for (const group of groupedCatalogs.values()) {
-      const primaryCatalog = group.rows[0]
+      const canonicalSeriesKey = this.normalizeKeyPart(group.canonicalName)
+      const primaryCatalog =
+        group.rows.find((row) => String(row?.seriesNameNormalized || '').trim().toLowerCase() === canonicalSeriesKey) || group.rows[0]
       const mergedEntries = this.mergeCatalogEntryPayloads(group.rows.flatMap((row) => row.entries || []))
       const mergedSelection = group.rows.reduce((selectionBySlot, row) => this.mergeCatalogSelectionBySlot(selectionBySlot, row.selectionBySlot), {})
       const anyVisible = group.rows.some((row) => (row.visibilityStatus || 'visible') !== 'dismissed')
