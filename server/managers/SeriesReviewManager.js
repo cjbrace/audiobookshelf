@@ -2222,7 +2222,11 @@ class SeriesReviewManager {
     matchRow.coverageStatus = totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
     await matchRow.save()
 
-    return this.getCatalogDetailForLibrary(libraryId, catalogId)
+    return this.buildSeriesSourceLinkPayload(matchRow, {
+      localBooks: Array.isArray(context.localBooks) ? context.localBooks : [],
+      resolvedCatalogId: catalogId,
+      evidenceSnapshot: mergedSnapshot
+    })
   }
 
   async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId, userId = null) {

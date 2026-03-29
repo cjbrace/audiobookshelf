@@ -254,43 +254,46 @@ class SeriesReviewController {
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
 
     try {
-      const catalogDetail = await SeriesReviewManager.getCatalogDetailForLibrary(req.library.id, req.params.catalogId)
-      if (!catalogDetail) return res.sendStatus(404)
+      const context = await SeriesReviewManager.buildManualLookupContextForCatalog(req.library.id, req.params.catalogId)
+      if (!context) return res.sendStatus(404)
 
-      const savedLinks = Array.isArray(catalogDetail.catalog?.savedSeriesLinks) ? catalogDetail.catalog.savedSeriesLinks : []
-      const selectedLink = savedLinks.find((link) => link.id === req.params.matchId)
-      if (!selectedLink) return res.status(404).send('Saved local source link was not found')
+      const linkRows = await SeriesReviewManager.getSeriesSourceLinkRowsForLibrary(req.library.id, {
+        localDecisionKey: context.localDecisionKey,
+        activeOnly: true
+      })
+      const matchRow = linkRows.find((row) => row.id === req.params.matchId)
+      if (!matchRow) return res.status(404).send('Saved local source link was not found')
 
       const supportedSources = new Set(['fictiondb', 'audible', 'wikidata'])
-      const source = String(selectedLink.source || '').trim().toLowerCase()
+      const source = String(matchRow.source || '').trim().toLowerCase()
       if (!supportedSources.has(source)) {
         return res.status(400).send('Recheck books is only supported for FictionDB, Audible, and Wikidata saved links')
       }
 
       const lookup = await SeriesImportBridgeManager.lookupManualSeries(req.library.id, {
-        local_series_name: String(catalogDetail.catalog?.seriesName || '').trim(),
-        local_decision_key: String(selectedLink.localDecisionKey || '').trim(),
-        local_books: Array.isArray(catalogDetail.localBooks) ? catalogDetail.localBooks : [],
+        local_series_name: String(context.localSeriesName || '').trim(),
+        local_decision_key: String(context.localDecisionKey || '').trim(),
+        local_books: Array.isArray(context.localBooks) ? context.localBooks : [],
         source_kind: source,
-        source_series_name: String(selectedLink.sourceSeriesName || '').trim(),
-        source_author: String(selectedLink.sourceAuthor || '').trim(),
-        source_url: String(selectedLink.sourceUrl || '').trim(),
+        source_series_name: String(matchRow.sourceSeriesName || '').trim(),
+        source_author: String(matchRow.sourceAuthor || '').trim(),
+        source_url: String(matchRow.sourceSeriesUrl || '').trim(),
         source_text: ''
       })
       const results = Array.isArray(lookup?.results) ? lookup.results : []
       const selectedResult =
-        results.find((result) => SeriesReviewManager.normalizeExternalUrl(result?.sourceSeriesUrl || result?.sourceUrl || '') === SeriesReviewManager.normalizeExternalUrl(selectedLink.sourceUrl || '')) ||
+        results.find((result) => SeriesReviewManager.normalizeExternalUrl(result?.sourceSeriesUrl || result?.sourceUrl || '') === SeriesReviewManager.normalizeExternalUrl(matchRow.sourceSeriesUrl || '')) ||
         results.find((result) => String(result?.source || '').trim().toLowerCase() === source) ||
         null
       if (!selectedResult?.evidenceSnapshot) {
         return res.status(404).send('No refreshed source books were returned for the saved source link')
       }
 
-      const detail = await SeriesReviewManager.refreshSeriesSourceLinkEvidenceForLibrary(req.library.id, req.params.catalogId, req.params.matchId, {
+      const match = await SeriesReviewManager.refreshSeriesSourceLinkEvidenceForLibrary(req.library.id, req.params.catalogId, req.params.matchId, {
         evidenceSnapshot: selectedResult.evidenceSnapshot
       })
       return res.json({
-        detail,
+        match,
         refreshedMatchId: req.params.matchId,
         source: source
       })

@@ -1227,7 +1227,7 @@ describe('SeriesReviewManager', () => {
     const matchId = detail.catalog.localSeriesMatches[0].id
     await SeriesReviewManager.markSeriesSourceLinksImported(library.id, { matchIds: [matchId] })
 
-    const refreshedDetail = await SeriesReviewManager.refreshSeriesSourceLinkEvidenceForLibrary(library.id, localCatalog.id, matchId, {
+    const refreshedMatch = await SeriesReviewManager.refreshSeriesSourceLinkEvidenceForLibrary(library.id, localCatalog.id, matchId, {
       evidenceSnapshot: {
         source: 'fictiondb',
         sourceSeriesName: 'The Alpha Saga',
@@ -1247,7 +1247,6 @@ describe('SeriesReviewManager', () => {
       }
     })
 
-    const refreshedMatch = refreshedDetail.catalog.savedSeriesLinks.find((match) => match.id === matchId)
     expect(refreshedMatch.pendingImport).to.equal(false)
     expect(refreshedMatch.importStatus).to.equal('imported')
     expect(refreshedMatch.matchingBooks).to.have.length(1)

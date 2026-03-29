@@ -2393,6 +2393,32 @@ export default {
       })
       this.persistCatalogCaches()
     },
+    patchSelectedCatalogSavedLink(updatedMatch) {
+      if (!this.selectedCatalogDetail?.catalog?.id || !updatedMatch?.id) return
+      const patchList = (matches) => {
+        const list = Array.isArray(matches) ? matches : []
+        const index = list.findIndex((match) => match?.id === updatedMatch.id)
+        if (index === -1) return list
+        const next = [...list]
+        next.splice(index, 1, {
+          ...next[index],
+          ...updatedMatch
+        })
+        return next
+      }
+      const nextDetail = {
+        ...this.selectedCatalogDetail,
+        catalog: {
+          ...this.selectedCatalogDetail.catalog,
+          savedSeriesLinks: patchList(this.selectedCatalogDetail.catalog?.savedSeriesLinks),
+          localSeriesMatches: patchList(this.selectedCatalogDetail.catalog?.localSeriesMatches)
+        }
+      }
+      this.selectedCatalogDetail = nextDetail
+      this.$set(this.catalogDetailCache, nextDetail.catalog.id, nextDetail)
+      this.persistCatalogCaches()
+      this.patchCatalogSummary(nextDetail)
+    },
     getCatalogFetchFlags(bucket = this.catalogCategoryFilter) {
       return {
         includeUntrusted: true,
@@ -3141,12 +3167,10 @@ export default {
         const response = await this.$axios.$post(
           `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/local-match/${match.id}/recheck-books`
         )
-        const detail = response.detail
-        if (!detail) throw new Error('Missing updated series detail')
-        this.invalidateSeriesReviewCaches()
-        await this.loadCatalogs({ preferCache: false })
-        this.restoreSelectedCatalogAfterReload(detail)
-        await this.loadLocalCatalogMatches({ silent: true })
+        const updatedMatch = response.match
+        if (!updatedMatch?.id) throw new Error('Missing updated saved source link')
+        if (this.selectedCatalogId !== catalogId) return
+        this.patchSelectedCatalogSavedLink(updatedMatch)
         this.$toast.success('Saved source books refreshed')
       } catch (error) {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to refresh saved source books')

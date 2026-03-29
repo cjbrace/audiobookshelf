@@ -569,23 +569,20 @@ describe('SeriesReviewController', () => {
   })
 
   it('rechecks saved source books without rebuilding the saved link', async () => {
-    sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary').resolves({
-      catalog: {
-        id: 'catalog-1',
-        seriesName: 'Android X',
-        savedSeriesLinks: [
-          {
-            id: 'match-1',
-            source: 'audible',
-            sourceSeriesName: 'Android X',
-            sourceAuthor: 'Michael La Ronn',
-            sourceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
-            localDecisionKey: 'android x'
-          }
-        ]
-      },
+    sinon.stub(SeriesReviewManager, 'buildManualLookupContextForCatalog').resolves({
+      localSeriesName: 'Android X',
+      localDecisionKey: 'android x',
       localBooks: [{ libraryItemId: 'item-1', title: 'Android Genesis', relPath: 'Books/Android Genesis.m4b', authors: [{ name: 'Michael La Ronn' }], seriesName: 'Android X', sequence: '1' }]
     })
+    sinon.stub(SeriesReviewManager, 'getSeriesSourceLinkRowsForLibrary').resolves([
+      {
+        id: 'match-1',
+        source: 'audible',
+        sourceSeriesName: 'Android X',
+        sourceAuthor: 'Michael La Ronn',
+        sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU'
+      }
+    ])
     sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({
       results: [
         {
@@ -602,8 +599,12 @@ describe('SeriesReviewController', () => {
       ]
     })
     sinon.stub(SeriesReviewManager, 'refreshSeriesSourceLinkEvidenceForLibrary').resolves({
-      catalog: { id: 'catalog-1' },
-      rows: []
+      id: 'match-1',
+      source: 'audible',
+      seriesBooks: [
+        { title: 'Android Genesis', sequence: '1' },
+        { title: 'Android Deception', sequence: '2' }
+      ]
     })
 
     const req = {
@@ -620,6 +621,11 @@ describe('SeriesReviewController', () => {
 
     await SeriesReviewController.recheckLocalCatalogMatchBooks(req, res)
 
+    expect(SeriesReviewManager.buildManualLookupContextForCatalog.calledOnceWithExactly('library-1', 'catalog-1')).to.be.true
+    expect(SeriesReviewManager.getSeriesSourceLinkRowsForLibrary.calledOnceWithExactly('library-1', {
+      localDecisionKey: 'android x',
+      activeOnly: true
+    })).to.be.true
     expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
       local_series_name: 'Android X',
       local_decision_key: 'android x',
@@ -639,7 +645,14 @@ describe('SeriesReviewController', () => {
       }
     })).to.be.true
     expect(res.json.calledOnceWithExactly({
-      detail: { catalog: { id: 'catalog-1' }, rows: [] },
+      match: {
+        id: 'match-1',
+        source: 'audible',
+        seriesBooks: [
+          { title: 'Android Genesis', sequence: '1' },
+          { title: 'Android Deception', sequence: '2' }
+        ]
+      },
       refreshedMatchId: 'match-1',
       source: 'audible'
     })).to.be.true
