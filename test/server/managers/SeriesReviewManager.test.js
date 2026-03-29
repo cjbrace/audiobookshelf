@@ -2093,6 +2093,78 @@ describe('SeriesReviewManager', () => {
     })
   })
 
+  it('counts decimal and unsequenced local matches toward saved-link coverage', async () => {
+    await createBookFixture({
+      title: 'The Serpent and the Wings of Night',
+      currentSeries: [{ name: 'Crowns of Nyaxia', sequence: '1' }],
+      authors: ['Carissa Broadbent']
+    })
+    await createBookFixture({
+      title: 'The Ashes and the Star-Cursed King',
+      currentSeries: [{ name: 'Crowns of Nyaxia', sequence: '2' }],
+      authors: ['Carissa Broadbent']
+    })
+    await createBookFixture({
+      title: 'Slaying the Vampire Conqueror',
+      currentSeries: [{ name: 'Crowns of Nyaxia', sequence: '2.5' }],
+      authors: ['Carissa Broadbent']
+    })
+    await createBookFixture({
+      title: 'Encounter [Dramatized Adaptation]',
+      currentSeries: [{ name: 'Deathlands', sequence: '' }],
+      authors: ['James Axler']
+    })
+
+    const crownsImport = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Crowns of Nyaxia',
+        entries: [
+          {
+            title: 'The Serpent and the Wings of Night',
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/Crowns-of-Nyaxia-Audiobooks/B0BW49JH69' }]
+          },
+          {
+            title: 'The Ashes and the Star-Cursed King',
+            sequence: '2',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/Crowns-of-Nyaxia-Audiobooks/B0BW49JH69' }]
+          },
+          {
+            title: 'Slaying the Vampire Conqueror',
+            sequence: '2.5',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/Crowns-of-Nyaxia-Audiobooks/B0BW49JH69' }]
+          }
+        ]
+      },
+      {
+        seriesName: 'Deathlands',
+        entries: [
+          {
+            title: 'Encounter',
+            sequence: '',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95, evidenceUrl: 'https://www.fictiondb.com/series/deathlands-james-axler~3452.htm' }]
+          }
+        ]
+      }
+    ])
+
+    const crownsDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, crownsImport.catalogs.find((catalog) => catalog.seriesName === 'Crowns of Nyaxia').id)
+    const crownsCoverage = SeriesReviewManager.buildCatalogSourceCoverageBySourceUrl(crownsDetail.rows, crownsDetail.localBooks).get('https://www.audible.co.uk/series/Crowns-of-Nyaxia-Audiobooks/B0BW49JH69')
+    expect(crownsCoverage).to.deep.equal({
+      linkedBookCount: 3,
+      totalBookCount: 3,
+      coverageStatus: 'linked'
+    })
+
+    const deathlandsDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, crownsImport.catalogs.find((catalog) => catalog.seriesName === 'Deathlands').id)
+    const deathlandsCoverage = SeriesReviewManager.buildCatalogSourceCoverageBySourceUrl(deathlandsDetail.rows, deathlandsDetail.localBooks).get('https://www.fictiondb.com/series/deathlands-james-axler~3452.htm')
+    expect(deathlandsCoverage).to.deep.equal({
+      linkedBookCount: 1,
+      totalBookCount: 1,
+      coverageStatus: 'linked'
+    })
+  })
+
   it('treats ranged local sequences as compatible with individual suggestion slots', async () => {
     expect(SeriesReviewManager.sequencesCompatible('1-2', '1')).to.equal(true)
     expect(SeriesReviewManager.sequencesCompatible('1-2', '2')).to.equal(true)

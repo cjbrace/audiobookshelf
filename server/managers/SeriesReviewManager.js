@@ -1388,6 +1388,17 @@ class SeriesReviewManager {
     return this.normalizeKeyPart(value || '')
   }
 
+  stripCatalogRecordingVariant(value) {
+    const original = String(value || '').trim()
+    if (!original) return ''
+
+    return original
+      .replace(/\s*[\(\[\{]\s*(?:dramati[sz]ed adaptation|graphicaudio(?:\s+edition)?|full cast(?:\s+audioplay)?|audioplay|audio drama|dramatization)\s*[\)\]\}]\s*$/i, '')
+      .replace(/\s*[:\-]\s*(?:dramati[sz]ed adaptation|graphicaudio(?:\s+edition)?|full cast(?:\s+audioplay)?|audioplay|audio drama|dramatization)\s*$/i, '')
+      .replace(/\s+(?:dramati[sz]ed adaptation|graphicaudio(?:\s+edition)?|full cast(?:\s+audioplay)?|audioplay|audio drama|dramatization)\s*$/i, '')
+      .trim()
+  }
+
   getCatalogEntryTitleKeys(value, seriesName = '') {
     const keys = new Set()
     const original = String(value || '').trim()
@@ -1399,12 +1410,20 @@ class SeriesReviewManager {
     }
 
     addKey(original)
+    addKey(this.normalizeManagementBaseName(original))
+    addKey(this.stripCatalogRecordingVariant(original))
+    addKey(this.normalizeManagementBaseName(this.stripCatalogRecordingVariant(original)))
 
     const normalizedSeriesName = String(seriesName || '').trim()
     if (normalizedSeriesName) {
       const escapedSeriesName = normalizedSeriesName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const stripped = original.replace(new RegExp(`^${escapedSeriesName}(?:\\s*[:\\-]\\s*|\\s+)`, 'i'), '').trim()
-      if (stripped && stripped !== original) addKey(stripped)
+      if (stripped && stripped !== original) {
+        addKey(stripped)
+        addKey(this.normalizeManagementBaseName(stripped))
+        addKey(this.stripCatalogRecordingVariant(stripped))
+        addKey(this.normalizeManagementBaseName(this.stripCatalogRecordingVariant(stripped)))
+      }
 
       const seriesTokens = this.tokenizeSearchText(normalizedSeriesName)
       const separatorMatch = original.match(/^(.+?)(?:\s*[:\-]\s*)(.+)$/)
@@ -1415,6 +1434,9 @@ class SeriesReviewManager {
         const sharedSeriesPrefixTokenCount = prefixTokens.filter((token) => seriesTokens.includes(token)).length
         if (suffix && prefixTokens.length && sharedSeriesPrefixTokenCount >= Math.min(1, prefixTokens.length)) {
           addKey(suffix)
+          addKey(this.normalizeManagementBaseName(suffix))
+          addKey(this.stripCatalogRecordingVariant(suffix))
+          addKey(this.normalizeManagementBaseName(this.stripCatalogRecordingVariant(suffix)))
         }
       }
     }
@@ -1776,8 +1798,6 @@ class SeriesReviewManager {
     const matchedLocalBookIdsByUrl = new Map()
 
     ;(Array.isArray(rows) ? rows : []).forEach((row) => {
-      const rowType = row?.rowType || 'slot'
-      if (rowType !== 'slot' || row?.isDecimal) return
       const supports = Array.isArray(row?.sourceSupport) ? row.sourceSupport : []
       const localRowBooks = Array.isArray(row?.localBooks) ? row.localBooks : []
       if (!supports.length || !localRowBooks.length) return
