@@ -1508,7 +1508,7 @@ describe('SeriesReviewManager', () => {
     const linkedCatalog = linkedCatalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
     expect(linkedCatalog.displayBucket).to.equal('locally_linked')
     expect(linkedCatalog.hasPendingLink).to.equal(false)
-    expect(linkedCatalog.hasPartialLink).to.equal(false)
+    expect(linkedCatalog.hasPartialLink).to.equal(true)
   })
 
   it('keeps partial summary flags when a linked catalog also has an unresolved partial saved link', async () => {
@@ -2053,7 +2053,42 @@ describe('SeriesReviewManager', () => {
     expect(omnibusRow.localBooks[0].title).to.equal('Android X: The Complete Series')
     expect(coverage).to.deep.equal({
       linkedBookCount: 3,
-      totalBookCount: 3,
+      totalBookCount: 2,
+      coverageStatus: 'linked'
+    })
+  })
+
+  it('does not mark a source partial just because the source has more books than the local series', async () => {
+    await createBookFixture({
+      title: 'A Borrowed Man',
+      currentSeries: [{ name: 'A Borrowed Man', sequence: '1' }],
+      authors: ['Gene Wolfe']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'A Borrowed Man',
+        entries: [
+          {
+            title: 'A Borrowed Man',
+            sequence: '1',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/A-Borrowed-Man-Audiobooks/B082WTFWYB' }]
+          },
+          {
+            title: 'Interlibrary Loan',
+            sequence: '2',
+            sources: [{ source: 'audible', label: 'AUD', confidence: 0.95, evidenceUrl: 'https://www.audible.co.uk/series/A-Borrowed-Man-Audiobooks/B082WTFWYB' }]
+          }
+        ]
+      }
+    ])
+
+    const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    const coverage = SeriesReviewManager.buildCatalogSourceCoverageBySourceUrl(detail.rows, detail.localBooks).get('https://www.audible.co.uk/series/A-Borrowed-Man-Audiobooks/B082WTFWYB')
+
+    expect(coverage).to.deep.equal({
+      linkedBookCount: 1,
+      totalBookCount: 1,
       coverageStatus: 'linked'
     })
   })

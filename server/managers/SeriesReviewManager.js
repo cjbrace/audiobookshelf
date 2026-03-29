@@ -1772,33 +1772,31 @@ class SeriesReviewManager {
   }
 
   buildCatalogSourceCoverageBySourceUrl(rows = [], localBooks = []) {
-    const matchedSlotKeysByUrl = new Map()
-    const totalSlotKeysByUrl = new Map()
+    const totalBookCount = this.getCoverageEligibleLocalBookCount(localBooks)
+    const matchedLocalBookIdsByUrl = new Map()
 
     ;(Array.isArray(rows) ? rows : []).forEach((row) => {
       const rowType = row?.rowType || 'slot'
       if (rowType !== 'slot' || row?.isDecimal) return
       const supports = Array.isArray(row?.sourceSupport) ? row.sourceSupport : []
-      if (!supports.length) return
-      const slotKey = this.normalizeCatalogSlotToken(row?.slot || '')
-      if (!slotKey) return
       const localRowBooks = Array.isArray(row?.localBooks) ? row.localBooks : []
+      if (!supports.length || !localRowBooks.length) return
 
       supports.forEach((support) => {
         const evidenceUrl = this.normalizeExternalUrl(support?.evidenceUrl || '')
         if (!evidenceUrl) return
-        if (!totalSlotKeysByUrl.has(evidenceUrl)) totalSlotKeysByUrl.set(evidenceUrl, new Set())
-        totalSlotKeysByUrl.get(evidenceUrl).add(slotKey)
-        if (!localRowBooks.length) return
-        if (!matchedSlotKeysByUrl.has(evidenceUrl)) matchedSlotKeysByUrl.set(evidenceUrl, new Set())
-        matchedSlotKeysByUrl.get(evidenceUrl).add(slotKey)
+        if (!matchedLocalBookIdsByUrl.has(evidenceUrl)) matchedLocalBookIdsByUrl.set(evidenceUrl, new Set())
+        const matchedIds = matchedLocalBookIdsByUrl.get(evidenceUrl)
+        localRowBooks.forEach((book) => {
+          const libraryItemId = String(book?.libraryItemId || '').trim()
+          if (libraryItemId) matchedIds.add(libraryItemId)
+        })
       })
     })
 
     const coverageBySourceUrl = new Map()
-    totalSlotKeysByUrl.forEach((totalSlotKeys, evidenceUrl) => {
-      const linkedBookCount = (matchedSlotKeysByUrl.get(evidenceUrl) || new Set()).size
-      const totalBookCount = totalSlotKeys.size
+    matchedLocalBookIdsByUrl.forEach((matchedIds, evidenceUrl) => {
+      const linkedBookCount = matchedIds.size
       coverageBySourceUrl.set(evidenceUrl, {
         linkedBookCount,
         totalBookCount,
