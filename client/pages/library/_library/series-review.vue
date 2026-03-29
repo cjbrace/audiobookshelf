@@ -407,44 +407,36 @@
                               <template v-else>
                                 <span>{{ suggestion.suggestedName }}</span>
                                 <span v-if="suggestion.suggestedSequence" class="inline-flex items-center px-2 py-0.5 rounded-full bg-white/10 text-xs text-gray-100 border border-white/15">#{{ suggestion.suggestedSequence }}</span>
+                                <span v-if="suggestion.expectedTitle" class="text-sky-100 font-medium">- {{ suggestion.expectedTitle }}</span>
                               </template>
                             </div>
-                            <p v-if="suggestion.expectedTitle" class="mt-1 text-sm text-sky-100">
-                              Expected title: {{ suggestion.expectedTitle }}
-                            </p>
                             <p v-if="suggestion.previousDecision" class="text-sm mt-1" :class="suggestion.hasMeaningfulUpdateSinceDecision ? 'text-amber-200' : 'text-gray-400'">
                               {{ formatPreviousDecision(suggestion) }}
                             </p>
                           </div>
-                          <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-gray-400 text-right">
-                            <span class="whitespace-nowrap">Seen {{ formatTime(suggestion.firstSeenAt) }}</span>
-                            <span v-if="suggestion.lastSeenAt && suggestion.lastSeenAt !== suggestion.firstSeenAt" class="whitespace-nowrap">Updated {{ formatTime(suggestion.lastSeenAt) }}</span>
-                            <span class="whitespace-nowrap">{{ suggestion.sourceCount }} source<span v-if="suggestion.sourceCount !== 1">s</span></span>
-                          </div>
-                        </div>
-
-                        <div class="mt-3 flex flex-wrap gap-2">
-                          <div
-                            v-for="contribution in suggestion.contributions"
-                            :key="suggestion.id + ':' + contribution.source"
-                            class="px-2.5 py-1 rounded-full border text-sm"
-                            :class="getContributionPillClass(contribution)"
-                          >
-                            <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
-                            <span v-if="contribution.noSeries" class="text-gray-300"> no series</span>
-                          </div>
-                          <div
-                            v-for="contribution in getConflictContributions(row)"
-                            v-if="showSubordinateConflicts(row, suggestion)"
-                            :key="suggestion.id + ':conflict:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
-                            class="px-2.5 py-1 rounded-full border border-red-300/35 bg-red-500/10 text-sm text-red-50"
-                          >
-                            <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
-                            <span v-if="contribution.noSeries"> no series</span>
-                            <span v-else>
-                              {{ contribution.seriesName }}
-                              <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
-                            </span>
+                          <div class="flex flex-wrap items-center justify-end gap-2 text-right">
+                            <div
+                              v-for="contribution in suggestion.contributions"
+                              :key="suggestion.id + ':' + contribution.source"
+                              class="px-2.5 py-1 rounded-full border text-sm"
+                              :class="getContributionPillClass(contribution)"
+                            >
+                              <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
+                              <span v-if="contribution.noSeries" class="text-gray-300"> no series</span>
+                            </div>
+                            <div
+                              v-for="contribution in getConflictContributions(row)"
+                              v-if="showSubordinateConflicts(row, suggestion)"
+                              :key="suggestion.id + ':conflict:' + contribution.source + ':' + (contribution.seriesName || 'no-series')"
+                              class="px-2.5 py-1 rounded-full border border-red-300/35 bg-red-500/10 text-sm text-red-50"
+                            >
+                              <span class="font-medium uppercase tracking-wide">{{ contribution.label || contribution.source }}</span>
+                              <span v-if="contribution.noSeries"> no series</span>
+                              <span v-else>
+                                {{ contribution.seriesName }}
+                                <span v-if="contribution.sequence">&nbsp;#{{ contribution.sequence }}</span>
+                              </span>
+                            </div>
                           </div>
                         </div>
 
@@ -458,9 +450,6 @@
                           <p v-if="suggestion.evidenceSummary?.disagreement" class="text-amber-200">
                             Source disagreement: {{ suggestion.evidenceSummary.supportCount }} positive / {{ suggestion.evidenceSummary.conflictCount }} conflicting
                           </p>
-                          <p v-if="suggestion.evidenceSummary?.manualReferenceCount" class="text-gray-400">
-                            Manual references: {{ suggestion.evidenceSummary.manualReferenceCount }}
-                          </p>
                           <p v-if="suggestion.evidenceSummary?.automatedSecondarySupportCount" class="text-sky-200">
                             Supplemental automated support: {{ suggestion.evidenceSummary.automatedSecondarySupportCount }}
                           </p>
@@ -473,7 +462,16 @@
                             class="rounded border border-white/10 bg-black/15 px-3 py-2 text-sm text-gray-200"
                           >
                             <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                              <span class="font-medium text-white">{{ getSourceDisplayName(contribution.source) }}</span>
+                              <a
+                                v-if="contribution.evidenceUrl"
+                                class="font-medium text-sky-200 hover:underline"
+                                :href="contribution.evidenceUrl"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {{ getSourceDisplayName(contribution.source) }}
+                              </a>
+                              <span v-else class="font-medium text-white">{{ getSourceDisplayName(contribution.source) }}</span>
                               <span v-if="contribution.noSeries" class="text-red-200">No series evidence</span>
                               <span v-else>
                                 {{ contribution.seriesName }}
@@ -483,43 +481,48 @@
                                 conf: {{ formatConfidence(contribution.confidence) }}
                               </span>
                             </div>
-                            <a
-                              v-if="contribution.evidenceUrl"
-                              class="mt-1 inline-flex text-sky-200 hover:underline"
-                              :href="contribution.evidenceUrl"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              Evidence link
-                            </a>
                             <p v-if="contribution.sourceRef" class="mt-1 text-xs text-gray-500 break-all">
                               ref: {{ contribution.sourceRef }}
                             </p>
                           </div>
                         </div>
 
-                        <div v-if="suggestion.state === 'pending'" class="mt-3 flex flex-wrap gap-2">
-                          <ui-btn
-                            v-if="suggestion.kind === 'series'"
-                            small
-                            class="w-28 justify-center text-center"
-                            :color="selectedReplaceTarget[row.libraryItemId] ? 'bg-warning/70' : 'bg-success/80'"
-                            :loading="actionKey === suggestion.id + ':apply'"
-                            @click="applySuggestion(row, suggestion)"
-                          >
-                            {{ selectedReplaceTarget[row.libraryItemId] ? 'Replace' : 'Add' }}
-                          </ui-btn>
-                          <ui-btn
-                            small
-                            color="bg-bg border border-white/20"
-                            :loading="actionKey === suggestion.id + ':dismiss'"
-                            @click="dismissSuggestion(suggestion)"
-                          >
-                            Dismiss
-                          </ui-btn>
-                        </div>
-
                         <div v-if="suggestion.kind === 'series'" class="mt-3 space-y-3">
+                          <div v-if="suggestion.state === 'pending'" class="flex flex-wrap items-center gap-2">
+                            <ui-btn
+                              small
+                              class="w-28 justify-center text-center"
+                              :color="selectedReplaceTarget[row.libraryItemId] ? 'bg-warning/70' : 'bg-success/80'"
+                              :loading="actionKey === suggestion.id + ':apply'"
+                              @click="applySuggestion(row, suggestion)"
+                            >
+                              {{ selectedReplaceTarget[row.libraryItemId] ? 'Replace' : 'Add' }}
+                            </ui-btn>
+                            <ui-btn
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="actionKey === suggestion.id + ':dismiss'"
+                              @click="dismissSuggestion(suggestion)"
+                            >
+                              Dismiss
+                            </ui-btn>
+                            <input
+                              :value="getRenameDraft(suggestion)"
+                              type="text"
+                              class="min-w-[14rem] rounded border border-white/15 bg-black/20 px-3 py-1.5 text-sm text-white"
+                              :placeholder="suggestion.suggestedName || 'Canonical series name'"
+                              @input="setRenameDraft(suggestion.id, $event.target.value)"
+                            />
+                            <ui-btn
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="actionKey === `${suggestion.id}:rename`"
+                              @click="renameSuggestion(row, suggestion)"
+                            >
+                              Rename
+                            </ui-btn>
+                          </div>
+
                           <div v-if="getPrimarySuggestions(row).length > 1" class="flex flex-wrap items-center gap-2">
                             <ui-btn
                               small
@@ -537,24 +540,6 @@
                               @click="aliasSuggestion(row, suggestion)"
                             >
                               Alias to {{ getAliasPrimaryLabel(row) }}
-                            </ui-btn>
-                          </div>
-
-                          <div class="flex flex-wrap items-center gap-2">
-                            <input
-                              :value="getRenameDraft(suggestion)"
-                              type="text"
-                              class="min-w-[14rem] rounded border border-white/15 bg-black/20 px-3 py-1.5 text-sm text-white"
-                              :placeholder="suggestion.suggestedName || 'Canonical series name'"
-                              @input="setRenameDraft(suggestion.id, $event.target.value)"
-                            />
-                            <ui-btn
-                              small
-                              color="bg-bg border border-white/20"
-                              :loading="actionKey === `${suggestion.id}:rename`"
-                              @click="renameSuggestion(row, suggestion)"
-                            >
-                              Rename
                             </ui-btn>
                           </div>
 
