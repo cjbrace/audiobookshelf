@@ -1290,12 +1290,13 @@ class SeriesReviewManager {
     }
   }
 
-  expandCatalogSequenceCoverage(sequenceLabel) {
+  expandCatalogSequenceCoverage(sequenceLabel, options = {}) {
     const normalizedLabel = String(sequenceLabel || '')
       .trim()
       .replace(/\s+/g, ' ')
     if (!normalizedLabel) return []
-    if (this.isOmnibusCatalogSequenceLabel(normalizedLabel)) return []
+    const includeOmnibusRanges = !!options?.includeOmnibusRanges
+    if (this.isOmnibusCatalogSequenceLabel(normalizedLabel) && !includeOmnibusRanges) return []
 
     const slots = new Set()
     normalizedLabel.split(',').forEach((rawPart) => {
@@ -1318,6 +1319,10 @@ class SeriesReviewManager {
     })
 
     return [...slots]
+  }
+
+  getLocalBookCoveredSlots(book) {
+    return this.expandCatalogSequenceCoverage(book?.sequence || '', { includeOmnibusRanges: true })
   }
 
   isIntegerCatalogSlot(slot) {
@@ -1767,30 +1772,33 @@ class SeriesReviewManager {
   }
 
   buildCatalogSourceCoverageBySourceUrl(rows = [], localBooks = []) {
-    const totalBookCount = this.getCoverageEligibleLocalBookCount(localBooks)
-    const matchedLocalBookIdsByUrl = new Map()
+    const matchedSlotKeysByUrl = new Map()
+    const totalSlotKeysByUrl = new Map()
 
     ;(Array.isArray(rows) ? rows : []).forEach((row) => {
-      if (row?.rowType === 'omnibus') return
+      const rowType = row?.rowType || 'slot'
+      if (rowType !== 'slot' || row?.isDecimal) return
       const supports = Array.isArray(row?.sourceSupport) ? row.sourceSupport : []
+      if (!supports.length) return
+      const slotKey = this.normalizeCatalogSlotToken(row?.slot || '')
+      if (!slotKey) return
       const localRowBooks = Array.isArray(row?.localBooks) ? row.localBooks : []
-      if (!supports.length || !localRowBooks.length) return
 
       supports.forEach((support) => {
         const evidenceUrl = this.normalizeExternalUrl(support?.evidenceUrl || '')
         if (!evidenceUrl) return
-        if (!matchedLocalBookIdsByUrl.has(evidenceUrl)) matchedLocalBookIdsByUrl.set(evidenceUrl, new Set())
-        const matchedIds = matchedLocalBookIdsByUrl.get(evidenceUrl)
-        localRowBooks.forEach((book) => {
-          const libraryItemId = String(book?.libraryItemId || '').trim()
-          if (libraryItemId) matchedIds.add(libraryItemId)
-        })
+        if (!totalSlotKeysByUrl.has(evidenceUrl)) totalSlotKeysByUrl.set(evidenceUrl, new Set())
+        totalSlotKeysByUrl.get(evidenceUrl).add(slotKey)
+        if (!localRowBooks.length) return
+        if (!matchedSlotKeysByUrl.has(evidenceUrl)) matchedSlotKeysByUrl.set(evidenceUrl, new Set())
+        matchedSlotKeysByUrl.get(evidenceUrl).add(slotKey)
       })
     })
 
     const coverageBySourceUrl = new Map()
-    matchedLocalBookIdsByUrl.forEach((matchedIds, evidenceUrl) => {
-      const linkedBookCount = matchedIds.size
+    totalSlotKeysByUrl.forEach((totalSlotKeys, evidenceUrl) => {
+      const linkedBookCount = (matchedSlotKeysByUrl.get(evidenceUrl) || new Set()).size
+      const totalBookCount = totalSlotKeys.size
       coverageBySourceUrl.set(evidenceUrl, {
         linkedBookCount,
         totalBookCount,
@@ -2872,7 +2880,7 @@ class SeriesReviewManager {
       const localBooks = collectLocalBooksForSeriesRows(matchingSeriesRows)
       const slotMap = new Map()
       localBooks.forEach((book) => {
-        const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+        const coveredSlots = this.getLocalBookCoveredSlots(book)
         if (!coveredSlots.length) return
         coveredSlots.forEach((coveredSlot) => {
           const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
@@ -2954,7 +2962,7 @@ class SeriesReviewManager {
       if (!localBooks.length) continue
       const slotMap = new Map()
       localBooks.forEach((book) => {
-        const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+        const coveredSlots = this.getLocalBookCoveredSlots(book)
         if (!coveredSlots.length) return
         coveredSlots.forEach((coveredSlot) => {
           const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
@@ -3607,7 +3615,7 @@ class SeriesReviewManager {
     const slotMap = new Map()
 
     localBooks.forEach((book) => {
-      const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+      const coveredSlots = this.getLocalBookCoveredSlots(book)
       if (!coveredSlots.length) return
       coveredSlots.forEach((coveredSlot) => {
         const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
@@ -3732,7 +3740,7 @@ class SeriesReviewManager {
 
     const slotMap = new Map()
     localBooks.forEach((book) => {
-      const coveredSlots = this.expandCatalogSequenceCoverage(book.sequence || '')
+      const coveredSlots = this.getLocalBookCoveredSlots(book)
       if (!coveredSlots.length) return
       coveredSlots.forEach((coveredSlot) => {
         const slot = this.ensureCatalogSlot(slotMap, coveredSlot)
@@ -4187,8 +4195,19 @@ class SeriesReviewManager {
   sequencesCompatible(left, right) {
     const leftSequence = this.normalizeSequence(left)
     const rightSequence = this.normalizeSequence(right)
-    if (rightSequence) return leftSequence === rightSequence
-    return true
+    if (!rightSequence) return true
+    if (!leftSequence) return false
+    if (leftSequence === rightSequence) return true
+
+    const leftCoveredSlots = new Set(this.expandCatalogSequenceCoverage(leftSequence, { includeOmnibusRanges: true }))
+    if (!leftCoveredSlots.size) return false
+
+    const rightCoveredSlots = this.expandCatalogSequenceCoverage(rightSequence, { includeOmnibusRanges: true })
+    if (rightCoveredSlots.length) {
+      return rightCoveredSlots.every((slot) => leftCoveredSlots.has(slot))
+    }
+
+    return leftCoveredSlots.has(rightSequence)
   }
 
   findMatchingCurrentSeriesEntry(currentSeries, suggestedName, suggestedSequence, resolver = this.buildSeriesNameControlResolver([])) {
@@ -4834,9 +4853,15 @@ class SeriesReviewManager {
       throw new Error(`Unsupported apply mode "${mode}"`)
     }
 
+    let nextSuggestedSequence = suggestion.suggestedSequence || null
+    const existingSuggestedEntry = nextSeries.find((series) => resolver.getDecisionKey(series.name) === resolver.getDecisionKey(suggestedName))
+    if (existingSuggestedEntry && this.sequencesCompatible(existingSuggestedEntry.sequence, nextSuggestedSequence)) {
+      nextSuggestedSequence = existingSuggestedEntry.sequence || nextSuggestedSequence
+    }
+
     const suggestedSeriesObject = {
       name: suggestedName,
-      sequence: suggestion.suggestedSequence || null
+      sequence: nextSuggestedSequence
     }
     const existingSuggestedIndex = nextSeries.findIndex((series) => resolver.getDecisionKey(series.name) === resolver.getDecisionKey(suggestedName))
     if (existingSuggestedIndex === -1) nextSeries.push(suggestedSeriesObject)

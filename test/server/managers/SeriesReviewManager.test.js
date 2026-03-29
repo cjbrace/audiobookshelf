@@ -1508,7 +1508,7 @@ describe('SeriesReviewManager', () => {
     const linkedCatalog = linkedCatalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
     expect(linkedCatalog.displayBucket).to.equal('locally_linked')
     expect(linkedCatalog.hasPendingLink).to.equal(false)
-    expect(linkedCatalog.hasPartialLink).to.equal(true)
+    expect(linkedCatalog.hasPartialLink).to.equal(false)
   })
 
   it('keeps partial summary flags when a linked catalog also has an unresolved partial saved link', async () => {
@@ -1988,7 +1988,7 @@ describe('SeriesReviewManager', () => {
     expect(slot3.localBooks[0].title).to.equal('Rincewind Book Three Full Cast')
   })
 
-  it('keeps omnibus range entries out of core slot disputes and coverage counts', async () => {
+  it('lets local omnibus ranges cover numbered slots while keeping source omnibus rows separate', async () => {
     await createBookFixture({
       title: 'Android Paradox',
       currentSeries: [{ name: 'Android X', sequence: '1' }]
@@ -2039,10 +2039,12 @@ describe('SeriesReviewManager', () => {
 
     expect(slot1.status).to.equal('covered')
     expect(slot1.choices).to.have.length(1)
+    expect(slot1.localBooks.map((book) => book.title)).to.include('Android X: The Complete Series')
     expect(slot2.status).to.equal('covered')
     expect(slot2.choices).to.have.length(1)
-    expect(slot3.status).to.equal('missing')
-    expect(slot3.expectedTitle).to.equal('Android Winter')
+    expect(slot2.localBooks.map((book) => book.title)).to.include('Android X: The Complete Series')
+    expect(slot3.status).to.equal('covered')
+    expect(slot3.localBooks.map((book) => book.title)).to.deep.equal(['Android X: The Complete Series'])
     expect(detail.slots.filter((slot) => slot.status === 'disputed')).to.have.length(0)
     expect(omnibusRow).to.exist
     expect(omnibusRow.status).to.equal('omnibus')
@@ -2050,10 +2052,17 @@ describe('SeriesReviewManager', () => {
     expect(omnibusRow.localBooks).to.have.length(1)
     expect(omnibusRow.localBooks[0].title).to.equal('Android X: The Complete Series')
     expect(coverage).to.deep.equal({
-      linkedBookCount: 2,
-      totalBookCount: 2,
+      linkedBookCount: 3,
+      totalBookCount: 3,
       coverageStatus: 'linked'
     })
+  })
+
+  it('treats ranged local sequences as compatible with individual suggestion slots', async () => {
+    expect(SeriesReviewManager.sequencesCompatible('1-2', '1')).to.equal(true)
+    expect(SeriesReviewManager.sequencesCompatible('1-2', '2')).to.equal(true)
+    expect(SeriesReviewManager.sequencesCompatible('1-3', '2')).to.equal(true)
+    expect(SeriesReviewManager.sequencesCompatible('1', '1-2')).to.equal(false)
   })
 
   it('preserves catalog source provenance metadata in series detail support rows', async () => {
