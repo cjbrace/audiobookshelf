@@ -1018,7 +1018,7 @@
                       <div class="space-y-1">
                         <p class="text-sm uppercase tracking-wide text-gray-400">Goodreads URL</p>
                         <p class="text-sm text-gray-300">
-                          Paste a Goodreads series URL. This creates a normal saved lookup link that can be imported, rebuilt, and unlinked like the other sources.
+                          Paste a Goodreads series or list URL. This creates a normal saved lookup link that can be imported, rebuilt, and unlinked like the other sources.
                         </p>
                       </div>
                       <div class="space-y-2">
@@ -1027,7 +1027,7 @@
                           v-model.trim="catalogManualGoodreadsUrl"
                           type="text"
                           class="w-full rounded border border-white/10 bg-black/20 px-3 py-2 text-sm text-white"
-                          placeholder="https://www.goodreads.com/series/..."
+                          placeholder="https://www.goodreads.com/series/... or https://www.goodreads.com/list/show/..."
                         >
                       </div>
                       <div class="flex justify-end">
