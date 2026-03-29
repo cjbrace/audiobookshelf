@@ -2730,6 +2730,11 @@ describe('SeriesReviewManager', () => {
     expect(visibleCatalogs[0].seriesName).to.equal('The First Law')
     expect(visibleCatalogs[0].displayBucket).to.equal('checked')
 
+    await SeriesReviewManager.rebuildCatalogsForLibrary(library.id)
+    const rebuiltCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true, false)
+    expect(rebuiltCatalogs).to.have.length(1)
+    expect(rebuiltCatalogs[0].displayBucket).to.equal('checked')
+
     const uncheckedDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, checkedDetail.catalog.id, 'visible')
     expect(uncheckedDetail.catalog.visibilityStatus).to.equal('visible')
   })

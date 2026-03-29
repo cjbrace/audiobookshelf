@@ -2872,6 +2872,14 @@ export default {
     async uncheckCatalog(catalog) {
       await this.setCatalogCheckedState(catalog, false)
     },
+    restoreSelectedCatalogAfterReload(detail) {
+      if (!detail?.catalog?.id) return
+      this.selectedCatalogDetail = detail
+      this.selectedCatalogId = detail.catalog.id
+      this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+      this.persistCatalogCaches()
+      this.scrollCatalogListItemIntoView(detail.catalog.id, { align: 'start', force: true })
+    },
     async saveCatalogRename() {
       if (!this.selectedCatalogDetailReady) return
       const targetLabel = String(this.selectedCatalogRenameDraft || '').trim()
@@ -2891,10 +2899,7 @@ export default {
         this.cancelCatalogRename()
         this.invalidateSeriesReviewCaches()
         await this.loadCatalogs({ preferCache: false })
-        this.selectedCatalogDetail = detail
-        this.selectedCatalogId = detail.catalog.id
-        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
-        this.persistCatalogCaches()
+        this.restoreSelectedCatalogAfterReload(detail)
         await this.loadQueue()
         this.$toast.success('Series name updated')
       } catch (error) {
@@ -2919,11 +2924,8 @@ export default {
         this.cancelCatalogCreate()
         this.invalidateSeriesReviewCaches()
         await this.loadCatalogs({ preferCache: false })
-        this.selectedCatalogDetail = detail
-        this.selectedCatalogId = detail.catalog.id
-        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+        this.restoreSelectedCatalogAfterReload(detail)
         this.patchCatalogSummary(detail)
-        this.persistCatalogCaches()
         this.$toast.success('New series created')
       } catch (error) {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to create the new series')
@@ -3019,10 +3021,7 @@ export default {
         if (this.selectedCatalogId !== catalogId) return
         this.invalidateSeriesReviewCaches()
         await this.loadCatalogs({ preferCache: false })
-        this.selectedCatalogDetail = detail
-        this.selectedCatalogId = detail.catalog.id
-        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
-        this.persistCatalogCaches()
+        this.restoreSelectedCatalogAfterReload(detail)
         this.$toast.success('Removed local source link')
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to remove local source link')
@@ -3042,10 +3041,7 @@ export default {
         if (!detail) throw new Error('Missing updated series detail')
         this.invalidateSeriesReviewCaches()
         await this.loadCatalogs({ preferCache: false })
-        this.selectedCatalogDetail = detail
-        this.selectedCatalogId = detail.catalog.id
-        this.$set(this.catalogDetailCache, detail.catalog.id, detail)
-        this.persistCatalogCaches()
+        this.restoreSelectedCatalogAfterReload(detail)
         await this.loadQueue()
         const summary = response.summary || {}
         this.$toast.success(

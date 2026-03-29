@@ -4730,11 +4730,12 @@ class SeriesReviewManager {
       const mergedEntries = this.mergeCatalogEntryPayloads(group.rows.flatMap((row) => row.entries || []))
       const mergedSelection = group.rows.reduce((selectionBySlot, row) => this.mergeCatalogSelectionBySlot(selectionBySlot, row.selectionBySlot), {})
       const anyVisible = group.rows.some((row) => (row.visibilityStatus || 'visible') !== 'dismissed')
+      const anyChecked = group.rows.some((row) => (row.visibilityStatus || 'visible') === 'checked')
       primaryCatalog.seriesName = group.canonicalName
       primaryCatalog.seriesNameNormalized = this.normalizeKeyPart(group.canonicalName)
       primaryCatalog.trustStatus = group.rows.some((row) => row.trustStatus === 'trusted') ? 'trusted' : 'untrusted'
-      primaryCatalog.visibilityStatus = anyVisible ? 'visible' : 'dismissed'
-      primaryCatalog.dismissedAt = anyVisible ? null : group.rows.map((row) => row.dismissedAt).find(Boolean) || new Date()
+      primaryCatalog.visibilityStatus = anyChecked ? 'checked' : anyVisible ? 'visible' : 'dismissed'
+      primaryCatalog.dismissedAt = primaryCatalog.visibilityStatus === 'dismissed' ? group.rows.map((row) => row.dismissedAt).find(Boolean) || new Date() : null
       primaryCatalog.entries = mergedEntries
       primaryCatalog.selectionBySlot = mergedSelection
       await primaryCatalog.save()
