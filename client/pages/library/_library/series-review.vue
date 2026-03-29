@@ -488,39 +488,43 @@
                         </div>
 
                         <div v-if="suggestion.kind === 'series'" class="mt-3 space-y-3">
-                          <div v-if="suggestion.state === 'pending'" class="flex flex-wrap items-center gap-2">
-                            <ui-btn
-                              small
-                              class="w-28 justify-center text-center"
-                              :color="selectedReplaceTarget[row.libraryItemId] ? 'bg-warning/70' : 'bg-success/80'"
-                              :loading="actionKey === suggestion.id + ':apply'"
-                              @click="applySuggestion(row, suggestion)"
-                            >
-                              {{ selectedReplaceTarget[row.libraryItemId] ? 'Replace' : 'Add' }}
-                            </ui-btn>
-                            <ui-btn
-                              small
-                              color="bg-bg border border-white/20"
-                              :loading="actionKey === suggestion.id + ':dismiss'"
-                              @click="dismissSuggestion(suggestion)"
-                            >
-                              Dismiss
-                            </ui-btn>
-                            <input
-                              :value="getRenameDraft(suggestion)"
-                              type="text"
-                              class="min-w-[14rem] rounded border border-white/15 bg-black/20 px-3 py-1.5 text-sm text-white"
-                              :placeholder="suggestion.suggestedName || 'Canonical series name'"
-                              @input="setRenameDraft(suggestion.id, $event.target.value)"
-                            />
-                            <ui-btn
-                              small
-                              color="bg-bg border border-white/20"
-                              :loading="actionKey === `${suggestion.id}:rename`"
-                              @click="renameSuggestion(row, suggestion)"
-                            >
-                              Rename
-                            </ui-btn>
+                          <div v-if="suggestion.state === 'pending'" class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <ui-btn
+                                small
+                                class="w-28 justify-center text-center"
+                                :color="selectedReplaceTarget[row.libraryItemId] ? 'bg-warning/70' : 'bg-success/80'"
+                                :loading="actionKey === suggestion.id + ':apply'"
+                                @click="applySuggestion(row, suggestion)"
+                              >
+                                {{ selectedReplaceTarget[row.libraryItemId] ? 'Replace' : 'Add' }}
+                              </ui-btn>
+                              <ui-btn
+                                small
+                                color="bg-bg border border-white/20"
+                                :loading="actionKey === suggestion.id + ':dismiss'"
+                                @click="dismissSuggestion(suggestion)"
+                              >
+                                Dismiss
+                              </ui-btn>
+                            </div>
+                            <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+                              <input
+                                :value="getRenameDraft(suggestion)"
+                                type="text"
+                                class="min-w-[14rem] rounded border border-white/15 bg-black/20 px-3 py-1.5 text-sm text-white"
+                                :placeholder="suggestion.suggestedName || 'Canonical series name'"
+                                @input="setRenameDraft(suggestion.id, $event.target.value)"
+                              />
+                              <ui-btn
+                                small
+                                color="bg-bg border border-white/20"
+                                :loading="actionKey === `${suggestion.id}:rename`"
+                                @click="renameSuggestion(row, suggestion)"
+                              >
+                                Rename
+                              </ui-btn>
+                            </div>
                           </div>
 
                           <div v-if="getPrimarySuggestions(row).length > 1" class="flex flex-wrap items-center gap-2">
