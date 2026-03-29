@@ -568,6 +568,83 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ summary: { selected_matches: 1, queue_rows_updated: 1 } })).to.be.true
   })
 
+  it('rechecks saved source books without rebuilding the saved link', async () => {
+    sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary').resolves({
+      catalog: {
+        id: 'catalog-1',
+        seriesName: 'Android X',
+        savedSeriesLinks: [
+          {
+            id: 'match-1',
+            source: 'audible',
+            sourceSeriesName: 'Android X',
+            sourceAuthor: 'Michael La Ronn',
+            sourceUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+            localDecisionKey: 'android x'
+          }
+        ]
+      },
+      localBooks: [{ libraryItemId: 'item-1', title: 'Android Genesis', relPath: 'Books/Android Genesis.m4b', authors: [{ name: 'Michael La Ronn' }], seriesName: 'Android X', sequence: '1' }]
+    })
+    sinon.stub(SeriesImportBridgeManager, 'lookupManualSeries').resolves({
+      results: [
+        {
+          source: 'audible',
+          sourceSeriesName: 'Android X',
+          sourceSeriesUrl: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+          evidenceSnapshot: {
+            seriesBooks: [
+              { title: 'Android Genesis', sequence: '1' },
+              { title: 'Android Deception', sequence: '2' }
+            ]
+          }
+        }
+      ]
+    })
+    sinon.stub(SeriesReviewManager, 'refreshSeriesSourceLinkEvidenceForLibrary').resolves({
+      catalog: { id: 'catalog-1' },
+      rows: []
+    })
+
+    const req = {
+      user: { isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1', matchId: 'match-1' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.recheckLocalCatalogMatchBooks(req, res)
+
+    expect(SeriesImportBridgeManager.lookupManualSeries.calledOnceWithExactly('library-1', {
+      local_series_name: 'Android X',
+      local_decision_key: 'android x',
+      local_books: [{ libraryItemId: 'item-1', title: 'Android Genesis', relPath: 'Books/Android Genesis.m4b', authors: [{ name: 'Michael La Ronn' }], seriesName: 'Android X', sequence: '1' }],
+      source_kind: 'audible',
+      source_series_name: 'Android X',
+      source_author: 'Michael La Ronn',
+      source_url: 'https://www.audible.co.uk/series/Android-X-Audiobooks/B012C5FZPU',
+      source_text: ''
+    })).to.be.true
+    expect(SeriesReviewManager.refreshSeriesSourceLinkEvidenceForLibrary.calledOnceWithExactly('library-1', 'catalog-1', 'match-1', {
+      evidenceSnapshot: {
+        seriesBooks: [
+          { title: 'Android Genesis', sequence: '1' },
+          { title: 'Android Deception', sequence: '2' }
+        ]
+      }
+    })).to.be.true
+    expect(res.json.calledOnceWithExactly({
+      detail: { catalog: { id: 'catalog-1' }, rows: [] },
+      refreshedMatchId: 'match-1',
+      source: 'audible'
+    })).to.be.true
+  })
+
   it('rebuilds a saved local source-series link through the original manual import flow', async () => {
     sinon.stub(SeriesReviewManager, 'getCatalogDetailForLibrary')
       .onFirstCall()

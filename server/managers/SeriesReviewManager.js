@@ -2186,6 +2186,45 @@ class SeriesReviewManager {
     })
   }
 
+  mergeSeriesSourceLinkEvidenceSnapshot(existingSnapshot = {}, refreshedSnapshot = {}) {
+    const normalizedExisting = this.normalizeEvidenceSnapshot(existingSnapshot)
+    const normalizedRefreshed = this.normalizeEvidenceSnapshot(refreshedSnapshot)
+    return {
+      ...normalizedExisting,
+      ...normalizedRefreshed,
+      matchingBooks: Array.isArray(normalizedExisting.matchingBooks) ? normalizedExisting.matchingBooks : [],
+      sampleBooks: Array.isArray(normalizedRefreshed.sampleBooks) ? normalizedRefreshed.sampleBooks : Array.isArray(normalizedExisting.sampleBooks) ? normalizedExisting.sampleBooks : [],
+      seriesBooks: Array.isArray(normalizedRefreshed.seriesBooks) ? normalizedRefreshed.seriesBooks : Array.isArray(normalizedExisting.seriesBooks) ? normalizedExisting.seriesBooks : []
+    }
+  }
+
+  async refreshSeriesSourceLinkEvidenceForLibrary(libraryId, catalogId, matchId, payload = {}) {
+    const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
+    if (!context) throw new Error('Manual source lookup is not available for that series')
+
+    const matchRow = await Database.seriesReviewSeriesSourceLinkModel.findOne({
+      where: {
+        id: matchId,
+        libraryId,
+        localDecisionKey: context.localDecisionKey,
+        isActive: true
+      }
+    })
+    if (!matchRow) throw new Error('Saved local source link was not found')
+
+    const mergedSnapshot = this.mergeSeriesSourceLinkEvidenceSnapshot(matchRow.evidenceSnapshot, payload?.evidenceSnapshot)
+    const linkedBookCount = this.getSeriesSourceLinkBookCount(mergedSnapshot)
+    const totalBookCount = this.getCoverageEligibleLocalBookCount(Array.isArray(context.localBooks) ? context.localBooks : [])
+
+    matchRow.evidenceSnapshot = mergedSnapshot
+    matchRow.linkedBookCount = linkedBookCount
+    matchRow.totalBookCount = totalBookCount
+    matchRow.coverageStatus = totalBookCount > 0 && linkedBookCount >= totalBookCount ? 'linked' : 'partial'
+    await matchRow.save()
+
+    return this.getCatalogDetailForLibrary(libraryId, catalogId)
+  }
+
   async removeLocalSeriesMatchForLibrary(libraryId, catalogId, matchId, userId = null) {
     const context = await this.buildManualLookupContextForCatalog(libraryId, catalogId)
     if (!context) throw new Error('Manual source lookup is not available for that series')
@@ -2838,12 +2877,16 @@ class SeriesReviewManager {
     const localMatchRowsByCatalogId = new Map()
     const localMatchRowsByDecisionKey = new Map()
     const summarizeSavedLinkRows = (rows = [], { localBooks = [], coverageBySourceUrl = null } = {}) => {
-      const summary = { hasPendingLink: false, hasPartialLink: false }
+      const summary = { hasPendingLink: false, hasPartialLink: false, savedSourceCount: 0, savedSourceKeys: [] }
       const seen = new Set()
+      const sourceKeys = new Set()
 
       ;(Array.isArray(rows) ? rows : []).forEach((matchRow) => {
         if (!matchRow?.id || seen.has(matchRow.id)) return
         seen.add(matchRow.id)
+        summary.savedSourceCount += 1
+        const sourceKey = String(matchRow.source || '').trim().toLowerCase()
+        if (sourceKey) sourceKeys.add(sourceKey)
 
         const importStatus = String(matchRow.importStatus || 'imported').trim().toLowerCase()
         if (importStatus === 'pending') summary.hasPendingLink = true
@@ -2859,6 +2902,7 @@ class SeriesReviewManager {
         if (coverageStatus === 'partial') summary.hasPartialLink = true
       })
 
+      summary.savedSourceKeys = [...sourceKeys].sort()
       return summary
     }
     for (const matchRow of localMatchRows) {
@@ -2944,9 +2988,9 @@ class SeriesReviewManager {
       if (!includeDismissed && displayBucket === 'dismissed') continue
       if (!includeUntrusted && !['trusted', 'local_only', 'locally_linked', 'new', 'dismissed'].includes(displayBucket)) continue
       const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
-      const savedLinkSummary = this.mergeSeriesSourceLinkSummaryFlags(
-        summarizeSavedLinkRows(localMatchRowsByCatalogId.get(catalog.id), { localBooks, coverageBySourceUrl }),
-        summarizeSavedLinkRows(localMatchRowsByDecisionKey.get(catalogDecisionKey), { localBooks, coverageBySourceUrl })
+      const savedLinkSummary = summarizeSavedLinkRows(
+        [...(localMatchRowsByCatalogId.get(catalog.id) || []), ...(localMatchRowsByDecisionKey.get(catalogDecisionKey) || [])],
+        { localBooks, coverageBySourceUrl }
       )
       detailSummaries.push({
         ...this.buildCatalogViewPayload({

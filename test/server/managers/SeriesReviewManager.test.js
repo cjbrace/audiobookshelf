@@ -1201,6 +1201,60 @@ describe('SeriesReviewManager', () => {
     expect(batchMatches.every((match) => match.pendingImport)).to.equal(true)
   })
 
+  it('refreshes saved source-book snapshots without resetting the saved-link import lifecycle', async () => {
+    await createBookFixture({
+      title: 'Alpha Start',
+      currentSeries: [{ name: 'Alpha Saga', sequence: '1' }],
+      authors: ['Author A']
+    })
+
+    const localCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    const localCatalog = localCatalogs.find((catalog) => catalog.seriesName === 'Alpha Saga')
+    const detail = await SeriesReviewManager.saveLocalSeriesMatchForLibrary(library.id, localCatalog.id, {
+      source: 'fictiondb',
+      sourceSeriesName: 'The Alpha Saga',
+      sourceAuthor: 'Author A',
+      sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+      evidenceSnapshot: {
+        source: 'fictiondb',
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        matchingBooks: [{ localTitle: 'Alpha Start', sourceTitle: 'Alpha Start', sourceSequence: '1' }],
+        seriesBooks: [{ title: 'Alpha Start', sequence: '1' }]
+      }
+    })
+    const matchId = detail.catalog.localSeriesMatches[0].id
+    await SeriesReviewManager.markSeriesSourceLinksImported(library.id, { matchIds: [matchId] })
+
+    const refreshedDetail = await SeriesReviewManager.refreshSeriesSourceLinkEvidenceForLibrary(library.id, localCatalog.id, matchId, {
+      evidenceSnapshot: {
+        source: 'fictiondb',
+        sourceSeriesName: 'The Alpha Saga',
+        sourceAuthor: 'Author A',
+        sourceUrl: 'https://www.fictiondb.com/series/the-alpha-saga-author-a~123.htm',
+        sampleBooks: [
+          { title: 'Alpha Start', sequence: '1' },
+          { title: 'Alpha Return', sequence: '2' }
+        ],
+        seriesBooks: [
+          { title: 'Alpha Start', sequence: '1' },
+          { title: 'Alpha Return', sequence: '2' }
+        ],
+        sequenceIncomplete: false,
+        sequenceStatusNote: '',
+        lookedUpAtUtc: '2026-03-29T12:00:00Z'
+      }
+    })
+
+    const refreshedMatch = refreshedDetail.catalog.savedSeriesLinks.find((match) => match.id === matchId)
+    expect(refreshedMatch.pendingImport).to.equal(false)
+    expect(refreshedMatch.importStatus).to.equal('imported')
+    expect(refreshedMatch.matchingBooks).to.have.length(1)
+    expect(refreshedMatch.seriesBooks.map((book) => book.title)).to.deep.equal(['Alpha Start', 'Alpha Return'])
+    expect(refreshedMatch.evidenceSnapshot.lookedUpAtUtc).to.equal('2026-03-29T12:00:00Z')
+  })
+
   it('keeps pending saved links visible for batch import even when they already resolve to a catalog', async () => {
     await createBookFixture({
       title: 'Alpha Start',
@@ -1539,6 +1593,8 @@ describe('SeriesReviewManager', () => {
     expect(pendingLocalCatalog.displayBucket).to.equal('local_only')
     expect(pendingLocalCatalog.hasPendingLink).to.equal(true)
     expect(pendingLocalCatalog.hasPartialLink).to.equal(true)
+    expect(pendingLocalCatalog.savedSourceCount).to.equal(1)
+    expect(pendingLocalCatalog.savedSourceKeys).to.deep.equal(['fictiondb'])
 
     const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
       {
@@ -1563,6 +1619,8 @@ describe('SeriesReviewManager', () => {
     expect(linkedCatalog.displayBucket).to.equal('locally_linked')
     expect(linkedCatalog.hasPendingLink).to.equal(false)
     expect(linkedCatalog.hasPartialLink).to.equal(true)
+    expect(linkedCatalog.savedSourceCount).to.equal(1)
+    expect(linkedCatalog.savedSourceKeys).to.deep.equal(['fictiondb'])
   })
 
   it('keeps partial summary flags when a linked catalog also has an unresolved partial saved link', async () => {
@@ -1646,6 +1704,8 @@ describe('SeriesReviewManager', () => {
     expect(linkedCatalog.displayBucket).to.equal('locally_linked')
     expect(linkedCatalog.hasPendingLink).to.equal(true)
     expect(linkedCatalog.hasPartialLink).to.equal(true)
+    expect(linkedCatalog.savedSourceCount).to.equal(2)
+    expect(linkedCatalog.savedSourceKeys).to.deep.equal(['audible', 'fictiondb'])
   })
 
   it('recomputes left-list partial flags from current local coverage instead of stale stored saved-link state', async () => {

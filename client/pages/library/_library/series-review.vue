@@ -759,6 +759,22 @@
                     placeholder="Filter by series or author"
                   />
                 </label>
+                <label class="w-full min-w-[14rem] sm:w-auto text-sm text-gray-300">
+                  <span class="mb-1 block text-xs uppercase tracking-wide text-gray-500">Saved source</span>
+                  <select
+                    v-model="catalogSourceFilter"
+                    class="w-full rounded border border-white/15 bg-black/25 px-3 py-2 text-sm text-gray-100 focus:border-sky-300/40 focus:outline-none"
+                  >
+                    <option value="">All saved sources</option>
+                    <option
+                      v-for="option in catalogSourceOptions"
+                      :key="'catalog-source-filter:' + option.source"
+                      :value="option.source"
+                    >
+                      {{ option.label }} ({{ option.count }})
+                    </option>
+                  </select>
+                </label>
               </div>
 
               <div v-if="catalogCategoryOptions.length" class="flex flex-wrap gap-2">
@@ -836,6 +852,12 @@
                           class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-amber-300/35 bg-amber-500/10 text-amber-100"
                         >
                           Partial
+                        </span>
+                        <span
+                          v-if="Number(catalog.savedSourceCount || 0) > 1"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-red-300/35 bg-red-500/10 text-red-100"
+                        >
+                          Multi
                         </span>
                         <span
                           class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-emerald-300/35 bg-emerald-500/10 text-emerald-100"
@@ -1097,6 +1119,15 @@
                             <p v-if="getManualSequenceStatus(match)" class="text-xs text-amber-200 mt-1">{{ getManualSequenceStatus(match) }}</p>
                           </div>
                           <div class="flex flex-wrap items-center gap-2">
+                            <ui-btn
+                              v-if="match.canRemove && !match.pendingImport && canRecheckSourceBooks(match)"
+                              small
+                              color="bg-bg border border-white/20"
+                              :loading="catalogLocalMatchRecheckingKey === match.id"
+                              @click="recheckLocalCatalogMatchBooks(match)"
+                            >
+                              Recheck Books
+                            </ui-btn>
                             <ui-btn
                               v-if="match.canRemove && !match.pendingImport"
                               small
@@ -1517,6 +1548,7 @@ export default {
       catalogSeries: [],
       catalogSearchQuery: '',
       catalogCategoryFilter: '',
+      catalogSourceFilter: '',
       selectedCatalogId: '',
       selectedCatalogDetail: null,
       selectedCatalogRenameEditing: false,
@@ -1552,6 +1584,7 @@ export default {
       catalogManualPasteText: '',
       catalogManualGoodreadsUrl: '',
       catalogLocalMatchRebuildingKey: '',
+      catalogLocalMatchRecheckingKey: '',
       catalogLocalMatchRemovingKey: '',
       sourceImportStatus: null,
       sourceImportError: '',
@@ -1664,10 +1697,30 @@ export default {
         }))
         .filter((entry) => entry.count > 0)
     },
+    catalogSourceOptions() {
+      const sourceCounts = new Map()
+      ;(this.catalogSeries || [])
+        .filter((catalog) => !this.catalogCategoryFilter || catalog.displayBucket === this.catalogCategoryFilter)
+        .forEach((catalog) => {
+          ;(catalog.savedSourceKeys || []).forEach((source) => {
+            const sourceKey = String(source || '').trim().toLowerCase()
+            if (!sourceKey) return
+            sourceCounts.set(sourceKey, (sourceCounts.get(sourceKey) || 0) + 1)
+          })
+        })
+      return [...sourceCounts.entries()]
+        .map(([source, count]) => ({
+          source,
+          label: this.getSourceDisplayName(source),
+          count
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label))
+    },
     filteredCatalogSeries() {
       const query = String(this.catalogSearchQuery || '').trim().toLowerCase()
       return (this.catalogSeries || []).filter((catalog) => {
         if (this.catalogCategoryFilter && catalog.displayBucket !== this.catalogCategoryFilter) return false
+        if (this.catalogSourceFilter && !(catalog.savedSourceKeys || []).includes(this.catalogSourceFilter)) return false
         if (!query) return true
         const haystack = `${catalog.seriesName || ''} ${catalog.authorSearchText || catalog.authorLine || ''}`.toLowerCase()
         return haystack.includes(query)
@@ -1717,6 +1770,9 @@ export default {
       this.persistCatalogViewState()
     },
     catalogCategoryFilter() {
+      this.persistCatalogViewState()
+    },
+    catalogSourceFilter() {
       this.persistCatalogViewState()
     },
     selectedCatalogId() {
@@ -1811,6 +1867,9 @@ export default {
     },
     getManualSourceDisplayName(entry) {
       return entry?.sourceName || this.getSourceDisplayName(entry?.source)
+    },
+    canRecheckSourceBooks(entry) {
+      return ['fictiondb', 'audible', 'wikidata'].includes(String(entry?.source || '').trim().toLowerCase())
     },
     getManualSourceSeriesName(entry) {
       return this.decodeHtmlEntities(entry?.sourceSeriesName || '')
@@ -2300,6 +2359,7 @@ export default {
       const catalog = detail?.catalog
       if (!catalog?.id) return null
       const savedLinks = Array.isArray(catalog.savedSeriesLinks) ? catalog.savedSeriesLinks : Array.isArray(catalog.localSeriesMatches) ? catalog.localSeriesMatches : []
+      const savedSourceKeys = [...new Set(savedLinks.map((link) => String(link?.source || '').trim().toLowerCase()).filter(Boolean))].sort()
       return {
         ...catalog,
         authorLine: catalog.authorLine || this.getCatalogAuthorLine(detail),
@@ -2308,7 +2368,9 @@ export default {
         missingCount: Array.isArray(detail?.slots) ? detail.slots.filter((slot) => slot?.status === 'missing').length : Number(catalog.missingCount || 0),
         disputedCount: Array.isArray(detail?.slots) ? detail.slots.filter((slot) => slot?.status === 'disputed').length : Number(catalog.disputedCount || 0),
         hasPendingLink: savedLinks.some((link) => link?.pendingImport || String(link?.importStatus || '').toLowerCase() === 'pending'),
-        hasPartialLink: savedLinks.some((link) => String(link?.coverageStatus || '').toLowerCase() === 'partial')
+        hasPartialLink: savedLinks.some((link) => String(link?.coverageStatus || '').toLowerCase() === 'partial'),
+        savedSourceCount: savedLinks.length,
+        savedSourceKeys
       }
     },
     patchCatalogSummary(detail) {
@@ -2408,15 +2470,16 @@ export default {
       try {
         window.sessionStorage.setItem(
           this.catalogViewStateKey(),
-          JSON.stringify({
-            activeTab: this.activeTab || 'queue',
-            includeDecided: !!this.includeDecided,
-            catalogSearchQuery: this.catalogSearchQuery || '',
-            catalogCategoryFilter: this.catalogCategoryFilter || '',
-            selectedCatalogId: this.selectedCatalogId || '',
-            localCatalogMatchesExpanded: !!this.localCatalogMatchesExpanded,
-            catalogListScrollTop: Math.max(0, Number(this.catalogListScrollTop || 0))
-          })
+            JSON.stringify({
+              activeTab: this.activeTab || 'queue',
+              includeDecided: !!this.includeDecided,
+              catalogSearchQuery: this.catalogSearchQuery || '',
+              catalogCategoryFilter: this.catalogCategoryFilter || '',
+              catalogSourceFilter: this.catalogSourceFilter || '',
+              selectedCatalogId: this.selectedCatalogId || '',
+              localCatalogMatchesExpanded: !!this.localCatalogMatchesExpanded,
+              catalogListScrollTop: Math.max(0, Number(this.catalogListScrollTop || 0))
+            })
         )
       } catch {}
     },
@@ -2432,6 +2495,7 @@ export default {
         this.includeDecided = !!parsed.includeDecided
         this.catalogSearchQuery = String(parsed.catalogSearchQuery || '')
         this.catalogCategoryFilter = String(parsed.catalogCategoryFilter || '')
+        this.catalogSourceFilter = String(parsed.catalogSourceFilter || '')
         this.selectedCatalogId = String(parsed.selectedCatalogId || '')
         this.localCatalogMatchesExpanded = !!parsed.localCatalogMatchesExpanded
         this.catalogListScrollTop = Math.max(0, Number(parsed.catalogListScrollTop || 0))
@@ -2500,6 +2564,9 @@ export default {
       }
       if (this.catalogCategoryFilter && !this.catalogSeries.some((catalog) => catalog.displayBucket === this.catalogCategoryFilter)) {
         this.catalogCategoryFilter = ''
+      }
+      if (this.catalogSourceFilter && !this.catalogSeries.some((catalog) => (catalog.savedSourceKeys || []).includes(this.catalogSourceFilter))) {
+        this.catalogSourceFilter = ''
       }
       const visibleCatalogs = this.filteredCatalogSeries
       if (!visibleCatalogs.length) {
@@ -3064,6 +3131,27 @@ export default {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to rebuild the saved source link')
       } finally {
         this.catalogLocalMatchRebuildingKey = ''
+      }
+    },
+    async recheckLocalCatalogMatchBooks(match) {
+      if (!this.selectedCatalogDetailReady || !this.canRecheckSourceBooks(match)) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
+      this.catalogLocalMatchRecheckingKey = match.id
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/local-match/${match.id}/recheck-books`
+        )
+        const detail = response.detail
+        if (!detail) throw new Error('Missing updated series detail')
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
+        this.restoreSelectedCatalogAfterReload(detail)
+        await this.loadLocalCatalogMatches({ silent: true })
+        this.$toast.success('Saved source books refreshed')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || error?.message || 'Failed to refresh saved source books')
+      } finally {
+        this.catalogLocalMatchRecheckingKey = ''
       }
     },
     async importSelectedLocalCatalogMatches() {
