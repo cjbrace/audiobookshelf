@@ -1708,7 +1708,7 @@ export default {
   watch: {
     activeTab() {
       this.persistCatalogViewState()
-      if (this.activeTab === 'catalog') this.restoreCatalogListScroll()
+      if (this.activeTab === 'catalog') this.restoreCatalogListPosition({ forceSelected: false, forceScroll: false })
     },
     includeDecided() {
       this.persistCatalogViewState()
@@ -1726,20 +1726,20 @@ export default {
       this.persistCatalogViewState()
     }
   },
-  async mounted() {
-    this.hydrateCatalogCaches()
-    this.hydrateCatalogViewState()
-    if (this.activeTab === 'management') {
-      await this.loadManagementData()
-    } else if (this.activeTab === 'catalog') {
-      await this.loadCatalogs({ preferCache: true })
-      if (this.localCatalogMatchesExpanded) await this.loadLocalCatalogMatches({ silent: true })
-      this.restoreCatalogListScroll(true)
-    } else {
-      await this.loadQueue()
-    }
-    this.prefetchCatalogData()
-  },
+    async mounted() {
+      this.hydrateCatalogCaches()
+      this.hydrateCatalogViewState()
+      if (this.activeTab === 'management') {
+        await this.loadManagementData()
+      } else if (this.activeTab === 'catalog') {
+        await this.loadCatalogs({ preferCache: true })
+        if (this.localCatalogMatchesExpanded) await this.loadLocalCatalogMatches({ silent: true })
+        this.restoreCatalogListPosition({ forceSelected: true, forceScroll: true })
+      } else {
+        await this.loadQueue()
+      }
+      this.prefetchCatalogData()
+    },
   beforeDestroy() {
     this.persistCatalogListScrollTop()
     this.persistCatalogViewState()
@@ -2394,6 +2394,15 @@ export default {
         scroller.scrollTop = target
       })
     },
+    restoreCatalogListPosition({ forceSelected = false, forceScroll = false } = {}) {
+      const selectedId = String(this.selectedCatalogId || '').trim()
+      const hasSelectedVisibleRow = !!selectedId && this.filteredCatalogSeries.some((catalog) => catalog.id === selectedId)
+      if (hasSelectedVisibleRow) {
+        this.scrollCatalogListItemIntoView(selectedId, { align: 'start', force: forceSelected || forceScroll })
+        return
+      }
+      this.restoreCatalogListScroll(forceScroll)
+    },
     persistCatalogViewState() {
       if (!process.client) return
       try {
@@ -2500,8 +2509,7 @@ export default {
       }
       const nextId = visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : visibleCatalogs[0].id
       this.selectCatalog(nextId, { preferCache: true })
-      this.restoreCatalogListScroll()
-      this.scrollCatalogListItemIntoView(nextId, { align: 'start', force: false })
+      this.restoreCatalogListPosition({ forceSelected: !!this.selectedCatalogId, forceScroll: false })
     },
     getCatalogExpectedDisplay(slotOrChoice) {
       const title = String(slotOrChoice?.expectedTitle || slotOrChoice?.title || '').trim()
