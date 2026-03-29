@@ -775,6 +775,60 @@ describe('SeriesReviewManager', () => {
     })
   })
 
+  it('does not reopen a dismissed suggestion for cosmetic evidence-only changes', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Ancillary Justice'
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          {
+            source: 'fictiondb',
+            label: 'FDB',
+            seriesName: 'Imperial Radch',
+            sequence: '1',
+            confidence: 0.91,
+            expectedTitle: 'Ancillary Justice',
+            notes: 'Original source note',
+            providerMeta: { source_version: '1' }
+          }
+        ]
+      }
+    ])
+
+    const initialRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    const suggestionId = initialRows[0].suggestions[0].id
+    await SeriesReviewManager.dismissSuggestion(suggestionId, user.id)
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          {
+            source: 'fictiondb',
+            label: 'FDB',
+            seriesName: 'Imperial Radch',
+            sequence: '1',
+            confidence: 0.98,
+            expectedTitle: 'Ancillary Justice (Updated)',
+            notes: 'Updated source note',
+            providerMeta: { source_version: '2' }
+          }
+        ]
+      }
+    ])
+
+    const pendingRows = await SeriesReviewManager.getQueueForLibrary(library.id, false)
+    expect(pendingRows).to.have.length(0)
+
+    const decidedRows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(decidedRows).to.have.length(1)
+    expect(decidedRows[0].suggestions[0].state).to.equal('dismissed')
+    expect(decidedRows[0].suggestions[0].hasMeaningfulUpdateSinceDecision).to.equal(false)
+  })
+
   it('keeps matched applied rows out of pending review after later source refreshes', async () => {
     const { libraryItem } = await createBookFixture({ title: 'Leviathan Wakes' })
     await stubExpandedLibraryItems()

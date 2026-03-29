@@ -954,12 +954,8 @@ class SeriesReviewManager {
         noSeries: !!contribution.noSeries,
         seriesName: contribution.seriesName || null,
         sequence: contribution.sequence || null,
-        expectedTitle: contribution.expectedTitle || null,
-        confidence: contribution.confidence ?? null,
         evidenceUrl: contribution.evidenceUrl || null,
-        notes: contribution.notes || null,
-        sourceRef: contribution.sourceRef || null,
-        providerMeta: contribution.providerMeta || null
+        sourceRef: contribution.sourceRef || null
       }))
     })
   }
