@@ -2713,6 +2713,27 @@ describe('SeriesReviewManager', () => {
     expect(restoredDetail.catalog.visibilityStatus).to.equal('visible')
   })
 
+  it('marks a catalog as checked and keeps checked local-only series out of the linked bucket', async () => {
+    await createBookFixture({
+      title: 'The Blade Itself',
+      currentSeries: [{ name: 'The First Law', sequence: '1' }],
+      authors: ['Joe Abercrombie']
+    })
+
+    const localOnlyCatalogId = SeriesReviewManager.buildLocalOnlyCatalogId('first law')
+    const checkedDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, localOnlyCatalogId, 'checked')
+    expect(checkedDetail.catalog.visibilityStatus).to.equal('checked')
+    expect(checkedDetail.catalog.displayBucket).to.equal('checked')
+
+    const visibleCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true, false)
+    expect(visibleCatalogs).to.have.length(1)
+    expect(visibleCatalogs[0].seriesName).to.equal('The First Law')
+    expect(visibleCatalogs[0].displayBucket).to.equal('checked')
+
+    const uncheckedDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, checkedDetail.catalog.id, 'visible')
+    expect(uncheckedDetail.catalog.visibilityStatus).to.equal('visible')
+  })
+
   it('renames persisted series source links when a local series label is renamed', async () => {
     const sourceUrl = 'https://www.fictiondb.com/series/polity~123.htm'
     await Database.seriesReviewSeriesSourceLinkModel.create({

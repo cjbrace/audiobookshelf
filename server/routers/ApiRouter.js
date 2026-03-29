@@ -118,6 +118,8 @@ class ApiRouter {
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/queue-candidate', LibraryController.middleware.bind(this), SeriesReviewController.queueCatalogCandidate.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/dismiss', LibraryController.middleware.bind(this), SeriesReviewController.dismissCatalog.bind(this))
     this.router.post('/libraries/:id/series-review/catalog/:catalogId/undismiss', LibraryController.middleware.bind(this), SeriesReviewController.undismissCatalog.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/:catalogId/check', LibraryController.middleware.bind(this), SeriesReviewController.checkCatalog.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/:catalogId/uncheck', LibraryController.middleware.bind(this), SeriesReviewController.uncheckCatalog.bind(this))
     this.router.get('/libraries/:id/opml', LibraryController.middleware.bind(this), LibraryController.getOPMLFile.bind(this))
     this.router.post('/libraries/order', LibraryController.reorder.bind(this))
     this.router.post('/libraries/:id/remove-metadata', LibraryController.middleware.bind(this), LibraryController.removeAllMetadataFiles.bind(this))

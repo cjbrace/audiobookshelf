@@ -795,21 +795,23 @@
                   <div v-if="!filteredCatalogSeries.length" class="rounded border border-white/10 bg-black/20 px-3 py-4 text-sm text-gray-400">
                     No series match the current filter.
                   </div>
-                  <button
+                  <div
                     v-for="catalog in filteredCatalogSeries"
                     ref="catalogListItem"
                     :key="catalog.id"
-                    type="button"
                     :data-catalog-id="catalog.id"
-                    class="w-full rounded border px-3 py-2 text-left transition"
+                    class="w-full rounded border px-3 py-2 transition flex items-start gap-3"
                     :class="selectedCatalogId === catalog.id ? 'bg-sky-400/15 border-sky-300/35 text-sky-50' : 'bg-black/20 border-white/10 text-gray-200'"
-                    @click="selectCatalog(catalog.id, { preferCache: true })"
-                    @keydown.down.prevent="selectAdjacentCatalog(1)"
-                    @keydown.up.prevent="selectAdjacentCatalog(-1)"
-                    @keydown.home.prevent="selectCatalogBoundary('first')"
-                    @keydown.end.prevent="selectCatalogBoundary('last')"
                   >
-                    <div class="min-w-0">
+                    <button
+                      type="button"
+                      class="grow min-w-0 text-left bg-transparent"
+                      @click="selectCatalog(catalog.id, { preferCache: true })"
+                      @keydown.down.prevent="selectAdjacentCatalog(1)"
+                      @keydown.up.prevent="selectAdjacentCatalog(-1)"
+                      @keydown.home.prevent="selectCatalogBoundary('first')"
+                      @keydown.end.prevent="selectCatalogBoundary('last')"
+                    >
                       <div class="grow min-w-0">
                         <p class="font-medium leading-snug">
                           <span>{{ catalog.seriesName }}</span>
@@ -853,8 +855,18 @@
                           {{ formatCatalogDisputedCountPill(catalog.disputedCount) }}
                         </span>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                    <button
+                      v-if="catalog.displayBucket !== 'dismissed'"
+                      type="button"
+                      class="shrink-0 inline-flex items-center justify-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs font-medium transition"
+                      :class="catalog.displayBucket === 'checked' ? 'border-emerald-300/45 bg-emerald-500/20 text-emerald-50 hover:bg-emerald-500/30' : 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20'"
+                      :disabled="catalogVisibilityLoadingKey === catalog.id"
+                      @click.stop="catalog.displayBucket === 'checked' ? uncheckCatalog(catalog) : checkCatalog(catalog)"
+                    >
+                      {{ catalog.displayBucket === 'checked' ? 'Uncheck' : 'Check' }}
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -1637,7 +1649,7 @@ export default {
       return visibleCatalogs.length || this.catalogSeries.filter((catalog) => catalog.displayBucket !== 'dismissed').length
     },
     catalogCategoryOptions() {
-      const bucketOrder = ['locally_linked', 'new', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
+      const bucketOrder = ['checked', 'locally_linked', 'new', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
       const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
       const bucketCounts = new Map()
       ;(countCatalogs || []).forEach((catalog) => {
@@ -2260,6 +2272,7 @@ export default {
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
     getCatalogBucketLabel(bucket) {
+      if (bucket === 'checked') return 'Checked'
       if (bucket === 'new') return 'New'
       if (bucket === 'local_only') return 'Local series'
       if (bucket === 'locally_linked') return 'Linked'
@@ -2269,6 +2282,7 @@ export default {
       return 'Trusted'
     },
     getCatalogBucketPillClass(bucket) {
+      if (bucket === 'checked') return 'border-emerald-300/45 bg-emerald-500/20 text-emerald-50'
       if (bucket === 'new') return 'border-indigo-300/35 bg-indigo-500/10 text-indigo-100'
       if (bucket === 'local_only') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100'
       if (bucket === 'locally_linked') return 'border-sky-300/35 bg-sky-500/10 text-sky-100'
@@ -2341,6 +2355,31 @@ export default {
       const scroller = this.getCatalogListScroller()
       this.catalogListScrollTop = Number(scroller?.scrollTop || 0)
       this.persistCatalogViewState()
+    },
+    scrollCatalogListItemIntoView(catalogId, { align = 'start', force = false } = {}) {
+      if (!process.client) return
+      const targetId = String(catalogId || '').trim()
+      if (!targetId) return
+      this.$nextTick(() => {
+        const scroller = this.getCatalogListScroller()
+        const element = this.getCatalogListItemElements().find((candidate) => String(candidate?.getAttribute?.('data-catalog-id') || '').trim() === targetId)
+        if (!scroller || !element) return
+
+        const elementTop = Number(element.offsetTop || 0)
+        const elementBottom = elementTop + Number(element.offsetHeight || 0)
+        const currentTop = Number(scroller.scrollTop || 0)
+        const currentBottom = currentTop + Number(scroller.clientHeight || 0)
+        const isVisible = elementTop >= currentTop && elementBottom <= currentBottom
+        if (!force && isVisible) return
+
+        const nextTop =
+          align === 'center'
+            ? Math.max(0, elementTop - Math.max(0, (scroller.clientHeight - element.offsetHeight) / 2))
+            : Math.max(0, elementTop)
+        scroller.scrollTop = nextTop
+        this.catalogListScrollTop = nextTop
+        this.persistCatalogViewState()
+      })
     },
     restoreCatalogListScroll(force = false) {
       if (!process.client) return
@@ -2459,6 +2498,7 @@ export default {
       const nextId = visibleCatalogs.some((catalog) => catalog.id === this.selectedCatalogId) ? this.selectedCatalogId : visibleCatalogs[0].id
       this.selectCatalog(nextId, { preferCache: true })
       this.restoreCatalogListScroll()
+      this.scrollCatalogListItemIntoView(nextId, { align: 'start', force: true })
     },
     getCatalogExpectedDisplay(slotOrChoice) {
       const title = String(slotOrChoice?.expectedTitle || slotOrChoice?.title || '').trim()
@@ -2786,7 +2826,41 @@ export default {
         this.errorMessage = error?.response?.data || 'Failed to load series detail'
       } finally {
         if (!skipLoading || !this.catalogDetailCache[catalogId]) this.catalogLoading = false
+        if (updateView && this.selectedCatalogId === catalogId) this.scrollCatalogListItemIntoView(catalogId, { align: 'start', force: true })
       }
+    },
+    async setCatalogCheckedState(catalog, checked) {
+      const catalogId = String(catalog?.id || '').trim()
+      if (!catalogId) return
+      this.catalogVisibilityLoadingKey = catalogId
+      try {
+        const endpoint = checked ? 'check' : 'uncheck'
+        const detail = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/${endpoint}`)
+        const previousSelectedId = this.selectedCatalogId
+        if (detail?.catalog?.id) {
+          this.$set(this.catalogDetailCache, detail.catalog.id, detail)
+          if (previousSelectedId === catalogId) {
+            this.selectedCatalogId = detail.catalog.id
+            this.selectedCatalogDetail = detail
+          }
+        }
+        this.persistCatalogCaches()
+        await this.loadCatalogs({ preferCache: true })
+        if (previousSelectedId === catalogId && detail?.catalog?.id) {
+          this.scrollCatalogListItemIntoView(detail.catalog.id, { align: 'start', force: true })
+        }
+        this.$toast.success(checked ? 'Series marked as checked' : 'Series moved back to the active list')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || (checked ? 'Failed to mark the series as checked' : 'Failed to uncheck the series'))
+      } finally {
+        this.catalogVisibilityLoadingKey = ''
+      }
+    },
+    async checkCatalog(catalog) {
+      await this.setCatalogCheckedState(catalog, true)
+    },
+    async uncheckCatalog(catalog) {
+      await this.setCatalogCheckedState(catalog, false)
     },
     async saveCatalogRename() {
       if (!this.selectedCatalogDetailReady) return

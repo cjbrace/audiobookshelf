@@ -471,6 +471,24 @@ class SeriesReviewController {
     res.json(detail)
   }
 
+  async checkCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const detail = await SeriesReviewManager.setCatalogVisibilityForLibrary(req.library.id, req.params.catalogId, 'checked')
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
+  async uncheckCatalog(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    const detail = await SeriesReviewManager.setCatalogVisibilityForLibrary(req.library.id, req.params.catalogId, 'visible')
+    if (!detail) return res.sendStatus(404)
+    res.json(detail)
+  }
+
   async previewManagementAction(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

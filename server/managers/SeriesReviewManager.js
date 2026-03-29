@@ -386,6 +386,7 @@ class SeriesReviewManager {
 
   getCatalogDisplayBucket({ trustStatus, visibilityStatus, localBookCount, isLocalOnly = false, isLocallyLinked = false }) {
     if (visibilityStatus === 'dismissed') return 'dismissed'
+    if (visibilityStatus === 'checked') return 'checked'
     if (isLocalOnly) return 'local_only'
     if (isLocallyLinked) return 'locally_linked'
     if (trustStatus === 'new') return 'new'
@@ -394,6 +395,7 @@ class SeriesReviewManager {
   }
 
   getCatalogDisplayLabel(bucket) {
+    if (bucket === 'checked') return 'Checked'
     if (bucket === 'new') return 'New'
     if (bucket === 'local_only') return 'Local series'
     if (bucket === 'locally_linked') return 'Linked'
@@ -2792,7 +2794,7 @@ class SeriesReviewManager {
     await this.ensureSeriesReviewCatalogSchema()
     const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const where = { libraryId }
-    if (!includeDismissed) where.visibilityStatus = 'visible'
+    if (!includeDismissed) where.visibilityStatus = { [Op.in]: ['visible', 'checked'] }
 
     const catalogs = await Database.seriesReviewCatalogModel.findAll({
       where,
@@ -3817,20 +3819,32 @@ class SeriesReviewManager {
 
   async setCatalogVisibilityForLibrary(libraryId, catalogId, visibilityStatus) {
     await this.ensureSeriesReviewCatalogSchema()
+    const localOnlyDecisionKey = this.parseLocalOnlyCatalogId(catalogId)
+    let effectiveCatalogId = catalogId
+
+    if (localOnlyDecisionKey && visibilityStatus === 'checked') {
+      const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+      const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+      const group = localSeriesGroups.get(localOnlyDecisionKey)
+      const placeholder = await this.createCatalogPlaceholderForLibrary(libraryId, group?.seriesName || localOnlyDecisionKey)
+      effectiveCatalogId = placeholder?.catalog?.id || catalogId
+    }
+
     const catalog = await Database.seriesReviewCatalogModel.findOne({
       where: {
-        id: catalogId,
+        id: effectiveCatalogId,
         libraryId
       }
     })
     if (!catalog) return null
 
-    const nextVisibility = visibilityStatus === 'dismissed' ? 'dismissed' : 'visible'
+    const normalizedVisibility = String(visibilityStatus || '').trim().toLowerCase()
+    const nextVisibility = normalizedVisibility === 'dismissed' ? 'dismissed' : normalizedVisibility === 'checked' ? 'checked' : 'visible'
     catalog.visibilityStatus = nextVisibility
     catalog.dismissedAt = nextVisibility === 'dismissed' ? new Date() : null
     await catalog.save()
 
-    return this.getCatalogDetailForLibrary(libraryId, catalogId)
+    return this.getCatalogDetailForLibrary(libraryId, effectiveCatalogId)
   }
 
   async chooseCatalogSlotEntry(libraryId, catalogId, slot, entryKey) {
