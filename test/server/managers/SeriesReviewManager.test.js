@@ -2746,6 +2746,50 @@ describe('SeriesReviewManager', () => {
     expect(candidates.results[1].reasons.map((reason) => reason.key)).to.include('path-title')
   })
 
+  it('finds bulk catalog candidate suggestions for selected row scopes only', async () => {
+    await createBookFixture({
+      title: 'Barrayar',
+      relPath: 'Bujold, Lois McMaster/Barrayar',
+      authors: ['Lois McMaster Bujold']
+    })
+    await createBookFixture({
+      title: 'Vorkosigan Saga Collection',
+      relPath: 'Bujold, Lois McMaster/Vorkosigan Saga Collection',
+      authors: ['Lois McMaster Bujold']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Vorkosigan Saga',
+        entries: [
+          {
+            title: 'Barrayar',
+            authors: ['Lois McMaster Bujold'],
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          },
+          {
+            title: 'Vorkosigan Saga Collection',
+            authors: ['Lois McMaster Bujold'],
+            sequence: '1-3',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const suggestions = await SeriesReviewManager.findBulkCatalogCandidateSuggestions(library.id, importResult.catalogs[0].id, {
+      includeNormal: true,
+      includeUnsequenced: true,
+      includeDecimal: false,
+      includeOmnibus: false
+    })
+
+    expect(suggestions.rows).to.have.length(1)
+    expect(suggestions.rows[0].rowType).to.equal('slot')
+    expect(suggestions.rows[0].results[0].title).to.equal('Barrayar')
+  })
+
   it('queues a selected catalog candidate into the existing series review flow without mutating metadata', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Barrayar',
@@ -2779,6 +2823,47 @@ describe('SeriesReviewManager', () => {
 
     const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
     expect(updatedLibraryItem.media.series).to.have.length(0)
+  })
+
+  it('accepts a selected catalog candidate directly into local coverage', async () => {
+    await stubExpandedLibraryItems()
+    const { libraryItem } = await createBookFixture({
+      title: 'Barrayar',
+      relPath: 'Bujold, Lois McMaster/Barrayar',
+      authors: ['Lois McMaster Bujold']
+    })
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Vorkosigan Saga',
+        entries: [
+          {
+            title: 'Barrayar',
+            authors: ['Lois McMaster Bujold'],
+            sequence: '2',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const accepted = await SeriesReviewManager.acceptCatalogCandidateForLibrary(
+      library.id,
+      importResult.catalogs[0].id,
+      '2',
+      libraryItem.id,
+      null
+    )
+
+    expect(accepted.accepted).to.equal(true)
+    expect(accepted.suggestionId).to.be.a('string')
+    expect(accepted.detail.rows.find((row) => row.slot === '2').localBooks[0].manualCandidateSuggestionId).to.equal(accepted.suggestionId)
+
+    const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedLibraryItem.media.series.map((series) => series.name)).to.include('Vorkosigan Saga')
+
+    const appliedSuggestion = await Database.seriesReviewSuggestionModel.findByPk(accepted.suggestionId)
+    expect(appliedSuggestion.state).to.equal('applied')
   })
 
   it('dismisses and restores a catalog without letting import overwrite the hidden state', async () => {

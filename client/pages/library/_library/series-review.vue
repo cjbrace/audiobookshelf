@@ -1271,6 +1271,39 @@
                     </div>
                   </div>
 
+                  <div class="rounded border border-white/10 bg-black/20 p-3 space-y-3">
+                    <div class="flex flex-wrap items-center gap-3">
+                      <ui-btn
+                        color="bg-red-500/80"
+                        :disabled="selectedCatalogDetailBusy"
+                        :loading="catalogAutoSuggestLoading"
+                        @click="suggestCatalogCandidates"
+                      >
+                        Suggest Local Matches
+                      </ui-btn>
+                      <span class="text-xs text-gray-400">Search row types:</span>
+                      <label class="inline-flex items-center gap-2 text-sm text-gray-200">
+                        <input v-model="catalogAutoSuggestFilters.normal" type="checkbox" class="rounded border-white/20 bg-black/20">
+                        <span>Normal</span>
+                      </label>
+                      <label class="inline-flex items-center gap-2 text-sm text-gray-200">
+                        <input v-model="catalogAutoSuggestFilters.unsequenced" type="checkbox" class="rounded border-white/20 bg-black/20">
+                        <span>Unsequenced</span>
+                      </label>
+                      <label class="inline-flex items-center gap-2 text-sm text-gray-200">
+                        <input v-model="catalogAutoSuggestFilters.decimal" type="checkbox" class="rounded border-white/20 bg-black/20">
+                        <span>Decimal</span>
+                      </label>
+                      <label class="inline-flex items-center gap-2 text-sm text-gray-200">
+                        <input v-model="catalogAutoSuggestFilters.omnibus" type="checkbox" class="rounded border-white/20 bg-black/20">
+                        <span>Omnibus</span>
+                      </label>
+                    </div>
+                    <p class="text-xs text-gray-400">
+                      Finds the strongest local match for each selected missing row and shows one suggestion at a time in Local coverage. Reject moves to the next close match when one exists.
+                    </p>
+                  </div>
+
                   <div class="overflow-auto border border-white/10 rounded">
                     <table class="w-full min-w-[74rem] text-sm">
                       <thead class="bg-black/30">
@@ -1380,6 +1413,50 @@
                                 </div>
                               </div>
                               <p v-else class="text-gray-500">{{ getCatalogLocalCoverageEmptyText(row) }}</p>
+                              <div v-if="getCatalogAutoCandidate(row)" class="mt-2 rounded border border-red-300/35 bg-red-500/10 px-3 py-3 space-y-2">
+                                <div class="flex flex-wrap items-start gap-3">
+                                  <div class="grow min-w-[16rem]">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-red-200">Suggested Match</p>
+                                    <nuxt-link :to="`/item/${getCatalogAutoCandidate(row).libraryItemId}`" class="mt-1 block font-semibold text-red-50 hover:underline">
+                                      {{ getCatalogAutoCandidate(row).title }}
+                                    </nuxt-link>
+                                    <p class="text-sm text-red-100/90 mt-1">{{ formatAuthors(getCatalogAutoCandidate(row).authors) }}</p>
+                                    <p v-if="getCatalogAutoCandidate(row).relPath" class="text-xs text-red-100/70 mt-1 break-all">{{ getCatalogAutoCandidate(row).relPath }}</p>
+                                  </div>
+                                  <span class="inline-flex items-center px-2 py-0.5 rounded-full border border-red-300/35 bg-red-500/20 text-xs text-red-100">
+                                    Score {{ getCatalogAutoCandidate(row).score }}
+                                  </span>
+                                </div>
+                                <p v-if="getCatalogAutoCandidate(row).alreadyInSeries" class="text-xs text-amber-200">
+                                  Already has this series{{ getCatalogAutoCandidate(row).alreadyInSeriesSequence ? ` (sequence ${getCatalogAutoCandidate(row).alreadyInSeriesSequence})` : '' }}. Accept will keep it and reuse/update that entry.
+                                </p>
+                                <div class="flex flex-wrap gap-2">
+                                  <span
+                                    v-for="reason in getCatalogAutoCandidate(row).reasons"
+                                    :key="getCatalogRowKey(row) + ':auto:' + getCatalogAutoCandidate(row).libraryItemId + ':' + reason.key"
+                                    class="inline-flex items-center px-2 py-0.5 rounded-full border border-red-300/20 bg-black/20 text-xs text-red-100"
+                                  >
+                                    {{ reason.text }}
+                                  </span>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                  <ui-btn
+                                    small
+                                    color="bg-success/80"
+                                    :loading="catalogAutoSuggestAcceptLoadingKey === `${getCatalogRowKey(row)}:${getCatalogAutoCandidate(row).libraryItemId}`"
+                                    @click="acceptCatalogAutoCandidate(row)"
+                                  >
+                                    Accept
+                                  </ui-btn>
+                                  <ui-btn
+                                    small
+                                    color="bg-red-500/80"
+                                    @click="rejectCatalogAutoCandidate(row)"
+                                  >
+                                    Reject
+                                  </ui-btn>
+                                </div>
+                              </div>
                             </td>
                             <td class="px-3 py-3">
                               <div class="flex flex-col items-end gap-2">
@@ -1559,11 +1636,20 @@ export default {
       catalogChoiceLoadingKey: '',
       catalogCandidateSearchLoadingKey: '',
       catalogCandidateQueueLoadingKey: '',
+      catalogAutoSuggestLoading: false,
+      catalogAutoSuggestAcceptLoadingKey: '',
       catalogLocalBookUnlinkingKey: '',
       catalogVisibilityLoadingKey: '',
       catalogRenameLoading: false,
       catalogCandidateResultsBySlot: {},
       catalogCandidateFilterBySlot: {},
+      catalogAutoSuggestBySlot: {},
+      catalogAutoSuggestFilters: {
+        normal: true,
+        unsequenced: true,
+        decimal: false,
+        omnibus: false
+      },
       catalogListCache: {},
       catalogDetailCache: {},
       catalogListScrollTop: 0,
@@ -2675,6 +2761,19 @@ export default {
       if (row.rowType === 'unsequenced' || row.rowType === 'omnibus') return true
       return row.status === 'missing' || row.status === 'disputed' || row.status === 'decimal'
     },
+    getCatalogAutoCandidateState(rowKey) {
+      return this.catalogAutoSuggestBySlot[rowKey] || null
+    },
+    getCatalogAutoCandidate(row) {
+      const rowKey = this.getCatalogRowKey(row)
+      const state = this.getCatalogAutoCandidateState(rowKey)
+      if (!state || !Array.isArray(state.results) || !state.results.length) return null
+      const currentIndex = Number(state.currentIndex || 0)
+      return state.results[currentIndex] || null
+    },
+    clearCatalogAutoCandidate(rowKey) {
+      this.$delete(this.catalogAutoSuggestBySlot, rowKey)
+    },
     getCatalogCandidateFilter(rowKey) {
       return this.catalogCandidateFilterBySlot[rowKey] || ''
     },
@@ -2901,6 +3000,7 @@ export default {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
         this.catalogManualLookupError = ''
+        this.catalogAutoSuggestBySlot = {}
         this.catalogManualPasteExpanded = false
         this.catalogManualGoodreadsExpanded = false
         this.catalogManualPasteUrl = ''
@@ -2915,6 +3015,7 @@ export default {
       this.catalogCreateDraft = ''
       this.catalogCandidateResultsBySlot = {}
       this.catalogCandidateFilterBySlot = {}
+      this.catalogAutoSuggestBySlot = {}
       if (this.catalogManualLookupCatalogId !== catalogId) {
         this.catalogManualLookupResults = []
         this.catalogManualLookupCatalogId = ''
@@ -3253,12 +3354,51 @@ export default {
         this.$set(this.catalogDetailCache, this.selectedCatalogDetail.catalog.id, this.selectedCatalogDetail)
         this.persistCatalogCaches()
         this.$delete(this.catalogCandidateResultsBySlot, rowKey)
+        this.catalogAutoSuggestBySlot = {}
         this.$toast.success('Preferred interpretation updated')
         await this.loadCatalogs({ preferCache: true })
       } catch (error) {
         this.$toast.error(error?.response?.data || 'Failed to update slot interpretation')
       } finally {
         this.catalogChoiceLoadingKey = ''
+      }
+    },
+    async suggestCatalogCandidates() {
+      if (!this.selectedCatalogDetailReady) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
+      const filters = {
+        includeNormal: !!this.catalogAutoSuggestFilters.normal,
+        includeUnsequenced: !!this.catalogAutoSuggestFilters.unsequenced,
+        includeDecimal: !!this.catalogAutoSuggestFilters.decimal,
+        includeOmnibus: !!this.catalogAutoSuggestFilters.omnibus
+      }
+      if (!filters.includeNormal && !filters.includeUnsequenced && !filters.includeDecimal && !filters.includeOmnibus) {
+        this.$toast.error('Select at least one row type to search')
+        return
+      }
+      this.catalogAutoSuggestLoading = true
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/suggest-candidates`,
+          filters
+        )
+        if (this.selectedCatalogId !== catalogId) return
+        const next = {}
+        ;(response?.rows || []).forEach((row) => {
+          const rowKey = String(row?.rowKey || row?.slot || '').trim()
+          if (!rowKey || !Array.isArray(row?.results) || !row.results.length) return
+          next[rowKey] = {
+            ...row,
+            currentIndex: 0
+          }
+        })
+        this.catalogAutoSuggestBySlot = next
+        if (Object.keys(next).length) this.$toast.success(`Suggested matches found for ${Object.keys(next).length} row${Object.keys(next).length === 1 ? '' : 's'}`)
+        else this.$toast.success('No likely local matches found for the selected row types')
+      } catch (error) {
+        this.$toast.error(error?.response?.data || 'Failed to suggest local matches')
+      } finally {
+        this.catalogAutoSuggestLoading = false
       }
     },
     async findCatalogCandidates(row) {
@@ -3279,6 +3419,49 @@ export default {
         this.$toast.error(error?.response?.data || 'Failed to find candidates')
       } finally {
         this.catalogCandidateSearchLoadingKey = ''
+      }
+    },
+    rejectCatalogAutoCandidate(row) {
+      const rowKey = this.getCatalogRowKey(row)
+      const state = this.getCatalogAutoCandidateState(rowKey)
+      if (!state) return
+      const nextIndex = Number(state.currentIndex || 0) + 1
+      if (nextIndex >= (state.results || []).length) {
+        this.clearCatalogAutoCandidate(rowKey)
+        return
+      }
+      this.$set(this.catalogAutoSuggestBySlot, rowKey, {
+        ...state,
+        currentIndex: nextIndex
+      })
+    },
+    async acceptCatalogAutoCandidate(row) {
+      if (!this.selectedCatalogDetailReady) return
+      const candidate = this.getCatalogAutoCandidate(row)
+      if (!candidate?.libraryItemId) return
+      const catalogId = this.selectedCatalogDetail.catalog.id
+      const rowKey = this.getCatalogRowKey(row)
+      this.catalogAutoSuggestAcceptLoadingKey = `${rowKey}:${candidate.libraryItemId}`
+      try {
+        const response = await this.$axios.$post(
+          `/api/libraries/${this.$route.params.library}/series-review/catalog/${catalogId}/accept-candidate`,
+          {
+            slot: rowKey,
+            libraryItemId: candidate.libraryItemId
+          }
+        )
+        if (this.selectedCatalogId !== catalogId) return
+        if (!response?.detail?.catalog?.id) throw new Error('Missing updated series detail')
+        this.selectedCatalogDetail = response.detail
+        this.$set(this.catalogDetailCache, response.detail.catalog.id, response.detail)
+        this.persistCatalogCaches()
+        this.patchCatalogSummary(response.detail)
+        this.clearCatalogAutoCandidate(rowKey)
+        this.$toast.success(`Added ${response.title} to local coverage`)
+      } catch (error) {
+        this.$toast.error(error?.response?.data || error?.message || 'Failed to add suggested local match')
+      } finally {
+        this.catalogAutoSuggestAcceptLoadingKey = ''
       }
     },
     async queueCatalogCandidate(row, candidate) {

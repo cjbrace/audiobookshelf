@@ -496,6 +496,25 @@ class SeriesReviewController {
     res.json(result)
   }
 
+  async suggestCatalogCandidates(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let result
+    try {
+      result = await SeriesReviewManager.findBulkCatalogCandidateSuggestions(req.library.id, req.params.catalogId, {
+        includeNormal: req.body?.includeNormal,
+        includeUnsequenced: req.body?.includeUnsequenced,
+        includeDecimal: req.body?.includeDecimal,
+        includeOmnibus: req.body?.includeOmnibus
+      })
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
+  }
+
   async queueCatalogCandidate(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
@@ -503,6 +522,26 @@ class SeriesReviewController {
     let result
     try {
       result = await SeriesReviewManager.queueCatalogCandidateForReview(req.library.id, req.params.catalogId, req.body?.slot, req.body?.libraryItemId)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result) return res.sendStatus(404)
+    res.json(result)
+  }
+
+  async acceptCatalogCandidate(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let result
+    try {
+      result = await SeriesReviewManager.acceptCatalogCandidateForLibrary(
+        req.library.id,
+        req.params.catalogId,
+        req.body?.slot,
+        req.body?.libraryItemId,
+        req.user.id
+      )
     } catch (error) {
       return handleActionError(res, error)
     }

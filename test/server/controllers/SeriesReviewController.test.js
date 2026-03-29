@@ -881,6 +881,45 @@ describe('SeriesReviewController', () => {
     expect(res.json.calledOnceWithExactly({ slot: '3', results: [{ libraryItemId: 'item-1' }] })).to.be.true
   })
 
+  it('returns bulk catalog candidate suggestions for the library', async () => {
+    sinon.stub(SeriesReviewManager, 'findBulkCatalogCandidateSuggestions').resolves({ rows: [{ rowKey: '3', results: [{ libraryItemId: 'item-1' }] }] })
+
+    const req = {
+      user: {
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      params: {
+        catalogId: 'catalog-1'
+      },
+      body: {
+        includeNormal: true,
+        includeUnsequenced: true,
+        includeDecimal: false,
+        includeOmnibus: false
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.suggestCatalogCandidates(req, res)
+
+    expect(SeriesReviewManager.findBulkCatalogCandidateSuggestions.calledOnceWithExactly('library-1', 'catalog-1', {
+      includeNormal: true,
+      includeUnsequenced: true,
+      includeDecimal: false,
+      includeOmnibus: false
+    })).to.be.true
+    expect(res.json.calledOnceWithExactly({ rows: [{ rowKey: '3', results: [{ libraryItemId: 'item-1' }] }] })).to.be.true
+  })
+
   it('queues a selected catalog candidate into the review flow', async () => {
     sinon.stub(SeriesReviewManager, 'queueCatalogCandidateForReview').resolves({ queued: true, libraryItemId: 'item-1' })
 
@@ -911,6 +950,47 @@ describe('SeriesReviewController', () => {
 
     expect(SeriesReviewManager.queueCatalogCandidateForReview.calledOnceWithExactly('library-1', 'catalog-1', '3', 'item-1')).to.be.true
     expect(res.json.calledOnceWithExactly({ queued: true, libraryItemId: 'item-1' })).to.be.true
+  })
+
+  it('accepts a selected catalog candidate directly into local coverage', async () => {
+    sinon.stub(SeriesReviewManager, 'acceptCatalogCandidateForLibrary').resolves({
+      accepted: true,
+      libraryItemId: 'item-1',
+      detail: { catalog: { id: 'catalog-1' } }
+    })
+
+    const req = {
+      user: {
+        id: 'user-1',
+        isAdminOrUp: true
+      },
+      library: {
+        id: 'library-1',
+        isBook: true
+      },
+      params: {
+        catalogId: 'catalog-1'
+      },
+      body: {
+        slot: '3',
+        libraryItemId: 'item-1'
+      }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.acceptCatalogCandidate(req, res)
+
+    expect(SeriesReviewManager.acceptCatalogCandidateForLibrary.calledOnceWithExactly('library-1', 'catalog-1', '3', 'item-1', 'user-1')).to.be.true
+    expect(res.json.calledOnceWithExactly({
+      accepted: true,
+      libraryItemId: 'item-1',
+      detail: { catalog: { id: 'catalog-1' } }
+    })).to.be.true
   })
 
   it('dismisses a catalog for the library', async () => {

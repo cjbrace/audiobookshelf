@@ -149,6 +149,8 @@ class ApiRouter {
     this.router.post('/series-review/suggestions/:suggestionId/unlink', SeriesReviewController.unlinkSuggestion.bind(this))
     this.router.post('/series-review/library-items/:libraryItemId/remove-series', SeriesReviewController.removeSeries.bind(this))
     this.router.post('/series-review/management/actions/:actionId/revert', SeriesReviewController.revertManagementAction.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/:catalogId/suggest-candidates', LibraryController.middleware.bind(this), SeriesReviewController.suggestCatalogCandidates.bind(this))
+    this.router.post('/libraries/:id/series-review/catalog/:catalogId/accept-candidate', LibraryController.middleware.bind(this), SeriesReviewController.acceptCatalogCandidate.bind(this))
     this.router.patch('/items/:id/qc-completion', LibraryItemController.middleware.bind(this), LibraryItemController.updateQcCompletion.bind(this))
     this.router.get('/items/:id/cover', LibraryItemController.getCover.bind(this))
     this.router.post('/items/:id/cover', LibraryItemController.middleware.bind(this), LibraryItemController.uploadCover.bind(this))
