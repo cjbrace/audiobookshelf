@@ -879,6 +879,32 @@ class SeriesReviewManager {
       .find(Boolean) || null
   }
 
+  buildSuggestionExpectedTitleLookup(catalogs = [], resolver = this.buildSeriesNameControlResolver([])) {
+    const lookup = new Map()
+    for (const catalog of Array.isArray(catalogs) ? catalogs : []) {
+      const decisionKey = resolver.getDecisionKey(catalog?.seriesName || '')
+      if (!decisionKey) continue
+      for (const entry of this.normalizeCatalogEntries(catalog?.entries || [])) {
+        const title = this.normalizeSeriesName(entry?.title || '')
+        if (!title) continue
+        const sequence = this.normalizeSequence(entry?.sequenceLabel || null) || 'none'
+        const key = `${decisionKey}::${sequence}`
+        if (!lookup.has(key)) lookup.set(key, title)
+      }
+    }
+    return lookup
+  }
+
+  getSuggestionExpectedTitle(suggestion, contributions, expectedTitleLookup = null) {
+    const directTitle = this.chooseSuggestedExpectedTitle(contributions)
+    if (directTitle) return directTitle
+    if (suggestion?.kind !== 'series') return null
+    const decisionKey = suggestion?.suggestedName ? this.normalizeDecisionKey(suggestion.suggestedName) : null
+    if (!decisionKey || !(expectedTitleLookup instanceof Map)) return null
+    const lookupKey = `${decisionKey}::${this.normalizeSequence(suggestion?.suggestedSequence) || 'none'}`
+    return expectedTitleLookup.get(lookupKey) || null
+  }
+
   groupContributions(sourceSuggestions, resolver = this.buildSeriesNameControlResolver([])) {
     const groups = {}
     for (const rawContribution of Array.isArray(sourceSuggestions) ? sourceSuggestions : []) {
@@ -4293,9 +4319,10 @@ class SeriesReviewManager {
     }
   }
 
-  buildSuggestionPayload(suggestion) {
+  buildSuggestionPayload(suggestion, options = {}) {
     const contributions = Array.isArray(suggestion.contributions) ? suggestion.contributions : []
     const evidenceSummary = this.buildSuggestionEvidenceSummary(suggestion)
+    const expectedTitle = this.getSuggestionExpectedTitle(suggestion, contributions, options?.expectedTitleLookup || null)
     return {
       id: suggestion.id,
       kind: suggestion.kind,
@@ -4303,7 +4330,7 @@ class SeriesReviewManager {
       suggestedName: suggestion.suggestedName,
       seriesDecisionKey: suggestion.suggestedName ? this.normalizeDecisionKey(suggestion.suggestedName) : null,
       suggestedSequence: suggestion.suggestedSequence,
-      expectedTitle: this.chooseSuggestedExpectedTitle(contributions),
+      expectedTitle,
       state: suggestion.state,
       decisionAction: suggestion.decisionAction,
       decisionSeriesId: suggestion.decisionSeriesId,
@@ -4343,9 +4370,9 @@ class SeriesReviewManager {
     return positiveSuggestion ? resolver.canonicalizeName(positiveSuggestion.suggestedName) || positiveSuggestion.suggestedName : ''
   }
 
-  buildQueueRow(libraryItem, suggestions, resolver = this.buildSeriesNameControlResolver([])) {
+  buildQueueRow(libraryItem, suggestions, resolver = this.buildSeriesNameControlResolver([]), options = {}) {
     const media = libraryItem.media
-    const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion))
+    const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion, options))
     const currentSeries = this.getCurrentSeriesPayload(libraryItem)
     const suggestionAnalysis = this.analyzeSuggestionSet(suggestionPayloads)
     const currentTags = Array.isArray(media?.tags) ? media.tags : []
@@ -4402,11 +4429,14 @@ class SeriesReviewManager {
       suggestionsByItemId[suggestion.libraryItemId].push(suggestion)
     })
 
+    const catalogs = await Database.seriesReviewCatalogModel.findAll({ where: { libraryId } })
+    const expectedTitleLookup = this.buildSuggestionExpectedTitleLookup(catalogs, resolver)
+
     return libraryItemIds
       .map((libraryItemId) => {
         const libraryItem = libraryItemMap[libraryItemId]
         if (!libraryItem) return null
-        return this.buildQueueRow(libraryItem, suggestionsByItemId[libraryItemId] || [], resolver)
+        return this.buildQueueRow(libraryItem, suggestionsByItemId[libraryItemId] || [], resolver, { expectedTitleLookup })
       })
       .filter(Boolean)
       .filter((row) => row.currentSeries.length || row.suggestions.some((suggestion) => suggestion.kind === 'series'))

@@ -147,6 +147,49 @@ describe('SeriesReviewManager', () => {
     expect(rows[0].suggestions[0].contributions[0].expectedTitle).to.equal('Summer Knight')
   })
 
+  it('falls back to current catalog titles for older queue suggestions that lack stored expected titles', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'The Ringworld Engineers',
+      relPath: 'Niven, Larry/The Ringworld Engineers'
+    })
+
+    await Database.seriesReviewCatalogModel.create({
+      libraryId: library.id,
+      seriesName: 'Ringworld',
+      seriesNameNormalized: 'ringworld',
+      trustStatus: 'trusted',
+      visibilityStatus: 'visible',
+      entries: [
+        {
+          title: 'Ringworld',
+          authors: ['Larry Niven'],
+          sequenceLabel: '1',
+          sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.96 }]
+        },
+        {
+          title: 'The Ringworld Engineers',
+          authors: ['Larry Niven'],
+          sequenceLabel: '2',
+          sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.96 }]
+        }
+      ],
+      selectionBySlot: {}
+    })
+
+    await SeriesReviewManager.importSuggestionsForLibrary(library.id, [
+      {
+        libraryItemId: libraryItem.id,
+        sourceSuggestions: [
+          { source: 'fictiondb', label: 'FDB', seriesName: 'Ringworld', sequence: '2', confidence: 0.96 }
+        ]
+      }
+    ])
+
+    const rows = await SeriesReviewManager.getQueueForLibrary(library.id, true)
+    expect(rows).to.have.length(1)
+    expect(rows[0].suggestions[0].expectedTitle).to.equal('The Ringworld Engineers')
+  })
+
   it('preserves audible and audnexus provenance as secondary support on grouped suggestions', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Leviathan Wakes',
