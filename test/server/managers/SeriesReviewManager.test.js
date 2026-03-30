@@ -608,6 +608,46 @@ describe('SeriesReviewManager', () => {
     expect(catalogs[0].normalizationTargetName).to.equal('Rivers of London')
   })
 
+  it('marks catalog-backed rows as normalized when the local ABS series name differs from the heading', async () => {
+    const { libraryItem } = await createBookFixture({
+      title: 'Steelheart',
+      currentSeries: [{ name: 'Reckoners', sequence: '1' }]
+    })
+    await stubExpandedLibraryItems()
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Reckoners',
+        entries: [
+          {
+            title: 'Steelheart',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs).to.have.length(1)
+    expect(catalogs[0].displayBucket).to.equal('normalized')
+    expect(catalogs[0].hasNormalizationIssue).to.equal(true)
+    expect(catalogs[0].normalizationSeriesNames).to.deep.equal(['Reckoners'])
+    expect(catalogs[0].normalizationTargetName).to.equal('The Reckoners')
+
+    const detailBefore = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
+    expect(detailBefore.catalog.hasNormalizationIssue).to.equal(true)
+    expect(detailBefore.catalog.normalizationAlternateSeriesNames).to.deep.equal(['Reckoners'])
+
+    const normalizationResult = await SeriesReviewManager.normalizeCatalogSeriesNameForLibrary(library.id, importResult.catalogs[0].id, user.id)
+    expect(normalizationResult.changedCount).to.equal(1)
+    expect(normalizationResult.conflictCount).to.equal(0)
+    expect(normalizationResult.detail.catalog.hasNormalizationIssue).to.equal(false)
+
+    const updatedItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+    expect(updatedItem.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['The Reckoners#1'])
+  })
+
   it('normalizes mixed local label groups to the heading series name', async () => {
     const { libraryItem: firstItem } = await createBookFixture({
       title: 'Rivers One',
@@ -1678,14 +1718,16 @@ describe('SeriesReviewManager', () => {
     ])
 
     const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
-    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Alpha Saga:locally_linked'])
+    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Alpha Saga:normalized'])
+    expect(catalogs[0].hasNormalizationIssue).to.equal(true)
+    expect(catalogs[0].normalizationAlternateSeriesNames).to.deep.equal(['Alpha Saga'])
 
     const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, importResult.catalogs[0].id)
     expect(detail.localBooks.map((book) => book.title)).to.deep.equal(['Alpha Start', 'Alpha Return'])
 
     const resolvedLocalOnlyDetail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, localCatalog.id)
     expect(resolvedLocalOnlyDetail.catalog.id).to.equal(importResult.catalogs[0].id)
-    expect(resolvedLocalOnlyDetail.catalog.displayBucket).to.equal('locally_linked')
+    expect(resolvedLocalOnlyDetail.catalog.displayBucket).to.equal('normalized')
   })
 
   it('surfaces pending and partial saved-link summary flags on catalog list rows', async () => {
@@ -1744,7 +1786,9 @@ describe('SeriesReviewManager', () => {
 
     const linkedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
     const linkedCatalog = linkedCatalogs.find((catalog) => catalog.id === importResult.catalogs[0].id)
-    expect(linkedCatalog.displayBucket).to.equal('locally_linked')
+    expect(linkedCatalog.displayBucket).to.equal('normalized')
+    expect(linkedCatalog.hasNormalizationIssue).to.equal(true)
+    expect(linkedCatalog.normalizationAlternateSeriesNames).to.deep.equal(['Alpha Saga'])
     expect(linkedCatalog.hasPendingLink).to.equal(false)
     expect(linkedCatalog.hasPartialLink).to.equal(true)
     expect(linkedCatalog.savedSourceCount).to.equal(1)
@@ -2010,7 +2054,9 @@ describe('SeriesReviewManager', () => {
     ])
 
     const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
-    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Gamma Saga:locally_linked'])
+    expect(catalogs.map((catalog) => `${catalog.seriesName}:${catalog.displayBucket}`)).to.deep.equal(['The Gamma Saga:normalized'])
+    expect(catalogs[0].hasNormalizationIssue).to.equal(true)
+    expect(catalogs[0].normalizationAlternateSeriesNames).to.deep.equal(['Gamma Saga'])
 
     const detail = await SeriesReviewManager.getCatalogDetailForLibrary(library.id, catalogs[0].id)
     expect(detail.localBooks.map((book) => book.title)).to.deep.equal(['Gamma Start'])

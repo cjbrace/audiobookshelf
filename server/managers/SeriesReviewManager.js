@@ -3092,10 +3092,7 @@ class SeriesReviewManager {
           canDismiss: true
         })
       const groupNormalizationMeta = localSeriesGroups.get(catalogDecisionKey)
-        ? this.buildNormalizationIssueMeta(
-            (localSeriesGroups.get(catalogDecisionKey)?.names || []).slice(),
-            localSeriesGroups.get(catalogDecisionKey)?.seriesName || catalog.seriesName
-          )
+        ? this.buildNormalizationIssueMeta((localSeriesGroups.get(catalogDecisionKey)?.names || []).slice(), catalog.seriesName)
         : this.buildNormalizationIssueMeta([], catalog.seriesName)
       detailSummaries.push({
         ...this.applyCatalogNormalizationMeta(
@@ -3944,7 +3941,7 @@ class SeriesReviewManager {
 
     const groupNormalizationMeta = localSeriesGroups.get(decisionKey)
     const normalizationMeta = groupNormalizationMeta
-      ? this.buildNormalizationIssueMeta(groupNormalizationMeta.names || [], groupNormalizationMeta.seriesName || catalog.seriesName)
+      ? this.buildNormalizationIssueMeta(groupNormalizationMeta.names || [], catalog.seriesName)
       : this.buildNormalizationIssueMeta([], catalog.seriesName)
 
     return {
@@ -4346,7 +4343,7 @@ class SeriesReviewManager {
       )
     ]
 
-    const variantNames = (group.normalizationAlternateSeriesNames || []).slice()
+    const variantNames = this.buildNormalizationIssueMeta(group.names || [], targetLabel).normalizationAlternateSeriesNames.slice()
     if (!libraryItemIds.length || !variantNames.length) {
       return {
         detail,
