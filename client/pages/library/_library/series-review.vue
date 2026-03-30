@@ -1802,7 +1802,10 @@ export default {
     },
     catalogCategoryOptions() {
       const bucketOrder = ['normalized', 'checked', 'locally_linked', 'new', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
-      const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
+      const flags = this.getCatalogFetchFlags()
+      const countCatalogs = this.getCatalogListCache(flags.includeUntrusted, flags.includeDismissed).length
+        ? this.getCatalogListCache(flags.includeUntrusted, flags.includeDismissed)
+        : this.catalogSeries
       const bucketCounts = new Map()
       ;(countCatalogs || []).forEach((catalog) => {
         const bucket = String(catalog?.displayBucket || '').trim()
