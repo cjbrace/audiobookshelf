@@ -842,6 +842,12 @@
                           {{ catalog.displayLabel }}
                         </span>
                         <span
+                          v-if="catalog.hasNormalizationIssue"
+                          class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-red-300/40 bg-red-500/20 text-red-50"
+                        >
+                          Norm
+                        </span>
+                        <span
                           v-if="catalog.hasPendingLink"
                           class="inline-flex shrink-0 items-center whitespace-nowrap px-2.5 py-1 rounded-full border text-xs text-center leading-none border-violet-300/35 bg-violet-500/10 text-violet-100"
                         >
@@ -931,12 +937,21 @@
                       <p v-if="selectedCatalogDetailBusy" class="mt-1 text-xs text-amber-200">
                         Loading the newly selected series. Actions are disabled until the detail panel catches up.
                       </p>
+                      <p v-if="selectedCatalogDetail.catalog.hasNormalizationIssue" class="mt-2 text-xs text-red-200">
+                        Mixed ABS local names detected: {{ formatNormalizationSeriesNames(selectedCatalogDetail.catalog) }}. `Normalise Name` will rewrite them to {{ selectedCatalogDetail.catalog.normalizationTargetName || selectedCatalogDetail.catalog.seriesName }}.
+                      </p>
                     </div>
                     <span
                       class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs"
                       :class="getCatalogBucketPillClass(selectedCatalogDetail.catalog.displayBucket)"
                     >
                       {{ selectedCatalogDetail.catalog.displayLabel }}
+                    </span>
+                    <span
+                      v-if="selectedCatalogDetail.catalog.hasNormalizationIssue"
+                      class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs border-red-300/40 bg-red-500/20 text-red-50"
+                    >
+                      Norm
                     </span>
                     <ui-btn
                       v-if="!selectedCatalogRenameEditing"
@@ -946,6 +961,16 @@
                       @click="startCatalogRename"
                     >
                       Edit Name
+                    </ui-btn>
+                    <ui-btn
+                      v-if="!selectedCatalogRenameEditing && selectedCatalogDetail.catalog.hasNormalizationIssue"
+                      small
+                      color="bg-red-500/80"
+                      :disabled="selectedCatalogDetailBusy"
+                      :loading="catalogNormalizeLoading"
+                      @click="normalizeSelectedCatalogName"
+                    >
+                      Normalise Name
                     </ui-btn>
                     <ui-btn
                       v-for="link in selectedCatalogDetail.catalog.evidenceLinks || []"
@@ -1250,6 +1275,9 @@
                     </p>
                     <p v-else-if="selectedCatalogDetail.catalog.displayBucket === 'locally_linked'" class="mt-1 text-xs text-gray-400">
                       Linked series came from saved manual source links and now feed the normal review/catalog pipeline.
+                    </p>
+                    <p v-else-if="selectedCatalogDetail.catalog.displayBucket === 'normalized'" class="mt-1 text-xs text-red-200">
+                      This review row currently groups multiple real ABS series labels together. Use `Normalise Name` to rewrite them all to the heading label before continuing.
                     </p>
                     <p v-else class="mt-1 text-xs text-gray-400">
                       Use Review Queue alias/rename or Series Management merge when this series needs canonical-name cleanup.
@@ -1644,6 +1672,7 @@ export default {
       catalogLocalBookUnlinkingKey: '',
       catalogVisibilityLoadingKey: '',
       catalogRenameLoading: false,
+      catalogNormalizeLoading: false,
       catalogCandidateResultsBySlot: {},
       catalogCandidateFilterBySlot: {},
       catalogAutoSuggestBySlot: {},
@@ -1772,7 +1801,7 @@ export default {
       return visibleCatalogs.length || this.catalogSeries.filter((catalog) => catalog.displayBucket !== 'dismissed').length
     },
     catalogCategoryOptions() {
-      const bucketOrder = ['checked', 'locally_linked', 'new', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
+      const bucketOrder = ['normalized', 'checked', 'locally_linked', 'new', 'trusted', 'local_only', 'potential', 'less_trusted', 'dismissed']
       const countCatalogs = this.getCatalogListCache(true, true).length ? this.getCatalogListCache(true, true) : this.catalogSeries
       const bucketCounts = new Map()
       ;(countCatalogs || []).forEach((catalog) => {
@@ -2422,6 +2451,7 @@ export default {
       return 'border-emerald-300/35 bg-emerald-500/10 text-emerald-100'
     },
     getCatalogBucketLabel(bucket) {
+      if (bucket === 'normalized') return 'Normalised'
       if (bucket === 'checked') return 'Checked'
       if (bucket === 'new') return 'New'
       if (bucket === 'local_only') return 'Local series'
@@ -2432,6 +2462,7 @@ export default {
       return 'Trusted'
     },
     getCatalogBucketPillClass(bucket) {
+      if (bucket === 'normalized') return 'border-red-300/40 bg-red-500/20 text-red-50'
       if (bucket === 'checked') return 'border-emerald-300/45 bg-emerald-500/20 text-emerald-50'
       if (bucket === 'new') return 'border-indigo-300/35 bg-indigo-500/10 text-indigo-100'
       if (bucket === 'local_only') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100'
@@ -2462,6 +2493,10 @@ export default {
         savedSourceCount: savedLinks.length,
         savedSourceKeys
       }
+    },
+    formatNormalizationSeriesNames(catalog) {
+      const names = Array.isArray(catalog?.normalizationSeriesNames) ? catalog.normalizationSeriesNames.filter(Boolean) : []
+      return names.join(', ')
     },
     patchCatalogSummary(detail) {
       const summary = this.buildCatalogSummaryFromDetail(detail)
@@ -3150,6 +3185,36 @@ export default {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to rename the series')
       } finally {
         this.catalogRenameLoading = false
+      }
+    },
+    async normalizeSelectedCatalogName() {
+      if (!this.selectedCatalogDetailReady || !this.selectedCatalogDetail?.catalog?.hasNormalizationIssue) return
+      const catalog = this.selectedCatalogDetail.catalog
+      const targetLabel = String(catalog.normalizationTargetName || catalog.seriesName || '').trim()
+      const variantNames = this.formatNormalizationSeriesNames(catalog)
+      const confirmed = window.confirm(`Normalise all ABS series labels in this group to "${targetLabel}"?\n\nCurrent labels: ${variantNames}`)
+      if (!confirmed) return
+
+      this.catalogNormalizeLoading = true
+      try {
+        const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalog.id}/normalize-name`)
+        const detail = response.detail
+        if (!detail) throw new Error('Missing updated series detail')
+        this.invalidateSeriesReviewCaches()
+        await this.loadCatalogs({ preferCache: false })
+        this.restoreSelectedCatalogAfterReload(detail)
+        await this.loadQueue()
+        const changedCount = Number(response.changedCount || 0)
+        const conflictCount = Number(response.conflictCount || 0)
+        if (conflictCount > 0) {
+          this.$toast.success(`Normalised ${changedCount} books. ${conflictCount} books still need manual cleanup.`)
+        } else {
+          this.$toast.success(`Normalised ${changedCount} books to ${targetLabel}`)
+        }
+      } catch (error) {
+        this.$toast.error(error?.response?.data || error?.message || 'Failed to normalise the series name')
+      } finally {
+        this.catalogNormalizeLoading = false
       }
     },
     async createCatalogPlaceholder() {

@@ -589,6 +589,88 @@ describe('SeriesReviewManager', () => {
     ])
   })
 
+  it('marks mixed local label groups as normalized worklist items', async () => {
+    await createBookFixture({
+      title: 'Rivers One',
+      currentSeries: [{ name: 'Rivers of London Series', sequence: '1' }]
+    })
+    await createBookFixture({
+      title: 'Rivers Two',
+      currentSeries: [{ name: 'Rivers of London', sequence: '2' }]
+    })
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs).to.have.length(1)
+    expect(catalogs[0].displayBucket).to.equal('normalized')
+    expect(catalogs[0].baseDisplayBucket).to.equal('local_only')
+    expect(catalogs[0].hasNormalizationIssue).to.equal(true)
+    expect(catalogs[0].normalizationSeriesNames).to.deep.equal(['Rivers of London', 'Rivers of London Series'])
+    expect(catalogs[0].normalizationTargetName).to.equal('Rivers of London')
+  })
+
+  it('normalizes mixed local label groups to the heading series name', async () => {
+    const { libraryItem: firstItem } = await createBookFixture({
+      title: 'Rivers One',
+      currentSeries: [{ name: 'Rivers of London Series', sequence: '1' }]
+    })
+    const { libraryItem: secondItem } = await createBookFixture({
+      title: 'Rivers Two',
+      currentSeries: [{ name: 'Rivers of London', sequence: '2' }]
+    })
+    const { libraryItem: duplicateItem } = await createBookFixture({
+      title: 'Rivers Three',
+      currentSeries: [
+        { name: 'Rivers of London', sequence: '3' },
+        { name: 'Rivers of London Series', sequence: '3' }
+      ]
+    })
+    await stubExpandedLibraryItems()
+
+    const catalogId = SeriesReviewManager.buildLocalOnlyCatalogId('rivers of london')
+    const result = await SeriesReviewManager.normalizeCatalogSeriesNameForLibrary(library.id, catalogId, user.id)
+
+    expect(result.changedCount).to.equal(2)
+    expect(result.conflictCount).to.equal(0)
+    expect(result.detail.catalog.hasNormalizationIssue).to.equal(false)
+
+    const updatedFirst = await Database.libraryItemModel.getExpandedById(firstItem.id)
+    expect(updatedFirst.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Rivers of London#1'])
+
+    const updatedSecond = await Database.libraryItemModel.getExpandedById(secondItem.id)
+    expect(updatedSecond.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Rivers of London#2'])
+
+    const updatedDuplicate = await Database.libraryItemModel.getExpandedById(duplicateItem.id)
+    expect(updatedDuplicate.media.series.map((series) => `${series.name}#${series.bookSeries.sequence || ''}`)).to.deep.equal(['Rivers of London#3'])
+  })
+
+  it('lets explicit rename override an older target alias mapping', async () => {
+    await SeriesReviewManager.upsertSeriesNameControlForLibrary(library.id, user.id, 'Star Wars: Dark Nest', 'Dark Nest', 'alias')
+    await createBookFixture({
+      title: 'The Joiner King',
+      currentSeries: [{ name: 'Dark Nest', sequence: '1' }]
+    })
+    await stubExpandedLibraryItems()
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'Dark Nest',
+        entries: [
+          {
+            title: 'The Joiner King',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const result = await SeriesReviewManager.renameCatalogForLibrary(library.id, importResult.catalogs[0].id, 'Star Wars: Dark Nest', user.id)
+    expect(result.detail.catalog.seriesName).to.equal('Star Wars: Dark Nest')
+
+    const catalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true)
+    expect(catalogs.map((catalog) => catalog.seriesName)).to.deep.equal(['Star Wars: Dark Nest'])
+  })
+
   it('keeps an aliased surviving suggestion under the renamed canonical label', async () => {
     const { libraryItem } = await createBookFixture({
       title: 'Wyrd Sisters'

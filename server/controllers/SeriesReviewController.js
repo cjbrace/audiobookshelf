@@ -322,6 +322,20 @@ class SeriesReviewController {
     res.json(result)
   }
 
+  async normalizeCatalogSeriesName(req, res) {
+    if (!req.user.isAdminOrUp) return res.sendStatus(403)
+    if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')
+
+    let result
+    try {
+      result = await SeriesReviewManager.normalizeCatalogSeriesNameForLibrary(req.library.id, req.params.catalogId, req.user.id)
+    } catch (error) {
+      return handleActionError(res, error)
+    }
+    if (!result?.detail) return res.sendStatus(404)
+    res.json(result)
+  }
+
   async getLocalCatalogMatches(req, res) {
     if (!req.user.isAdminOrUp) return res.sendStatus(403)
     if (!req.library?.isBook) return res.status(400).send('Series review is only available for book libraries')

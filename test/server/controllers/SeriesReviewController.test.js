@@ -737,6 +737,41 @@ describe('SeriesReviewController', () => {
     })).to.be.true
   })
 
+  it('normalizes mixed local series labels through the catalog detail action', async () => {
+    sinon.stub(SeriesReviewManager, 'normalizeCatalogSeriesNameForLibrary').resolves({
+      detail: { catalog: { id: 'catalog-1', seriesName: 'Rivers of London' } },
+      changedCount: 2,
+      conflictCount: 0,
+      skippedCount: 1,
+      variantNames: ['Rivers of London Series'],
+      targetLabel: 'Rivers of London'
+    })
+
+    const req = {
+      user: { id: 'admin-user', isAdminOrUp: true },
+      library: { id: 'library-1', isBook: true },
+      params: { catalogId: 'catalog-1' }
+    }
+    const res = {
+      status: sinon.stub().returnsThis(),
+      send: sinon.spy(),
+      sendStatus: sinon.spy(),
+      json: sinon.spy()
+    }
+
+    await SeriesReviewController.normalizeCatalogSeriesName(req, res)
+
+    expect(SeriesReviewManager.normalizeCatalogSeriesNameForLibrary.calledOnceWithExactly('library-1', 'catalog-1', 'admin-user')).to.be.true
+    expect(res.json.calledOnceWithExactly({
+      detail: { catalog: { id: 'catalog-1', seriesName: 'Rivers of London' } },
+      changedCount: 2,
+      conflictCount: 0,
+      skippedCount: 1,
+      variantNames: ['Rivers of London Series'],
+      targetLabel: 'Rivers of London'
+    })).to.be.true
+  })
+
   it('imports selected saved local source-series links', async () => {
     sinon.stub(SeriesReviewManager, 'buildLocalSeriesMatchImportPayloadForLibrary').resolves([{ matchId: 'match-1' }])
     sinon.stub(SeriesReviewManager, 'markSeriesSourceLinksImported').resolves(1)

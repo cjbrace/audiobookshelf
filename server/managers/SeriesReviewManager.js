@@ -253,6 +253,51 @@ class SeriesReviewManager {
     })[0]
   }
 
+  getDistinctSeriesLabels(names = []) {
+    const labels = new Map()
+    ;(Array.isArray(names) ? names : []).forEach((name) => {
+      const normalizedName = this.normalizeSeriesName(name)
+      if (!normalizedName) return
+      const key = normalizedName.toLowerCase()
+      if (!labels.has(key)) labels.set(key, normalizedName)
+    })
+    return [...labels.values()].sort((left, right) => left.localeCompare(right))
+  }
+
+  buildNormalizationIssueMeta(names = [], targetName = '') {
+    const distinctNames = this.getDistinctSeriesLabels(names)
+    const normalizedTargetName = this.normalizeSeriesName(targetName) || this.choosePreferredSeriesLabel(distinctNames)
+    const targetKey = normalizedTargetName.toLowerCase()
+    const alternateNames = distinctNames.filter((name) => name.toLowerCase() !== targetKey)
+
+    return {
+      hasNormalizationIssue: alternateNames.length > 0,
+      normalizationSeriesNames: distinctNames,
+      normalizationAlternateSeriesNames: alternateNames,
+      normalizationTargetName: normalizedTargetName
+    }
+  }
+
+  applyCatalogNormalizationMeta(payload, normalizationMeta = {}) {
+    const baseDisplayBucket = String(payload?.displayBucket || '').trim() || 'trusted'
+    const nextPayload = {
+      ...(payload || {}),
+      baseDisplayBucket,
+      baseDisplayLabel: this.getCatalogDisplayLabel(baseDisplayBucket),
+      hasNormalizationIssue: !!normalizationMeta.hasNormalizationIssue,
+      normalizationSeriesNames: normalizationMeta.normalizationSeriesNames || [],
+      normalizationAlternateSeriesNames: normalizationMeta.normalizationAlternateSeriesNames || [],
+      normalizationTargetName: normalizationMeta.normalizationTargetName || this.normalizeSeriesName(payload?.seriesName || '')
+    }
+
+    if (nextPayload.hasNormalizationIssue) {
+      nextPayload.displayBucket = 'normalized'
+      nextPayload.displayLabel = this.getCatalogDisplayLabel('normalized')
+    }
+
+    return nextPayload
+  }
+
   async getSeriesNameControlsForLibrary(libraryId) {
     return Database.seriesReviewNameControlModel.findAll({
       where: {
@@ -349,6 +394,35 @@ class SeriesReviewManager {
       createdByUserId: userId || null
     }
 
+    if (controlType === 'rename') {
+      const relevantDecisionKeys = [...new Set([payload.aliasDecisionKey, payload.canonicalDecisionKey].filter(Boolean))]
+      const conflictingControls = await Database.seriesReviewNameControlModel.findAll({
+        where: {
+          libraryId,
+          [Op.or]: [
+            relevantDecisionKeys.length
+              ? {
+                  canonicalDecisionKey: {
+                    [Op.in]: relevantDecisionKeys
+                  }
+                }
+              : null,
+            {
+              aliasNameNormalized: canonicalNameNormalized
+            }
+          ].filter(Boolean)
+        }
+      })
+
+      for (const control of conflictingControls) {
+        control.controlType = control.aliasNameNormalized === canonicalNameNormalized ? 'rename' : control.controlType
+        control.canonicalName = normalizedCanonicalName
+        control.canonicalNameNormalized = canonicalNameNormalized
+        control.canonicalDecisionKey = payload.canonicalDecisionKey
+        await control.save()
+      }
+    }
+
     const existing = await Database.seriesReviewNameControlModel.findOne({
       where: {
         libraryId,
@@ -395,6 +469,7 @@ class SeriesReviewManager {
   }
 
   getCatalogDisplayLabel(bucket) {
+    if (bucket === 'normalized') return 'Normalised'
     if (bucket === 'checked') return 'Checked'
     if (bucket === 'new') return 'New'
     if (bucket === 'local_only') return 'Local series'
@@ -1560,6 +1635,7 @@ class SeriesReviewManager {
     groups.forEach((group) => {
       group.seriesName = effectiveResolver.chooseDisplayName(group.names) || this.choosePreferredSeriesLabel(group.names)
       group.catalogId = this.buildLocalOnlyCatalogId(group.decisionKey)
+      Object.assign(group, this.buildNormalizationIssueMeta(group.names, group.seriesName))
     })
 
     return groups
@@ -2809,7 +2885,7 @@ class SeriesReviewManager {
     if (!currentDetail?.catalog?.seriesName) return null
 
     const currentSeriesName = this.normalizeSeriesName(currentDetail.catalog.seriesName)
-    const result = await this.applySeriesNameControlForLibrary(libraryId, userId, currentSeriesName, normalizedTargetLabel, 'alias', {
+    const result = await this.applySeriesNameControlForLibrary(libraryId, userId, currentSeriesName, normalizedTargetLabel, 'rename', {
       applyLocalRename: true
     })
 
@@ -2997,14 +3073,13 @@ class SeriesReviewManager {
         isLocallyLinked
       })
       if (!includeDismissed && displayBucket === 'dismissed') continue
-      if (!includeUntrusted && !['trusted', 'local_only', 'locally_linked', 'new', 'dismissed'].includes(displayBucket)) continue
+      if (!includeUntrusted && !['trusted', 'local_only', 'locally_linked', 'new', 'dismissed', 'normalized'].includes(displayBucket)) continue
       const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
       const savedLinkSummary = summarizeSavedLinkRows(
         [...(localMatchRowsByCatalogId.get(catalog.id) || []), ...(localMatchRowsByDecisionKey.get(catalogDecisionKey) || [])],
         { localBooks, coverageBySourceUrl }
       )
-      detailSummaries.push({
-        ...this.buildCatalogViewPayload({
+      const basePayload = this.buildCatalogViewPayload({
           id: catalog.id,
           seriesName: catalog.seriesName,
           trustStatus: catalog.trustStatus,
@@ -3015,7 +3090,18 @@ class SeriesReviewManager {
           displayBucket,
           isLocallyLinked,
           canDismiss: true
-        }),
+        })
+      const groupNormalizationMeta = localSeriesGroups.get(catalogDecisionKey)
+        ? this.buildNormalizationIssueMeta(
+            (localSeriesGroups.get(catalogDecisionKey)?.names || []).slice(),
+            localSeriesGroups.get(catalogDecisionKey)?.seriesName || catalog.seriesName
+          )
+        : this.buildNormalizationIssueMeta([], catalog.seriesName)
+      detailSummaries.push({
+        ...this.applyCatalogNormalizationMeta(
+          basePayload,
+          groupNormalizationMeta
+        ),
         ...savedLinkSummary,
         authorLine: authorMeta.authorLine,
         authorSearchText: authorMeta.authorSearchText,
@@ -3052,8 +3138,7 @@ class SeriesReviewManager {
         seriesName: group.seriesName
       })
       const savedLinkSummary = summarizeSavedLinkRows(localMatchRowsByDecisionKey.get(group.decisionKey), { localBooks })
-      detailSummaries.push({
-        ...this.buildCatalogViewPayload({
+      const basePayload = this.buildCatalogViewPayload({
           id: group.catalogId,
           seriesName: group.seriesName,
           trustStatus: 'local_only',
@@ -3062,7 +3147,9 @@ class SeriesReviewManager {
           localBooks,
           displayBucket: 'local_only',
           canDismiss: false
-        }),
+        })
+      detailSummaries.push({
+        ...this.applyCatalogNormalizationMeta(basePayload, group),
         ...savedLinkSummary,
         missingCount: summaryCounts.missingCount,
         disputedCount: summaryCounts.disputedCount,
@@ -3855,9 +3942,15 @@ class SeriesReviewManager {
       })
     }
 
+    const groupNormalizationMeta = localSeriesGroups.get(decisionKey)
+    const normalizationMeta = groupNormalizationMeta
+      ? this.buildNormalizationIssueMeta(groupNormalizationMeta.names || [], groupNormalizationMeta.seriesName || catalog.seriesName)
+      : this.buildNormalizationIssueMeta([], catalog.seriesName)
+
     return {
       catalog: {
-        ...this.buildCatalogViewPayload({
+        ...this.applyCatalogNormalizationMeta(
+          this.buildCatalogViewPayload({
           id: catalog.id,
           seriesName: catalog.seriesName,
           trustStatus: catalog.trustStatus,
@@ -3867,7 +3960,9 @@ class SeriesReviewManager {
           localBooks,
           isLocallyLinked: manualLinkedSeriesRows.length > 0,
           canDismiss: true
-        }),
+          }),
+          normalizationMeta
+        ),
         selectionBySlot: catalog.selectionBySlot || {},
         localSeriesMatches,
         savedSeriesLinks: localSeriesMatches,
@@ -3944,7 +4039,8 @@ class SeriesReviewManager {
     }
     return {
       catalog: {
-        ...this.buildCatalogViewPayload({
+        ...this.applyCatalogNormalizationMeta(
+          this.buildCatalogViewPayload({
           id: group.catalogId,
           seriesName: group.seriesName,
           trustStatus: 'local_only',
@@ -3953,7 +4049,9 @@ class SeriesReviewManager {
           localBooks,
           displayBucket: 'local_only',
           canDismiss: false
-        }),
+          }),
+          group
+        ),
         selectionBySlot: {},
         localSeriesMatches,
         savedSeriesLinks: localSeriesMatches,
@@ -4169,7 +4267,7 @@ class SeriesReviewManager {
     }
 
     const applyMode = replaceSeriesId ? 'replace' : 'add'
-    const applyResult = await this.applySuggestion(suggestion.id, userId, applyMode, replaceSeriesId || null)
+    const applyResult = await this.applySuggestion(suggestion.id, userId, applyMode, replaceSeriesId || null, searchResult.expectedSeriesName)
     const detail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
 
     return {
@@ -4186,6 +4284,151 @@ class SeriesReviewManager {
       alreadyInSeriesSequenceMatch: !!candidate.alreadyInSeriesSequenceMatch,
       detail,
       libraryItem: applyResult?.libraryItem || null
+    }
+  }
+
+  async normalizeCatalogSeriesNameForLibrary(libraryId, catalogId, userId = null) {
+    const detail = await this.getCatalogDetailForLibrary(libraryId, catalogId)
+    if (!detail?.catalog?.seriesName) return null
+
+    const resolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
+    const decisionKey = resolver.getDecisionKey(detail.catalog.seriesName)
+    if (!decisionKey) {
+      return {
+        detail,
+        changedCount: 0,
+        conflictCount: 0,
+        skippedCount: 0,
+        variantNames: [],
+        targetLabel: this.normalizeSeriesName(detail.catalog.seriesName),
+        action: null
+      }
+    }
+
+    const localSeriesGroups = await this.getLocalSeriesGroupsForLibrary(libraryId, resolver)
+    const group = localSeriesGroups.get(decisionKey)
+    const targetLabel = this.normalizeSeriesName(detail.catalog.seriesName)
+    if (!group?.seriesRows?.length || !targetLabel) {
+      return {
+        detail,
+        changedCount: 0,
+        conflictCount: 0,
+        skippedCount: 0,
+        variantNames: [],
+        targetLabel,
+        action: null
+      }
+    }
+
+    const seriesIdSet = new Set(group.seriesRows.map((series) => series.id))
+    const bookSeriesRows = await Database.bookSeriesModel.findAll({
+      where: {
+        seriesId: {
+          [Op.in]: [...seriesIdSet]
+        }
+      },
+      include: [
+        {
+          model: Database.bookModel,
+          include: [
+            {
+              model: Database.libraryItemModel
+            }
+          ]
+        }
+      ]
+    })
+    const libraryItemIds = [
+      ...new Set(
+        bookSeriesRows
+          .map((bookSeries) => bookSeries.book?.libraryItem?.id)
+          .filter(Boolean)
+      )
+    ]
+
+    const variantNames = (group.normalizationAlternateSeriesNames || []).slice()
+    if (!libraryItemIds.length || !variantNames.length) {
+      return {
+        detail,
+        changedCount: 0,
+        conflictCount: 0,
+        skippedCount: 0,
+        variantNames,
+        targetLabel,
+        action: null
+      }
+    }
+
+    const beforeData = []
+    const afterData = []
+    let changedCount = 0
+    let conflictCount = 0
+    let skippedCount = 0
+
+    for (const libraryItemId of libraryItemIds) {
+      const libraryItem = await Database.libraryItemModel.getExpandedById(libraryItemId)
+      if (!libraryItem || !libraryItem.isBook) continue
+      const currentSeries = this.getCurrentSeriesPayload(libraryItem)
+      const matchingGroupSeries = currentSeries.filter((series) => seriesIdSet.has(series.id))
+      if (!matchingGroupSeries.length) continue
+
+      const uniqueSequences = [
+        ...new Set(matchingGroupSeries.map((series) => this.normalizeSequence(series.sequence)).filter(Boolean))
+      ]
+      if (uniqueSequences.length > 1) {
+        conflictCount += 1
+        continue
+      }
+
+      const nextSeries = currentSeries
+        .filter((series) => !seriesIdSet.has(series.id))
+        .map((series) => ({
+          name: series.name,
+          sequence: series.sequence || null
+        }))
+      nextSeries.push({
+        name: targetLabel,
+        sequence: uniqueSequences[0] || null
+      })
+      const normalizedNextSeries = this.buildSeriesListSnapshot(nextSeries)
+      const normalizedCurrentSeries = this.buildSeriesListSnapshot(currentSeries)
+      if (this.seriesListsEqual(normalizedCurrentSeries, normalizedNextSeries)) {
+        skippedCount += 1
+        continue
+      }
+
+      beforeData.push(this.buildLibraryItemSeriesSnapshot(libraryItem))
+      const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(normalizedNextSeries, libraryItem.libraryId)
+      await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
+      const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
+      afterData.push(this.buildLibraryItemSeriesSnapshot(updatedLibraryItem))
+      changedCount += 1
+    }
+
+    let action = null
+    if (changedCount > 0) {
+      action = await Database.seriesReviewActionModel.create({
+        libraryId,
+        userId: userId || null,
+        sourceSeriesIds: group.seriesRows.map((series) => series.id),
+        sourceSeriesNames: group.seriesRows.map((series) => series.name),
+        targetLabel,
+        beforeData,
+        afterData
+      })
+    }
+
+    await this.renameSeriesSourceLinksForLibrary(libraryId, targetLabel, targetLabel)
+    await this.rebuildCatalogsForLibrary(libraryId, resolver)
+
+    return {
+      detail: await this.getCatalogDetailForLibrary(libraryId, catalogId),
+      changedCount,
+      conflictCount,
+      skippedCount,
+      variantNames,
+      targetLabel,
+      action: action ? this.buildSeriesReviewActionPayload(action) : null
     }
   }
 
@@ -5012,7 +5255,8 @@ class SeriesReviewManager {
 
   async applySeriesNameControlForLibrary(libraryId, userId, sourceName, targetName, controlType = 'alias', { applyLocalRename = false } = {}) {
     const currentResolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
-    const canonicalTargetName = currentResolver.canonicalizeName(targetName) || this.normalizeSeriesName(targetName)
+    const normalizedTargetName = this.normalizeSeriesName(targetName)
+    const canonicalTargetName = controlType === 'rename' ? normalizedTargetName : currentResolver.canonicalizeName(targetName) || normalizedTargetName
 
     let renameResult = null
     if (applyLocalRename) {
@@ -5081,7 +5325,7 @@ class SeriesReviewManager {
     }
   }
 
-  async applySuggestion(suggestionId, userId, mode, replaceSeriesId = null) {
+  async applySuggestion(suggestionId, userId, mode, replaceSeriesId = null, targetSeriesName = null) {
     const suggestion = await this.getSuggestionById(suggestionId)
     if (!suggestion || !suggestion.isActive) return null
     if (suggestion.kind === 'no_series') throw new Error('No-series evidence cannot be applied')
@@ -5089,7 +5333,10 @@ class SeriesReviewManager {
     const libraryItem = await Database.libraryItemModel.getExpandedById(suggestion.libraryItemId)
     if (!libraryItem || !libraryItem.isBook) return null
     const resolver = await this.getSeriesNameControlResolverForLibrary(suggestion.libraryId)
-    const suggestedName = resolver.canonicalizeName(suggestion.suggestedName) || suggestion.suggestedName
+    const suggestedName =
+      this.normalizeSeriesName(targetSeriesName) ||
+      resolver.canonicalizeName(suggestion.suggestedName) ||
+      suggestion.suggestedName
 
     const currentSeries = Array.isArray(libraryItem.media.series) ? libraryItem.media.series : []
     let nextSeries = currentSeries.map((series) => ({
