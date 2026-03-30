@@ -2886,7 +2886,8 @@ class SeriesReviewManager {
 
     const currentSeriesName = this.normalizeSeriesName(currentDetail.catalog.seriesName)
     const result = await this.applySeriesNameControlForLibrary(libraryId, userId, currentSeriesName, normalizedTargetLabel, 'rename', {
-      applyLocalRename: true
+      applyLocalRename: true,
+      rebuildSuggestions: false
     })
 
     const canonicalCatalog = await Database.seriesReviewCatalogModel.findOne({
@@ -4397,8 +4398,7 @@ class SeriesReviewManager {
       beforeData.push(this.buildLibraryItemSeriesSnapshot(libraryItem))
       const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(normalizedNextSeries, libraryItem.libraryId)
       await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
-      const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(libraryItem.id)
-      afterData.push(this.buildLibraryItemSeriesSnapshot(updatedLibraryItem))
+      afterData.push(this.buildLibraryItemSeriesSnapshot(libraryItem))
       changedCount += 1
     }
 
@@ -4828,15 +4828,17 @@ class SeriesReviewManager {
   }
 
   buildSuggestionPayload(suggestion, options = {}) {
+    const resolver = options?.resolver || this.buildSeriesNameControlResolver([])
     const contributions = Array.isArray(suggestion.contributions) ? suggestion.contributions : []
     const evidenceSummary = this.buildSuggestionEvidenceSummary(suggestion)
     const expectedTitle = this.getSuggestionExpectedTitle(suggestion, contributions, options?.expectedTitleLookup || null)
+    const canonicalSuggestedName = suggestion.suggestedName ? resolver.canonicalizeName(suggestion.suggestedName) || suggestion.suggestedName : suggestion.suggestedName
     return {
       id: suggestion.id,
       kind: suggestion.kind,
       suggestionKey: suggestion.suggestionKey,
-      suggestedName: suggestion.suggestedName,
-      seriesDecisionKey: suggestion.suggestedName ? this.normalizeDecisionKey(suggestion.suggestedName) : null,
+      suggestedName: canonicalSuggestedName,
+      seriesDecisionKey: canonicalSuggestedName ? this.normalizeDecisionKey(canonicalSuggestedName) : null,
       suggestedSequence: suggestion.suggestedSequence,
       expectedTitle,
       state: suggestion.state,
@@ -4880,7 +4882,7 @@ class SeriesReviewManager {
 
   buildQueueRow(libraryItem, suggestions, resolver = this.buildSeriesNameControlResolver([]), options = {}) {
     const media = libraryItem.media
-    const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion, options))
+    const suggestionPayloads = suggestions.map((suggestion) => this.buildSuggestionPayload(suggestion, { ...options, resolver }))
     const currentSeries = this.getCurrentSeriesPayload(libraryItem)
     const suggestionAnalysis = this.analyzeSuggestionSet(suggestionPayloads)
     const currentTags = Array.isArray(media?.tags) ? media.tags : []
@@ -5010,8 +5012,8 @@ class SeriesReviewManager {
     await libraryItem.saveMetadataFile()
   }
 
-  async applySeriesManagementAction(libraryId, userId, sourceSeriesIds, targetLabel, includedLibraryItemIds) {
-    const preview = await this.previewSeriesManagementAction(libraryId, sourceSeriesIds, targetLabel)
+  async applySeriesManagementAction(libraryId, userId, sourceSeriesIds, targetLabel, includedLibraryItemIds, options = {}) {
+    const preview = options?.preview || (await this.previewSeriesManagementAction(libraryId, sourceSeriesIds, targetLabel))
     const includedSet = new Set((Array.isArray(includedLibraryItemIds) ? includedLibraryItemIds : []).filter((value) => typeof value === 'string' && value.trim()))
     const selectedBooks = preview.books.filter((book) => includedSet.has(book.libraryItemId))
 
@@ -5034,8 +5036,7 @@ class SeriesReviewManager {
       beforeData.push(this.buildLibraryItemSeriesSnapshot(libraryItem))
       const seriesUpdateData = await libraryItem.media.updateSeriesFromRequest(book.nextSeriesPreview || [], libraryItem.libraryId)
       await this.persistLibraryItemSeriesChange(libraryItem, seriesUpdateData, { addSeriesEditTag: true })
-      const updatedLibraryItem = await Database.libraryItemModel.getExpandedById(book.libraryItemId)
-      afterData.push(this.buildLibraryItemSeriesSnapshot(updatedLibraryItem))
+      afterData.push(this.buildLibraryItemSeriesSnapshot(libraryItem))
     }
 
     const action = await Database.seriesReviewActionModel.create({
@@ -5247,10 +5248,10 @@ class SeriesReviewManager {
       }
     }
 
-    return this.applySeriesManagementAction(libraryId, userId, sourceSeriesIds, normalizedTargetLabel, includedLibraryItemIds)
+    return this.applySeriesManagementAction(libraryId, userId, sourceSeriesIds, normalizedTargetLabel, includedLibraryItemIds, { preview })
   }
 
-  async applySeriesNameControlForLibrary(libraryId, userId, sourceName, targetName, controlType = 'alias', { applyLocalRename = false } = {}) {
+  async applySeriesNameControlForLibrary(libraryId, userId, sourceName, targetName, controlType = 'alias', { applyLocalRename = false, rebuildSuggestions = true } = {}) {
     const currentResolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     const normalizedTargetName = this.normalizeSeriesName(targetName)
     const canonicalTargetName = controlType === 'rename' ? normalizedTargetName : currentResolver.canonicalizeName(targetName) || normalizedTargetName
@@ -5267,7 +5268,9 @@ class SeriesReviewManager {
 
     const nextResolver = await this.getSeriesNameControlResolverForLibrary(libraryId)
     await this.rebuildCatalogsForLibrary(libraryId, nextResolver)
-    await this.rebuildSuggestionsForLibrary(libraryId, nextResolver)
+    if (rebuildSuggestions) {
+      await this.rebuildSuggestionsForLibrary(libraryId, nextResolver)
+    }
 
     return {
       control,
