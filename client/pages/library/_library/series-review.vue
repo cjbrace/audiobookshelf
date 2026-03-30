@@ -3154,13 +3154,33 @@ export default {
     async uncheckCatalog(catalog) {
       await this.setCatalogCheckedState(catalog, false)
     },
-    restoreSelectedCatalogAfterReload(detail) {
+    restoreSelectedCatalogAfterReload(detail, { previousCatalogId = '' } = {}) {
       if (!detail?.catalog?.id) return
+      if (previousCatalogId && previousCatalogId !== detail.catalog.id) {
+        this.$delete(this.catalogDetailCache, previousCatalogId)
+      }
       this.selectedCatalogDetail = detail
       this.selectedCatalogId = detail.catalog.id
       this.$set(this.catalogDetailCache, detail.catalog.id, detail)
       this.persistCatalogCaches()
       this.scrollCatalogListItemIntoView(detail.catalog.id, { align: 'start', force: true })
+    },
+    refreshCatalogsAfterMutation({ preferCache = true, refreshDismissedPrefetch = true } = {}) {
+      return this.loadCatalogs({ preferCache })
+        .then(async () => {
+          const flags = this.getCatalogFetchFlags()
+          if (!flags.includeDismissed && refreshDismissedPrefetch) {
+            await this.fetchCatalogList({
+              includeUntrusted: true,
+              includeDismissed: true,
+              updateView: false,
+              prefetchOnly: true
+            })
+          }
+        })
+        .catch((error) => {
+          this.errorMessage = error?.response?.data || 'Failed to refresh series detail catalogs'
+        })
     },
     async saveCatalogRename() {
       if (!this.selectedCatalogDetailReady) return
@@ -3179,10 +3199,9 @@ export default {
         const detail = response.detail
         if (!detail) throw new Error('Missing updated series detail')
         this.cancelCatalogRename()
-        this.invalidateSeriesReviewCaches()
-        await this.loadCatalogs({ preferCache: false })
-        this.restoreSelectedCatalogAfterReload(detail)
-        await this.loadQueue()
+        this.restoreSelectedCatalogAfterReload(detail, { previousCatalogId: catalogId })
+        this.refreshCatalogsAfterMutation({ preferCache: true })
+        if (this.activeTab === 'queue') await this.loadQueue()
         this.$toast.success('Series name updated')
       } catch (error) {
         this.$toast.error(error?.response?.data || error?.message || 'Failed to rename the series')
@@ -3203,10 +3222,9 @@ export default {
         const response = await this.$axios.$post(`/api/libraries/${this.$route.params.library}/series-review/catalog/${catalog.id}/normalize-name`)
         const detail = response.detail
         if (!detail) throw new Error('Missing updated series detail')
-        this.invalidateSeriesReviewCaches()
-        await this.loadCatalogs({ preferCache: false })
-        this.restoreSelectedCatalogAfterReload(detail)
-        await this.loadQueue()
+        this.restoreSelectedCatalogAfterReload(detail, { previousCatalogId: catalog.id })
+        this.refreshCatalogsAfterMutation({ preferCache: true })
+        if (this.activeTab === 'queue') await this.loadQueue()
         const changedCount = Number(response.changedCount || 0)
         const conflictCount = Number(response.conflictCount || 0)
         if (conflictCount > 0) {
