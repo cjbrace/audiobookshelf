@@ -3074,7 +3074,7 @@ class SeriesReviewManager {
         isLocallyLinked
       })
       if (!includeDismissed && displayBucket === 'dismissed') continue
-      if (!includeUntrusted && !['trusted', 'local_only', 'locally_linked', 'new', 'dismissed', 'normalized'].includes(displayBucket)) continue
+      if (!includeUntrusted && !['trusted', 'checked', 'local_only', 'locally_linked', 'new', 'dismissed', 'normalized'].includes(displayBucket)) continue
       const authorMeta = this.buildCatalogAuthorMeta(catalog.seriesName, [], summaryEntries)
       const savedLinkSummary = summarizeSavedLinkRows(
         [...(localMatchRowsByCatalogId.get(catalog.id) || []), ...(localMatchRowsByDecisionKey.get(catalogDecisionKey) || [])],

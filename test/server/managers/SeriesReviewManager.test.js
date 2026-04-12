@@ -3158,6 +3158,41 @@ describe('SeriesReviewManager', () => {
     expect(uncheckedDetail.catalog.visibilityStatus).to.equal('visible')
   })
 
+  it('keeps checked source-backed catalogs in the default catalog list', async () => {
+    await createBookFixture({
+      title: 'Leviathan Wakes',
+      currentSeries: [{ name: 'The Expanse', sequence: '1' }],
+      authors: ['James S. A. Corey']
+    })
+    await stubExpandedLibraryItems()
+
+    const importResult = await SeriesReviewManager.importCatalogForLibrary(library.id, [
+      {
+        seriesName: 'The Expanse',
+        entries: [
+          {
+            title: 'Leviathan Wakes',
+            sequence: '1',
+            sources: [{ source: 'fictiondb', label: 'FDB', confidence: 0.95 }]
+          }
+        ]
+      }
+    ])
+
+    const checkedDetail = await SeriesReviewManager.setCatalogVisibilityForLibrary(library.id, importResult.catalogs[0].id, 'checked')
+    expect(checkedDetail.catalog.visibilityStatus).to.equal('checked')
+    expect(checkedDetail.catalog.displayBucket).to.equal('checked')
+
+    const defaultCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, false, false)
+    expect(defaultCatalogs).to.have.length(1)
+    expect(defaultCatalogs[0].seriesName).to.equal('The Expanse')
+    expect(defaultCatalogs[0].displayBucket).to.equal('checked')
+
+    const includeUntrustedCatalogs = await SeriesReviewManager.getCatalogsForLibrary(library.id, true, false)
+    expect(includeUntrustedCatalogs).to.have.length(1)
+    expect(includeUntrustedCatalogs[0].displayBucket).to.equal('checked')
+  })
+
   it('renames persisted series source links when a local series label is renamed', async () => {
     const sourceUrl = 'https://www.fictiondb.com/series/polity~123.htm'
     await Database.seriesReviewSeriesSourceLinkModel.create({
